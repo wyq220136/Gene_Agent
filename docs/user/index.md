@@ -19,6 +19,7 @@
 | [microwave/microwave_knowledge_viser.md](microwave/microwave_knowledge_viser.md) | 微波炉 Knowledge 的 Viser 调参 |
 | [microwave/mujoco_task1_physical.md](microwave/mujoco_task1_physical.md) | 微波炉 Task1 的 MuJoCo 验收 |
 | [microwave/realworld_microwave_entry.md](microwave/realworld_microwave_entry.md) | 微波炉真机子任务入口 |
+| [microwave/realworld_task1_operation_guide.md](microwave/realworld_task1_operation_guide.md) | 微波炉 Task1 真机部署、标定、预检、执行与异常恢复指引 |
 | [microwave/task1_live_viewer.md](microwave/task1_live_viewer.md) | 完整 Task1 在线纯视觉检查 |
 | [hammer操作](novel_tool/hammer.md)、[Hit实例迁移](novel_tool/hit_transfer.md) | 原生 RoboTwin：Concept、共享 Pick/Hit、原评分、实例参数和实际视频 |
 | [robots/gripper_acceptance.md](robots/gripper_acceptance.md) | 夹爪仿真验收 |
