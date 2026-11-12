@@ -29,7 +29,7 @@
 
 在启动任何设备连接前完成以下检查：
 
-- 微波炉、桌面和相机均已机械固定，运行期间不会移动。
+- 微波炉、桌面和固定第三视角相机均已机械固定，运行期间不会移动；本流程不使用安装在机械臂手腕上的相机。
 - 工作区内无人，线缆不会进入机械臂、夹爪或微波炉门的运动范围。
 - 操作者全程握持实体急停；软件停止不能替代实体急停。
 - 两臂均已上电、联网并取得真实 IPv4 地址。即使只操作右臂，当前入口也会连接两臂并读取两臂状态。
@@ -61,13 +61,16 @@ nvidia-smi
 
 为 FoundationPose 和真机 cuRobo 选择未被其他实验占用的 GPU。不要与长时间仿真批次共享同一张 GPU。
 
-## 3. 启动和检查 RealSense
+## 3. 启动和检查固定第三视角 RealSense
 
 查询实际相机序列号：
 
 ```bash
 rs-enumerate-devices -s
 ```
+
+确认该序列号对应场景外部固定安装的第三视角相机，而不是手腕相机。相机视野应同时覆盖
+微波炉、碗、主要操作区域和标定板可放置区域；完成外参标定后不得移动支架、相机或改变安装角度。
 
 在终端 1 启动相机服务：
 
@@ -144,7 +147,50 @@ $PY -m gene_agent.perception_modules.pose_est.pose_client track \
 
 两个对象必须使用不同 session。配置中的 `microwave_pose_mesh_path` 必须与实际注册的 mesh 一致。
 
-## 5. 完成相机、机器人和资产标定
+## 5. 完成固定第三视角相机、机器人和资产标定
+
+本指南使用固定第三视角相机，不执行 `handeye` 手腕相机标定，也不把手腕相机外参填入
+`camera.T_sdk_camera`。第三视角相机外参必须把该相机 RGB 光学坐标中的点变换到当前右臂
+RealMan SDK base。
+
+优先使用不依赖手腕相机的 `manual` 路线。固定第三视角相机服务保持在
+`tcp://127.0.0.1:18082`，按现场标定板的实际内角点数量和间距运行：
+
+```bash
+CALIB_OUT=data/calibration/runs/manual/microwave_third_view_$(date +%Y%m%d-%H%M%S)
+
+$PY -m gene_agent.perception_modules.camera.calibration manual \
+  --data-dir "$CALIB_OUT" \
+  --side right \
+  --robot-ip <右臂真实IP> \
+  --camera-endpoint tcp://127.0.0.1:18082 \
+  --pattern-size 11 8 \
+  --square-size <相邻内角点实际间距_米>
+```
+
+该向导通过人工对齐标定板、只读 RealMan TCP、第三视角相机观测标定板和最终点云检查，
+求得固定相机到右臂 SDK base 的外参；不需要手腕相机，也不发送机器人运动命令。
+标定板从人工测量到相机采样完成前必须保持不动。只有检查叠加点云并输入 `ACCEPT` 后，
+才能使用 `$CALIB_OUT/cam_param.json` 中的 `right_extrinsic_matrix` 作为
+`camera.T_sdk_camera`。
+
+如果已经有独立测量且仍然有效的 `T_sdk_board`，也可以只用固定第三视角相机执行：
+
+```bash
+$PY -m gene_agent.perception_modules.camera.calibration board-camera \
+  --third-endpoint tcp://127.0.0.1:18082 \
+  --third-serial <第三视角相机实际序列号> \
+  --pattern-size 11 8 \
+  --square-size <相邻内角点实际间距_米> \
+  --samples 3 \
+  --board-pose <包含T_sdk_board的JSON> \
+  --board-pose-key T_sdk_board \
+  --visualize
+```
+
+该路线输出的 `third_view_extrinsic.json` 中，`extrinsic_matrix` 是第三视角相机到 SDK base
+的变换，可填入 `camera.T_sdk_camera`。若标定板相对 SDK base 的位置、原点或轴向已变化，
+不得复用旧 `T_sdk_board`。
 
 检查已有正式结果：
 
@@ -157,7 +203,7 @@ $PY -m gene_agent.perception_modules.camera.calibration inspect
 
 | 配置字段 | 含义 |
 |---|---|
-| `camera.T_sdk_camera` | 相机坐标到对应机械臂 SDK base |
+| `camera.T_sdk_camera` | 固定第三视角相机坐标到右臂 RealMan SDK base |
 | `scene_parameters.T_world_sdk` | SDK base 到规划 world |
 | `T_perception_object_scene_asset` | FoundationPose 注册 mesh 到规划资产 frame |
 | `table_pose_world` | 真实桌面的完整位姿 |
@@ -167,12 +213,16 @@ $PY -m gene_agent.perception_modules.camera.calibration inspect
 `T_A_B` 表示把 B 坐标系中的点变换到 A。不得用单位矩阵代替未知标定。
 Insert/Extract 的 frame 对齐错误会直接产生错误高度或错误方向的 `preplace` 目标。
 
-标定通过后还要用多个已知关节姿态核对：
+标定通过后还要在第三视角相机和场景保持固定的条件下核对：
 
 - RealMan SDK FK 的 flange pose。
 - 应用法兰到 TCP 后的实际 TCP。
 - cuRobo/MuJoCo 中同一关节状态的 TCP。
+- 第三视角点云中的标定板、桌面和多个已知 TCP 位置是否落在对应 SDK base 位置。
 - 真实夹爪开口与代码中的米制开口映射。
+
+机械臂可以移动到不同核对姿态，但固定第三视角相机不能随机械臂移动。任何相机支架、安装角度、
+分辨率或内参变化都要求重新标定并更新 `T_sdk_camera`。
 
 ## 6. 创建现场站点配置
 
@@ -186,7 +236,8 @@ cp data/task_1/realworld/realworld_site.example.json \
 填写以下内容：
 
 - 左、右臂真实 IP。
-- 相机序列号、`camera_id`、相机侧别和 `T_sdk_camera`。
+- 固定第三视角相机序列号、`camera_id`、外参所属 SDK base 的 `side` 和 `T_sdk_camera`；当前填
+  `side: "right"` 表示外参落在右臂 SDK base，不表示相机安装在右腕。
 - Bowl 和 Microwave 的两个 FoundationPose session。
 - 实际注册的微波炉 mesh 路径。
 - `T_world_sdk`、物体资产 frame 对齐、桌面 pose 和桌面尺寸。
@@ -444,4 +495,3 @@ $PY tools/run/run_microwave_task1_realworld.py \
 - [ ] 单个子任务按顺序验收通过。
 - [ ] 操作者全程掌握实体急停。
 - [ ] 所有结果写入 `/data1/yuquan/Gene_Agent_new/runs/realworld/`。
-
