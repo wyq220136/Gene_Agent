@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "status": "nominal_audit_only",
+  "source": "2026-10-24 connected RM75 6FB at 192.168.1.18; four SDK FK configurations agree with URDF link_7 (max translation <2um); not physical Pika TCP calibration; evidence runs/pika_frames/connected_right_20261024/comparison.json",
+  "T_link7_sdk_flange": [
+    [
+      1.0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1.0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      1.0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      1.0
+    ]
+  ],
+  "T_link7_pika_model": [
+    [
+      -0.0007963267107331529,
+      0.0015926524115074125,
+      -0.9999984146597763,
+      0.0
+    ],
+    [
+      0.0,
+      0.9999987317275396,
+      0.0015926529164869507,
+      0.0
+    ],
+    [
+      0.9999996829318346,
+      1.2682720583255362e-06,
+      -0.0007963257007739255,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_pika_model_operation_tcp": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.18
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_sdk_flange_reference_control": [
+    [
+      0.0,
+      0.0,
+      -1.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.15
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "reference_control_source": {
+    "frame": "approved_pika_usage_teleop_150mm",
+    "date": "2026-10-25",
+    "primary_source": "/home/ubuntu/Documents/yixuan/pika_usage/src/vendor/umi/realworld_pika/pika_realman_interpolation_controller.py",
+    "primary_sha256": "b9e3df690ce141a60fa886c9437921a2d72080503634aadfd736db0f622dd4c8",
+    "aligned_umi_source": "/home/ubuntu/Documents/yixuan/umi_data_train/src/umi_data_train/realman/robot.py",
+    "aligned_umi_sha256": "f8f2bc10e80e51866854ba7bd5cffa300ac60ac6436a1e80b364e382a82bbf54",
+    "note": "user confirms unchanged mounting; reference frame only, model mount and 180mm operation point preserved"
+  }
+}

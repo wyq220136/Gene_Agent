@@ -1,0 +1,68 @@
+{
+  "power_knob_rim_visual": {
+    "source": "power_knob_rim_visual.obj",
+    "replacement": "power_knob_rim_visual_repaired.obj",
+    "reason": "source nonwatertight multi-component rim shows diagonal coplanar artifacts in MuJoCo closeup; replace visual rim only with measured elliptical annulus",
+    "source_watertight": false,
+    "source_components": 19,
+    "source_bounds_m": [
+      [
+        -0.03079425,
+        -0.00975624,
+        -0.02682939
+      ],
+      [
+        0.03079611,
+        -0.00081291,
+        0.02682699
+      ]
+    ],
+    "replacement_bounds_m": [
+      [
+        -0.03079611,
+        -0.00975624,
+        -0.02682939
+      ],
+      [
+        0.03079611,
+        -0.00081291,
+        0.02682939
+      ]
+    ],
+    "replacement_watertight": true,
+    "collision_unchanged": true
+  },
+  "timer_knob_rim_visual": {
+    "source": "timer_knob_rim_visual.obj",
+    "replacement": "timer_knob_rim_visual_repaired.obj",
+    "reason": "source nonwatertight multi-component rim shows diagonal coplanar artifacts in MuJoCo closeup; replace visual rim only with measured elliptical annulus",
+    "source_watertight": false,
+    "source_components": 22,
+    "source_bounds_m": [
+      [
+        -0.02799647,
+        -0.00975624,
+        -0.02438957
+      ],
+      [
+        0.02799647,
+        -0.00081292,
+        0.02438551
+      ]
+    ],
+    "replacement_bounds_m": [
+      [
+        -0.02799647,
+        -0.00975624,
+        -0.02438957
+      ],
+      [
+        0.02799647,
+        -0.00081292,
+        0.02438957
+      ]
+    ],
+    "replacement_watertight": true,
+    "collision_unchanged": true
+  }
+}

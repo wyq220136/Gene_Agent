@@ -1,0 +1,233 @@
+{
+  "schema_version": 2,
+  "frame": "world = right SDK base",
+  "units": "m, rad; quaternion wxyz",
+  "source": "AffordToolAct/data/task_1",
+  "T_world_camera": [
+    [
+      -0.9978518345939158,
+      0.0649490017908936,
+      0.00856569211634474,
+      0.17016308005416042
+    ],
+    [
+      0.05324291126140604,
+      0.8802008184336219,
+      -0.47160553839925706,
+      0.769016897582827
+    ],
+    [
+      -0.038169836780232384,
+      -0.4701363718317258,
+      -0.8817680425422296,
+      0.7403023308433129
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "objects": {
+    "bowl": {
+      "pose_source": "objs/Bowl/Bowl_0/pose.json",
+      "concept": "assets/objects/bowl_concept.json",
+      "captured_pose": [
+        [
+          0.35889775043722666,
+          0.04191404133985125,
+          -0.9324353536880597,
+          0.2302702727721582
+        ],
+        [
+          -0.9289541488991857,
+          -0.08109625151622657,
+          -0.36120315128191577,
+          0.3545283929785262
+        ],
+        [
+          -0.09075645785662179,
+          0.9958246743917119,
+          0.009830957333910012,
+          -0.16691041020086972
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "simulation_nominal_pose": [
+        [
+          0.3603849916451323,
+          0.0,
+          -0.9328036544723322,
+          0.27
+        ],
+        [
+          -0.9328036544723322,
+          0.0,
+          -0.3603849916451323,
+          0.12
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.078
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "microwave": {
+      "pose_source": "objs/Microwave/Microwave_0/pose.json",
+      "concept": "assets/objects/microwave_concept.json",
+      "captured_pose": [
+        [
+          -0.011088820073694368,
+          0.9990248803563045,
+          -0.04273586568627138,
+          0.6422432416699206
+        ],
+        [
+          -0.9997300422805634,
+          -0.011949127242335248,
+          -0.019928199605369068,
+          0.3310605942581378
+        ],
+        [
+          -0.020419422714933577,
+          0.042503347037074694,
+          0.998887650376317,
+          -0.010741903477732295
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "legacy_captured_pose": [
+        [
+          0.003033168228143859,
+          -0.05469796161016378,
+          0.9984983232474998,
+          0.48051675381395476
+        ],
+        [
+          0.9998880949707172,
+          -0.014463459564767078,
+          -0.003829688883816299,
+          0.21295152451808852
+        ],
+        [
+          0.01465122430774879,
+          0.9983981758973658,
+          0.0546479640226994,
+          0.08832507794135813
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "simulation_nominal_pose": [
+        [
+          2.220446049250313e-16,
+          1.0,
+          0.0,
+          0.52
+        ],
+        [
+          -1.0,
+          2.220446049250313e-16,
+          -0.0,
+          0.32
+        ],
+        [
+          -0.0,
+          0.0,
+          1.0,
+          0.04
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  },
+  "table": {
+    "size_xy_m": [
+      0.9,
+      0.9
+    ],
+    "center_xy_m": [
+      0.5,
+      0.4
+    ],
+    "thickness_m": 0.035,
+    "height_policy": "Explicit simulation support plane; user permits layout adjustment, not recovered real table",
+    "top_z_m": -0.12
+  },
+  "perturbation": {
+    "frame": "world",
+    "distribution": "independent uniform",
+    "xy_half_range_m": 0.015,
+    "yaw_half_range_rad": 0.08726646259971647,
+    "rejection_limit": 0,
+    "ik_filter": false
+  },
+  "bowl_proxy": {
+    "mass_kg": 0.18,
+    "bottom_radius_m": 0.035,
+    "bottom_y_m": -0.036,
+    "bottom_half_thickness_m": 0.004,
+    "rim_radius_m": 0.072,
+    "wall_half_thickness_m": 0.0055,
+    "segments": 32,
+    "layers": 4,
+    "bottom_wall_y_m": -0.033,
+    "top_y_m": 0.037
+  },
+  "world_frame": "right_sdk_base",
+  "microwave_asset": {
+    "urdf": "assets/objects/microwave_calibrated/microwave_calibrated.urdf",
+    "base_policy": "fixed cabinet with feet supported by the configured microwave_support; not tipping dynamics",
+    "concept": "assets/objects/microwave_calibrated/concept.json",
+    "knob_0_mapping": "power_knob upper; inferred from old knob_0 being upper, not a user-confirmed power/timer label"
+  },
+  "microwave_support": {
+    "height_m": 0.16,
+    "size_xy_m": [
+      0.4479437482,
+      0.2682940816
+    ],
+    "center_xy_local_m": [
+      0.0,
+      0.004065061842
+    ],
+    "footprint_source": "calibrated URDF cabinet structural collision envelope",
+    "height_source": "user specified at least 0.15 m; simulation uses 0.16 m"
+  },
+  "placement_policy": {
+    "source": "user authorized simulation rearrangement",
+    "bowl_clearance_m": 0.002,
+    "microwave_feet_clearance_m": 0.0,
+    "door_sweep": "bowl moved to y=.20 outside intended door sweep y>=.38",
+    "ik_filter": false,
+    "upright_objects": true
+  }
+}

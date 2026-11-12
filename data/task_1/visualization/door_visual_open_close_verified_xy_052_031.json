@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "legacy_short_retractions": false,
+  "return_default_tcp_non_linear_fallback": true,
+  "scene_run": "runs/pick-bowl-planning-final",
+  "planner_mode": "cuda_graph_benchmark",
+  "physics_arm_position_kp_scale": 2.0,
+  "physics_speed_scale_by_phase": {
+    "push_open/00_pre_contact": 0.25
+  },
+  "pull_angle_deg": 25.0,
+  "push_angle_deg": 90.0,
+  "knowledge_states": {},
+  "stage_overrides_microwave": {},
+  "approximate_ik_by_stage": {},
+  "local_rotation_search_by_stage": {},
+  "local_rotation_search_defaults": {
+    "pregrasp": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "pre_contact": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "contact": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "push": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "retreat": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "retract_up": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "retract_local_z": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    }
+  },
+  "approximate_ik_defaults": {
+    "push": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "pregrasp": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "pre_contact": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retreat": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retract_up": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retract_local_z": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    }
+  },
+  "microwave_pose_world": [
+    [
+      0,
+      1,
+      0,
+      0.52
+    ],
+    [
+      -1,
+      0,
+      0,
+      0.31
+    ],
+    [
+      0,
+      0,
+      1,
+      0.04
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "verified_note": "2026-10-12 GPU/Viser 已验收 microwave_door_open 和 microwave_door_close；微波炉 XY=(0.52,0.31)，开门 25°→90°，关门从本轮真实开门及过渡终态续接；2026-10-13 MuJoCo 单独将右臂 position actuator kp 乘 2，保留原 Knowledge、碰撞与规划参数"
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "pick_bowl": {
+    "approach_distance_m": 0.03,
+    "lift_distance_m": 0.08,
+    "open_width_m": 0.08,
+    "close_width_m": 0.0,
+    "hold_duration_s": 0.5,
+    "max_grasp_candidates": 40
+  },
+  "pick_bowl_legacy_visual": {
+    "approach_distance_m": 0.05,
+    "lift_distance_m": 0.10,
+    "open_width_m": 0.041,
+    "close_width_m": 0.007,
+    "hold_duration_s": 0.5,
+    "max_grasp_candidates": 40,
+    "candidate_selection": "legacy_ik",
+    "max_pregrasp_joint_travel_rad": 2.0943951023931953,
+    "max_approach_joint_travel_rad": 1.5707963267948966
+  },
+  "pick_bowl_attachment_proxy": {
+    "sphere_centers_object_m": [[0.0, 0.045, 0.0], [0.045, 0.045, 0.0],
+                                [-0.045, 0.045, 0.0], [0.0, 0.045, 0.045],
+                                [0.0, 0.045, -0.045]],
+    "sphere_radius_m": 0.04,
+    "coverage": "碗上半部的简化代理；碗底与桌面支撑接触未纳入附着球，不能宣称完整碗碰撞覆盖"
+  }
+}

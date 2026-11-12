@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gene-agent"
+version = "0.1.0"
+description = "可检查的机器人操作与仿真开发框架"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "mujoco", "pillow", "pyyaml", "trimesh", "viser"]
+
+[project.scripts]
+gene-agent = "gene_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gene_agent*", "benchmarks*"]
+
+[tool.setuptools.package-data]
+benchmarks = ["*_task/definition.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

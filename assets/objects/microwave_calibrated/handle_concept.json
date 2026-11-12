@@ -1,0 +1,22 @@
+{
+  "category": "MicrowaveCalibratedHandle",
+  "source": "calibrated URDF handle_grip_collision and door_hinge; no measured contact pads",
+  "conceptualization": [
+    {
+      "template": "Trifold_Handle",
+      "component": "microwave_handle",
+      "parameters": {
+        "mounting_size": [0.011198586146, 0.011382173158, 0.00894313605],
+        "mounting_seperation": [0.12682992948],
+        "grip_size": [0.013998232684, 0.15935042422, 0.011382173158],
+        "pose_matrix": [
+          [1, 0, 0, 0.1119858614],
+          [0, 0, -1, -0.147968251021],
+          [0, 1, 0, 0.1252039047],
+          [0, 0, 0, 1]
+        ]
+      },
+      "semantic": "handle"
+    }
+  ]
+}

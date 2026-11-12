@@ -1,0 +1,88 @@
+{
+  "category": "MicrowaveCalibrated",
+  "source": "calibrated URDF collision envelope; geometry prior, not measured grasp pads",
+  "conceptualization": [
+    {
+      "template": "Cylinder",
+      "component": "knob_0",
+      "urdf_link": "power_knob",
+      "parameters": {
+        "size": [
+          0.03079611,
+          0.02682941,
+          0.00975614
+        ],
+        "pose_matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.1847766714
+          ],
+          [
+            0.0,
+            2.220446049250313e-16,
+            -1.0,
+            -0.1426836703
+          ],
+          [
+            0.0,
+            1.0,
+            2.220446049250313e-16,
+            0.1471552387
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "grasp_direction": "top",
+        "source": "calibrated URDF collision envelope; local +Z = outward joint axis"
+      },
+      "mapping_assumption": "upper power mapped to previous upper knob_0"
+    },
+    {
+      "template": "Cylinder",
+      "component": "knob_1",
+      "urdf_link": "timer_knob",
+      "parameters": {
+        "size": [
+          0.02799647,
+          0.02439037,
+          0.00975614
+        ],
+        "pose_matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.1847766714
+          ],
+          [
+            0.0,
+            2.220446049250313e-16,
+            -1.0,
+            -0.1426836703
+          ],
+          [
+            0.0,
+            1.0,
+            2.220446049250313e-16,
+            0.0747971379
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "grasp_direction": "top",
+        "source": "calibrated URDF collision envelope; local +Z = outward joint axis"
+      },
+      "mapping_assumption": "lower timer mapped knob_1"
+    }
+  ]
+}

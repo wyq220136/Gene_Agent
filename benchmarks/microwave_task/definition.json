@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "microwave_task",
+  "version": 1,
+  "title": "微波炉放碗、旋钮、取碗与关门",
+  "scene": {
+    "module": "benchmarks.microwave_task.scene",
+    "input": "data/task_1/simulation/mujoco_task1_physical.json",
+    "initialization": "resolve_settings/build_initial_scene；固定 seed=123，显式规则才允许扰动"
+  },
+  "evaluation": {
+    "module": "benchmarks.microwave_task.evaluation",
+    "entry": "evaluate_final",
+    "evidence": "实际门角、旋钮角、原放置落稳证据和残余 attachment；中间操作证据独立保留"
+  },
+  "evidence_mode": "接触驱动门；双指核验后辅助夹持碗；旋钮显式运动学更新"
+}

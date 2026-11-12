@@ -1,0 +1,175 @@
+{
+  "profiles": {
+    "task_1_bowl_0": {
+      "generator": "ring",
+      "part": "bowl_rim",
+      "status": "tuning_required",
+      "acceptance_baseline": false,
+      "status_reason": "旧 bowl 参数仅作为待调初值；尚未通过 Viser 调参与新基线验收。旧 world -Z 15 mm 经验偏移不作为默认正确结论。",
+      "parameters": {
+        "surface": [
+          "bottom"
+        ],
+        "azimuth_deg": {
+          "start": 0.0,
+          "stop": 315.0,
+          "step": 45.0
+        },
+        "tip_y_deg": {
+          "values": [
+            0.0,
+            -10.0,
+            10.0,
+            -20.0,
+            20.0
+          ]
+        },
+        "vertical_offset_m": {
+          "values": [
+            0.015
+          ]
+        }
+      },
+      "closing_width": {
+        "mode": "geometry",
+        "clearance_m": 0.0
+      },
+      "postprocess": [
+        {
+          "type": "translate",
+          "frame": "object",
+          "xyz_m": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    "task_1_knob_0": {
+      "generator": "cylinder_axial",
+      "part": "knob_0",
+      "parameters": {
+        "surface": [
+          "bottom"
+        ],
+        "depth_m": {
+          "values": [
+            0.005
+          ]
+        },
+        "azimuth_deg": {
+          "values": [
+            55.0,
+            36.0,
+            41.0,
+            31.0,
+            46.0,
+            26.0
+          ]
+        },
+        "tip_x_deg": {
+          "values": [
+            0.0
+          ]
+        }
+      },
+      "closing_width": {
+        "mode": "geometry",
+        "clearance_m": 0.001
+      },
+      "postprocess": [
+        {
+          "type": "translate",
+          "frame": "tcp",
+          "xyz_m": [
+            0.0,
+            0.0,
+            -0.015
+          ]
+        }
+      ]
+    },
+    "cylinder": {
+      "generator": "cylinder",
+      "parameters": {
+        "cylinder_rotation_deg": {
+          "start": 0.0,
+          "stop": 348.75,
+          "step": 11.25,
+          "order": "ascending"
+        },
+        "tip_x_deg": {
+          "start": -30.0,
+          "stop": 30.0,
+          "step": 10.0,
+          "order": "center_out"
+        }
+      },
+      "closing_width": {
+        "mode": "geometry",
+        "clearance_m": 0.001
+      },
+      "sorting": [
+        {
+          "field": "tip_x_deg",
+          "transform": "absolute",
+          "order": "ascending"
+        },
+        {
+          "metric": "top_down",
+          "frame": "world",
+          "order": "descending"
+        }
+      ]
+    },
+    "cuboidal_block": {
+      "generator": "cuboidal_block",
+      "parameters": {},
+      "closing_width": {
+        "mode": "geometry",
+        "clearance_m": 0.001
+      }
+    },
+    "trifold_handle": {
+      "generator": "trifold_handle",
+      "parameters": {
+        "vertical_offset_m": {
+          "values": [
+            0.05
+          ]
+        },
+        "tip_x_deg": {
+          "values": [
+            -60.0
+          ]
+        },
+        "tip_y_deg": {
+          "values": [
+            0.0
+          ]
+        },
+        "depth_m": {
+          "values": [
+            0.013
+          ]
+        }
+      },
+      "closing_width": {
+        "mode": "geometry",
+        "clearance_m": 0.001
+      },
+      "postprocess": [
+        {
+          "type": "translate",
+          "frame": "tcp",
+          "xyz_m": [
+            0.0,
+            0.0,
+            -0.012
+          ]
+        }
+      ]
+    }
+  }
+}

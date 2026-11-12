@@ -1,0 +1,97 @@
+{
+  "category": "Dustpan",
+  "annotation_type": "functional_primitives",
+  "units": "m",
+  "user_prompt": "只标注簸箕可抓取的短柄和接收方块的托盘；开口朝物体坐标 +X，忽略侧壁细节。",
+  "functional_properties": {
+    "scoop_opening_direction_object": [
+      1,
+      0,
+      0
+    ],
+    "tray_up_object": [
+      0,
+      0,
+      1
+    ]
+  },
+  "conceptualization": [
+    {
+      "template": "Cuboid",
+      "component": "grip_handle",
+      "semantic": "grasp",
+      "parameters": {
+        "size": [
+          0.07,
+          0.026,
+          0.012
+        ],
+        "pose_matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            -0.046
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.009
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "template": "Cuboid",
+      "component": "receiving_tray",
+      "semantic": "receive",
+      "parameters": {
+        "size": [
+          0.09,
+          0.14,
+          0.008
+        ],
+        "pose_matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.037
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.004
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    }
+  ],
+  "source_note": "Visual functional approximation of canonical scene mesh; static one-primitive-per-part annotation."
+}

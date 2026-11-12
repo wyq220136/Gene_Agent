@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "scene_path": "scene.json",
+  "id": "sweep_cube_into_dustpan",
+  "status": "mujoco_skill_available",
+  "instruction": "使用刷子把绿、红、蓝三个方块扫入簸箕。",
+  "roles": {
+    "tool": "brush",
+    "movable_targets": [
+      "cube",
+      "cube_red",
+      "cube_blue"
+    ],
+    "receptacle": "dustpan"
+  },
+  "success_condition": {
+    "type": "target_resting_inside_receptacle",
+    "targets": [
+      "cube",
+      "cube_red",
+      "cube_blue"
+    ],
+    "receptacle": "dustpan",
+    "implemented": true,
+    "checker": "benchmarks.sweep_cube_task.evaluation.evaluate_cube_in_dustpan"
+  },
+  "skill_entrypoint": "tools/run/run_sweep_cube.py",
+  "execution_status": "mujoco_seeded_evaluation_available",
+  "evidence_mode": "physical_sweep_with_contact_verified_simulation_assisted_brush_grip"
+}

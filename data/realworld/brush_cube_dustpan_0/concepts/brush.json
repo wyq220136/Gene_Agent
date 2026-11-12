@@ -1,0 +1,92 @@
+{
+  "category": "HandBrush",
+  "annotation_type": "functional_primitives",
+  "units": "m",
+  "user_prompt": "只标注可供 Pika 夹爪抓取的手柄和用于推扫方块的刷毛接触面；忽略挂孔和装饰。",
+  "functional_properties": {
+    "brush_face_normal_object": [
+      0,
+      0,
+      -1
+    ]
+  },
+  "conceptualization": [
+    {
+      "template": "Cylinder",
+      "component": "grip_handle",
+      "semantic": "grasp",
+      "parameters": {
+        "size": [
+          0.008,
+          0.007,
+          0.075
+        ],
+        "pose_matrix": [
+          [
+            2.220446049250313e-16,
+            0.0,
+            1.0,
+            -0.0625
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.022
+          ],
+          [
+            -1.0,
+            0.0,
+            2.220446049250313e-16,
+            0.069
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "template": "Cuboid",
+      "component": "bristle_face",
+      "semantic": "sweep_contact",
+      "parameters": {
+        "size": [
+          0.09,
+          0.042,
+          0.02
+        ],
+        "pose_matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.068
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.022
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.01
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    }
+  ],
+  "source_note": "Visual functional approximation of canonical scene mesh; static one-primitive-per-part annotation."
+}

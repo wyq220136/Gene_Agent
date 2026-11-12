@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "instance_id": "microwave_door",
+  "joint_name": "microwave_door_joint",
+  "handle_site_name": "microwave_handle_grasp",
+  "robot_group": "right",
+  "seed": 123,
+  "microwave_pose_world": [
+    [
+      0,
+      1,
+      0,
+      0.52
+    ],
+    [
+      -1,
+      0,
+      0,
+      0.32
+    ],
+    [
+      0,
+      0,
+      1,
+      0.04
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "door_axis_in_microwave": {
+    "point_m": [
+      -0.2174392144,
+      -0.1382121026,
+      0.1252039047
+    ],
+    "direction": [
+      0,
+      0,
+      -1
+    ]
+  },
+  "concept_path": "assets/objects/microwave_calibrated/handle_concept.json",
+  "grasp_profile_path": "data/task_1/knowledge/grasp_profiles.microwave_door.json",
+  "grasp_profile_name": "microwave_door_handle",
+  "candidate_index": 0,
+  "approach_distance_m": 0.01,
+  "open_target_angle_rad": 0.3490658503988659,
+  "close_start_angle_rad": 0.3490658503988659,
+  "rotation_step_rad": 0.08726646259971647,
+  "open_width_m": 0.08,
+  "release_width_m": 0.08,
+  "execution_semantics": "planned_robot_trajectory_with_kinematic_door_follow",
+  "close_width_m": 0.015
+}

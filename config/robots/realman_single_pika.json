@@ -1,0 +1,13 @@
+{
+  "profile": "realman_single_pika",
+  "arm_group": "left",
+  "world_frame": "single_robot_base",
+  "T_link7_pika_base_xyz_m": [0.0, 0.0, 0.0],
+  "T_link7_pika_base_rpy_rad": [3.14, -1.57, 3.141592653589793],
+  "T_pika_base_tcp_xyz_m": [0.18, 0.0, 0.0],
+  "tcp_source": "provisional geometric point near finger tips; physical TCP not calibrated",
+  "open_gap_from_urdf_mesh_m": 0.09404438,
+  "gripper_force_limit_N": 10.0,
+  "gripper_position_kp": 100.0,
+  "gripper_position_kv": 8.0
+}

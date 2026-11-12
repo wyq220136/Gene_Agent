@@ -1,0 +1,8 @@
+{
+  "input_valid": true,
+  "tuner_values": {
+    "door_push": {
+      "hinge_fraction_offset": -0.2
+    }
+  }
+}

@@ -1,0 +1,10 @@
+name: curobo
+channels:
+  - defaults
+dependencies:
+  - pip
+  - python=3.11
+variables:
+  PYTHONPATH: ''
+  PYTHONNOUSERSITE: '1'
+prefix: /home/ubuntu/miniconda3/envs/curobo

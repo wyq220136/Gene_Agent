@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "spoon_scoop_task",
+  "version": 1,
+  "title": "抓勺、舀球、转移并倒入另一碗",
+  "scene": {
+    "module": "benchmarks.spoon_scoop_task.scene",
+    "input": "data/realworld/my_scene_0/scenes/scoop_orange",
+    "variants": [
+      "scoop_orange",
+      "scoop_pink"
+    ],
+    "initialization": "既有 scene.xml/keyframe；分布来自 scene.json 的 distribution_sample，生成规则在 benchmarks.tabletop"
+  },
+  "evaluation": {
+    "module": "benchmarks.spoon_scoop_task.evaluation",
+    "entry": "pour_postcondition",
+    "evidence": "勺槽与目标碗几何判据；非空原始 cargo 必须全部转移"
+  },
+  "evidence_mode": "任务默认物理，--simulation-weld 显式辅助；独立抓勺原 CLI 默认保持"
+}

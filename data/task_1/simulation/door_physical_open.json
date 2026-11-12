@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "legacy_short_retractions": false,
+  "return_default_tcp_non_linear_fallback": true,
+  "scene_run": "runs/microwave-physics-scene-v2",
+  "planner_mode": "cuda_graph_benchmark",
+  "reuse_gripper_geometry": true,
+  "physics_arm_position_kp_scale": 2.0,
+  "physics_speed_scale_by_phase": {
+    "handle_pull/01_pregrasp": 0.5,
+    "handle_pull/02_grasp": 0.5,
+    "handle_pull/04_pull_08": 0.5,
+    "handle_pull/05_pull_17": 0.5,
+    "handle_pull/06_pull_25": 0.5,
+    "push_open/00_pre_contact": 0.25
+  },
+  "pull_angle_deg": 25.0,
+  "push_angle_deg": 90.0,
+  "knowledge_states": {
+    "push_close": "data/task_1/simulation/door_push_close_physical_tuner_state.json"
+  },
+  "physics_arm_position_kp_scale_by_phase": {
+    "push_close/01_pre_contact": 4.0
+  },
+  "stage_overrides_microwave": {},
+  "approximate_ik_by_stage": {},
+  "local_rotation_search_by_stage": {},
+  "local_rotation_search_defaults": {
+    "pregrasp": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "pre_contact": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "contact": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "push": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "retreat": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "retract_up": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    },
+    "retract_local_z": {
+      "x_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ],
+      "y_degrees": [
+        0,
+        -5,
+        5,
+        -10,
+        10
+      ]
+    }
+  },
+  "approximate_ik_defaults": {
+    "push": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "pregrasp": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "pre_contact": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retreat": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retract_up": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retract_local_z": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    }
+  },
+  "microwave_pose_world": [
+    [
+      0,
+      1,
+      0,
+      0.52
+    ],
+    [
+      -1,
+      0,
+      0,
+      0.29
+    ],
+    [
+      0,
+      0,
+      1,
+      0.04
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "verified_note": "2026-10-13 MuJoCo fresh-reset door cycle: Viser-default microwave (0.52,0.29), untuned handle Knowledge, pull target 25 degrees, actual pull 23.06 and push open 90.24 degrees. Close Knowledge hinge_fraction_offset=-0.2 and close pre-contact arm kp scale=4 physically close from 90.25 to 0 degrees. Finger-root/carriage and pad contact explicitly allowed in push. Door angle remains continuous across all 25 stages, and all three physical door checks pass. This does not verify the full bowl/knob task or real robot.",
+  "physics_push_allowed_gripper_contact_geoms": [
+    "right_r_inspire_jaw_base_link_collision_1",
+    "right_r_inspire_jaw_base_link_collision_2",
+    "right_r_inspire_jaw_base_link_collision_3",
+    "right_gripper_positive_carriage",
+    "right_gripper_negative_carriage",
+    "right_gripper_positive_shank",
+    "right_gripper_negative_shank"
+  ],
+  "physics_push_contact_policy_note": "2026-10-27 用户查看夹爪代理与实际视频后确认可接受夹爪部分与门板接触：推开/推关阶段允许两侧指垫、指杆、滑块及已有指根代理接触门板。pre-contact/避障接近仍禁止提前碰门；不允许机械臂其他部位碰门，不改变抓碗接触规则。"
+}

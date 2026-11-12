@@ -1,0 +1,22 @@
+{
+  "installation": "mounted",
+  "groups": [
+    "left",
+    "right"
+  ],
+  "flange_link": "link_7",
+  "body_asset_z_offset_m": -0.5,
+  "body_offset_source": "旧 visualization/scene/curobo_demo.py:305,310 和 tamp/curobo/robot_body_collision.py:107",
+  "joint_damping": 1.0,
+  "joint_armature": 0.02,
+  "position_kp": 150.0,
+  "position_kv": 20.0,
+  "limitations": [
+    "默认夹爪为明确parallel_slide_proxy，派生URDF含双prismatic与mimic；MuJoCo另加等位移约束。并非真实连杆/力标定，可选fixed_urdf保留旧对照。",
+    "MuJoCo mesh 接触采用凸包，机器人 mesh 碰撞与 cuRobo 碰撞球不同；尚未验证全工作空间碰撞覆盖。",
+    "position actuator 增益、关节阻尼和 armature 是仿真参数，未经实机辨识。",
+    "body 资产沿本地 Z 的 -0.5 米偏移来自旧调用代码，是经验校准，未重新标定。",
+    "安装矩阵原文件有限精度，转换为四元数时投影为合法旋转；原矩阵保留在元数据中。"
+  ],
+  "gripper_mode": "parallel_slide_proxy"
+}

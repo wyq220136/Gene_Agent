@@ -1,0 +1,78 @@
+{
+  "mode": "parallel_slide_proxy",
+  "width_range_m": [
+    0.0,
+    0.08
+  ],
+  "home_width_m": 0.08,
+  "reference_visual_width_m": 0.069971204,
+  "pad_thickness_m": 0.00773,
+  "pad_y_width_m": 0.018,
+  "pad_z_length_m": 0.02,
+  "pad_tip_z_m": -0.000451,
+  "finger_mass_kg": 0.05,
+  "joint_damping_Ns_per_m": 2.0,
+  "joint_armature_kg": 0.002,
+  "actuator_kp_N_per_m": 3000.0,
+  "actuator_kv_Ns_per_m": 18.0,
+  "actuator_force_limit_N": 10.0,
+  "urdf_velocity_limit_m_per_s": 0.15,
+  "friction": [
+    1.0,
+    0.005,
+    0.0001
+  ],
+  "solref": [
+    0.004,
+    1.0
+  ],
+  "solimp": [
+    0.95,
+    0.99,
+    0.001
+  ],
+  "assumptions": [
+    "两指沿TCP正负X平行滑动，不是从原fixed URDF恢复的真实连杆机构。",
+    "80mm来自旧软件最大开口；真实编码-开口关系和驱动力均未标定。",
+    "指端和连杆visual复用原STL及其相对装配，按69.971204mm参考内间隙共同平移；掌端横移为视觉近似，不是真实转动机构。",
+    "pad厚7.73mm、Y宽18mm与tip Z来自静态mesh测量近似；20mm接触长度、质量、摩擦、增益和力上限为显式仿真假设。",
+    "URDF velocity limit描述运动限值；MuJoCo位置执行器不据此实现速度规划，控制跳变可能达到更高速度。",
+    "pad、shank、carriage仅作碰撞代理，正常画面隐藏；整指质量50g和包围盒均匀惯量是假设。"
+  ],
+  "moving_structure_boxes": {
+    "shank": {
+      "size_m": [
+        0.008,
+        0.014,
+        0.024
+      ],
+      "positive_center_tcp_m": [
+        0.006,
+        0,
+        -0.0315
+      ]
+    },
+    "carriage": {
+      "size_m": [
+        0.012,
+        0.022,
+        0.012
+      ],
+      "positive_center_tcp_m": [
+        0.008,
+        0,
+        -0.043
+      ]
+    }
+  },
+  "finger_inertia_box_size_m": [
+    0.014,
+    0.022,
+    0.052549
+  ],
+  "finger_com_positive_tcp_m": [
+    0.007,
+    0,
+    -0.0267255
+  ]
+}

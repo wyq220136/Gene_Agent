@@ -1,0 +1,89 @@
+{   
+    "Bucket": {
+        "concept_names": ["Curved_Handle"],
+        "rotation_order":"ZXY"
+    },
+    "Clip": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Dispenser": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ"
+    },
+    "Display":{
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Diswasher": {
+        "concept_names": ["Cuboidal_Handle", "Trifold_Handle", "Trifold_Curve_Handle", "Curve_Handle"],
+        "rotation_order":"ZXY"
+    },
+    "Door": {
+        "concept_names": ["Standard_Door",  "Standard_Doorframe"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Doorhandle": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Eyeglasses": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Faucet": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Gluestick": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Microwave": {
+        "concept_names": ["Cuboidal_Handle", "Trifold_Handle", "Trifold_Curve_Handle", "Curve_Handle"],
+        "rotation_order":"ZXY"
+    },
+    "Oven": {
+        "concept_names": ["Cuboidal_Handle", "Trifold_Handle", "Trifold_Curve_Handle", "Curve_Handle"],
+        "rotation_order":"ZXY"
+    },
+    "Refrigerator": {
+        "concept_names": ["Cuboidal_Handle", "Trifold_Handle", "Trifold_Curve_Handle", "Curve_Handle"],
+        "rotation_order":"ZXY"
+    },
+    "Ruler": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Safe": {
+        "concept_names": ["Trifold_handle", "Claw_Handle", "Round_Handle"],
+        "rotation_order":"ZXY"
+    },
+    "Shampoo": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Shaver": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    },
+    "Switch": {
+        "concept_names": ["all"],
+        "offset_first":"True"
+    },
+    "USB": {
+        "concept_names": ["all"],
+        "rotation_order":"YXZ",
+        "offset_first":"True"
+    }
+}

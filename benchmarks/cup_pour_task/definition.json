@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "cup_pour_task",
+  "version": 1,
+  "title": "杯把抓取、倒球入碗并放回",
+  "scene": {
+    "module": "benchmarks.cup_pour_task.scene",
+    "input": "data/realworld/my_scene_0/scenes_tilt50_yaw360_reachable/pour",
+    "initialization": "既有 scene.xml/keyframe；分布来自 scene.json 的 distribution_sample，生成规则在 benchmarks.tabletop"
+  },
+  "evaluation": {
+    "module": "benchmarks.cup_pour_task.evaluation",
+    "entry": "pour_postcondition",
+    "evidence": "原球体 membership 几何与倒入/洒落阈值；放回与保持检查保留原证据"
+  },
+  "evidence_mode": "默认 MuJoCo 物理；--simulation-weld 显式启用已核验接触后的辅助夹持"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "gripper_port": "/dev/ttyUSB60",
+  "sdk_python": "/home/ubuntu/miniconda3/envs/pika/bin/python",
+  "max_observation_age_s": 180,
+  "max_start_error_rad": 0.02,
+  "max_width_error_m": 0.005,
+  "max_endpoint_translation_m": 0.005,
+  "max_endpoint_rotation_deg": 3.0,
+  "motion_speed_scale": 0.1,
+  "max_tcp_speed_mps": 0.1,
+  "canfd_frequency_hz": 100.0,
+  "min_tcp_above_table_m": 0.01
+}

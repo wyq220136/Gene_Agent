@@ -1,0 +1,47 @@
+{
+  "category": "SweepCube",
+  "annotation_type": "functional_primitives",
+  "units": "m",
+  "user_prompt": "绿方块是被刷子推扫的目标，整个方块用一个 Cuboid。",
+  "conceptualization": [
+    {
+      "template": "Cuboid",
+      "component": "body",
+      "semantic": "sweep_target",
+      "parameters": {
+        "size": [
+          0.0224076,
+          0.0224076,
+          0.0224076
+        ],
+        "pose_matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+          0.0112038
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    }
+  ],
+  "source_note": "Visual functional approximation of canonical scene mesh; static one-primitive-per-part annotation."
+}

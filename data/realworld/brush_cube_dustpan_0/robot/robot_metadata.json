@@ -1,0 +1,151 @@
+{
+  "profile": "realman_single_pika",
+  "xml_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/robot/robot.xml",
+  "planning_urdf_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/robot/realman_single_pika.urdf",
+  "world_frame": "single_robot_base",
+  "joint_groups": {
+    "left": [
+      "joint_1",
+      "joint_2",
+      "joint_3",
+      "joint_4",
+      "joint_5",
+      "joint_6",
+      "joint_7"
+    ]
+  },
+  "joint_names": [
+    "joint_1",
+    "joint_2",
+    "joint_3",
+    "joint_4",
+    "joint_5",
+    "joint_6",
+    "joint_7"
+  ],
+  "group_root_bodies": {
+    "left": "base_link"
+  },
+  "tcp_sites": {
+    "left": "pika_tcp"
+  },
+  "home_joint_positions": {
+    "joint_1": 0.0,
+    "joint_2": 0.0,
+    "joint_3": 0.0,
+    "joint_4": 0.0,
+    "joint_5": 0.0,
+    "joint_6": 0.0,
+    "joint_7": 0.0,
+    "pika_gripper_left_joint": 0.0,
+    "pika_gripper_right_joint": 0.0
+  },
+  "transforms": {
+    "left": {
+      "world_from_urdf_base": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "link_from_tcp": [
+        [
+          -0.0007963267107331529,
+          0.0015926524115074125,
+          -0.9999984146597763,
+          -0.00014333880793196752
+        ],
+        [
+          0.0,
+          0.9999987317275396,
+          0.0015926529164869507,
+          0.0
+        ],
+        [
+          0.9999996829318346,
+          1.2682720583255362e-06,
+          -0.0007963257007739255,
+          0.17999994292773022
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  },
+  "grippers": {
+    "left": {
+      "mode": "pika_urdf",
+      "joint_names": [
+        "pika_gripper_left_joint",
+        "pika_gripper_right_joint"
+      ],
+      "actuator_names": [
+        "pika_gripper_left_joint_position",
+        "pika_gripper_right_joint_position"
+      ],
+      "width_range_m": [
+        0.0,
+        0.09404438000000004
+      ],
+      "home_width_m": 0.09404438000000004,
+      "positive_inner_site_name": "pika_left_inner",
+      "negative_inner_site_name": "pika_right_inner",
+      "closing_axis_tcp": [
+        0,
+        1,
+        0
+      ],
+      "pad_geom_names": [],
+      "source_urdf_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/assets/robots/pika/urdf/pika_gripper_description.urdf",
+      "limitations": [
+        "开口 site 来自原 STL 边界，未经实机内面标定。",
+        "MuJoCo 使用原 URDF mesh 的凸接触几何，尚未分解或标定摩擦。"
+      ]
+    }
+  },
+  "gripper": {
+    "name": "pika",
+    "mode": "pika_urdf",
+    "max_opening_width_m": 0.09404438000000004
+  },
+  "mounting_contact_exceptions": {},
+  "source_hashes": {
+    "/home/ubuntu/Documents/yixuan/Gene_Agent/assets/robots/realman/urdf/realman_left.urdf": "a4e7aac05b2354b5fefe7022f6e8db6a6d5a81a450ed60a40fe8d3fc065b2383",
+    "/home/ubuntu/Documents/yixuan/Gene_Agent/assets/robots/pika/urdf/pika_gripper_description.urdf": "0b3979e094b82c8a9137dcb76e26e272fb25e9fe88c5c62ce3cab58f89b48328",
+    "/home/ubuntu/Documents/yixuan/Gene_Agent/config/robots/realman_single_pika.json": "c3cc06ff49aa7c2d3fdd468951bca235c40f792b95db635346a65c712f8e4a97",
+    "/home/ubuntu/Documents/yixuan/Gene_Agent/assets/robots/pika/meshes/gripper_left_link.STL": "16de0af984683c4286bf826557c1ea3c40380c64f890969cde5c880726c7474b",
+    "/home/ubuntu/Documents/yixuan/Gene_Agent/assets/robots/pika/meshes/gripper_base_link.STL": "ac4593d07d4d95436bb125e76df22332414c24f287ff3de0b35c3336cdfca5e6",
+    "/home/ubuntu/Documents/yixuan/Gene_Agent/assets/robots/pika/meshes/gripper_right_link.STL": "0a10906fa2ed940db0de90b0f171db3cc550c8cfd56b83bebd33b9a8955e0b66"
+  },
+  "limitations": [
+    "provisional geometric point near finger tips; physical TCP not calibrated",
+    "开口 site 来自原 STL 边界，未经实机内面标定。",
+    "MuJoCo 使用原 URDF mesh 的凸接触几何，尚未分解或标定摩擦。",
+    "Pika 视觉装配方向已由用户确认；法兰实际平移仍需实物标定。",
+    "cuRobo 使用 Pika 原始 STL 外接球近似；碰撞与净空样例仍需审计。"
+  ]
+}

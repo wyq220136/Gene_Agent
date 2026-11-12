@@ -1,0 +1,4 @@
+interface:
+  display_name: "cuRobo Failure Diagnosis"
+  short_description: "分层定位cuRobo的IK、碰撞、路径、执行和任务后验问题"
+  default_prompt: "读取指定run或阶段证据，按owner、reason code、证据强度和最小验证方案输出诊断，不修改代码。"

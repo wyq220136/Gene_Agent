@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "active_group": "right",
+  "robot_ips": {
+    "left": "",
+    "right": ""
+  },
+  "camera": {
+    "endpoint": "tcp://127.0.0.1:18082",
+    "serial": "",
+    "camera_id": "0",
+    "side": "right",
+    "T_sdk_camera": null,
+    "max_age_s": 5.0
+  },
+  "pose_server": "http://127.0.0.1:18081",
+  "pose_sessions": {
+    "Bowl/Bowl_0": "",
+    "Microwave/Microwave_0": ""
+  },
+  "microwave_pose_mesh_path": "",
+  "state_file": "realworld_state.json",
+  "scene_parameters": {
+    "T_world_sdk": null,
+    "T_perception_object_scene_asset": {
+      "Bowl/Bowl_0": null,
+      "Microwave/Microwave_0": null
+    },
+    "table_pose_world": null,
+    "table_size_xy_m": [
+      0.9,
+      0.9
+    ],
+    "accepted_support_size_xyz_m": [
+      0.4479437482,
+      0.2682940816,
+      0.16
+    ],
+    "accepted_support_center_xy_local_m": [
+      0.0,
+      0.004065061842
+    ],
+    "accepted_table_thickness_m": 0.035,
+    "active_group": "right"
+  },
+  "runtime": {
+    "max_start_error_rad": 0.02,
+    "min_tcp_z_m": 0.08,
+    "motion_speed_scale": 0.1,
+    "max_tcp_speed_mps": 0.1,
+    "canfd_frequency_hz": 100.0
+  },
+  "scene_drift_limits": null,
+  "subtask_options": {
+    "door": {
+      "config_path": null,
+      "max_microwave_translation_m": null,
+      "max_microwave_rotation_rad": null,
+      "max_door_angle_error_rad": null,
+      "max_start_error_rad": null,
+      "max_gripper_width_error_m": null
+    },
+    "pick": {
+      "max_bowl_translation_m": null,
+      "max_bowl_rotation_rad": null,
+      "max_start_error_rad": null,
+      "max_gripper_width_error_m": null
+    },
+    "insert": {
+      "microwave_frame_alignment": {
+        "accepted_for_planning": false,
+        "source": "",
+        "T_scene_asset_profile": null
+      },
+      "max_microwave_translation_m": null,
+      "max_microwave_rotation_rad": null,
+      "max_hold_translation_m": null,
+      "max_hold_rotation_rad": null,
+      "max_start_error_rad": null,
+      "max_gripper_width_error_m": null
+    },
+    "knob": {
+      "task_path": "knob_0_task_realworld_tuned.json",
+      "max_microwave_translation_m": null,
+      "max_microwave_rotation_rad": null,
+      "max_knob_angle_error_rad": null,
+      "max_start_error_rad": null,
+      "max_gripper_width_error_m": null
+    },
+    "extract": {
+      "microwave_frame_alignment": {
+        "accepted_for_planning": false,
+        "source": "",
+        "T_scene_asset_profile": null
+      },
+      "max_microwave_translation_m": null,
+      "max_microwave_rotation_rad": null,
+      "max_bowl_translation_m": null,
+      "max_bowl_rotation_rad": null,
+      "max_hold_translation_m": null,
+      "max_hold_rotation_rad": null,
+      "max_start_error_rad": null,
+      "max_gripper_width_error_m": null
+    },
+    "table": {
+      "table_height_alignment": {
+        "accepted_for_planning": false,
+        "source": "",
+        "height_bias_m": null
+      },
+      "max_table_height_delta_m": null,
+      "max_table_translation_m": null,
+      "max_table_rotation_rad": null,
+      "max_bowl_translation_m": null,
+      "max_bowl_rotation_rad": null,
+      "max_hold_translation_m": null,
+      "max_hold_rotation_rad": null,
+      "max_start_error_rad": null,
+      "max_gripper_width_error_m": null
+    }
+  }
+}

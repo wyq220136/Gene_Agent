@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "sweep_cube_task",
+  "version": 1,
+  "title": "普通刷抓取与三方块入簸箕",
+  "scene": {
+    "module": "benchmarks.sweep_cube_task.scene",
+    "input": "data/realworld/brush_cube_dustpan_0",
+    "initialization": "scene.json 的 randomization/placement_rules；落稳与穿透检查保持原实现"
+  },
+  "evaluation": {
+    "module": "benchmarks.sweep_cube_task.evaluation",
+    "entry": "evaluate_cube_in_dustpan",
+    "evidence": "所有方块足迹入托盘、实际支撑接触及速度；逐块判定"
+  },
+  "evidence_mode": "MuJoCo 接触，核验后显式辅助持刷"
+}

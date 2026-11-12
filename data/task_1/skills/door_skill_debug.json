@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "legacy_short_retractions": false,
+  "return_default_tcp_non_linear_fallback": true,
+  "scene_run": "runs/pick-bowl-planning-final",
+  "planner_mode": "cuda_graph_benchmark",
+  "pull_angle_deg": 25.0,
+  "push_angle_deg": 90.0,
+  "knowledge_states": {},
+  "stage_overrides_microwave": {},
+  "approximate_ik_by_stage": {},
+  "local_rotation_search_by_stage": {},
+  "local_rotation_search_defaults": {
+    "pregrasp": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    },
+    "pre_contact": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    },
+    "contact": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    },
+    "push": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    },
+    "retreat": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    },
+    "retract_up": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    },
+    "retract_local_z": {
+      "x_degrees": [0, -5, 5, -10, 10],
+      "y_degrees": [0, -5, 5, -10, 10]
+    }
+  },
+  "approximate_ik_defaults": {
+    "push": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "pregrasp": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "pre_contact": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retreat": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retract_up": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    },
+    "retract_local_z": {
+      "max_position_error_m": 0.02,
+      "max_rotation_error_rad": 0.17453292519943295
+    }
+  }
+}

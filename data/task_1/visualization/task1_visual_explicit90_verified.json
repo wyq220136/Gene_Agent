@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task": "microwave_task1",
+  "variant": "task1_visual_explicit",
+  "pull_angle_deg": 25.0,
+  "push_angle_deg": 90.0,
+  "knob_profile_variant": "tip_x_5_azimuth_240",
+  "object_poses_world": {
+    "microwave": [
+      [0.0, 1.0, 0.0, 0.52],
+      [-1.0, 0.0, 0.0, 0.31],
+      [0.0, 0.0, 1.0, 0.04],
+      [0.0, 0.0, 0.0, 1.0]
+    ]
+  },
+  "door_semantics": "handle_pull_25_deg_then_progressive_candidate_inside_push_to_90_deg",
+  "door_candidate_selection": "AffordToolAct progressive batch IK: first 16, then remaining at each angle",
+  "shared_legacy_table_config_ref": "data/task_1/knowledge/legacy_extract_visual_table.json",
+  "verified_gpu_report_ref": "/tmp/task1_visual_probe_20261012_explicit90_progressive_both_xy_052_031_tip5_table/task1_visual_result.json",
+  "note": "完整纯视觉 Task1 七分区已规划成功；原始门与旋钮默认配置未覆盖。"
+}

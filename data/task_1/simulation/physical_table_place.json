@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "object_id": "Bowl_0",
+  "surface_geom_name": "scene_table",
+  "height_bias_m": -0.004,
+  "height_policy": "keep_old_world_xy_and_orientation_follow_table_top_z",
+  "object_goal": {
+    "table_xy_world_m": [0.29, 0.13],
+    "yaw_offset_deg": -20.0,
+    "release_clearance_m": 0.002,
+    "place_optimizer_clearance_m": 0.001
+  },
+  "source": "旧TCP仅保留为参考。正式Place按实际夹持关系反算直立碗目标；选择炉前桌面可达区域和避开基座的腕部朝向。最终下降软避障距离1mm，完整环境/自碰撞硬复核及原桌面后置条件保持启用。"
+}

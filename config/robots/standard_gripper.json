@@ -1,0 +1,15 @@
+{
+  "name": "standard_gripper",
+  "max_opening_width_m": 0.08,
+  "finger_length_m": 0.06,
+  "clearance_m": 0.001,
+  "flange_to_tcp_z_m": 0.15,
+  "flange_to_tcp_rotation_z_deg": 180.0,
+  "curobo_urdf_path": "tamp/curobo/assets/realman/urdf/realman_{side}.urdf",
+  "curobo_robot_config_path": "tamp/curobo/assets/realman/config/realman_{side}.yml",
+  "max_tip_rotation_x_deg": 60.0,
+  "max_tip_rotation_y_deg": 60.0,
+  "max_tip_rotation_z_deg": 180.0,
+  "mesh_path": "visualization/knowledge/standard_gripper.stl",
+  "mesh_target_length_m": 0.15
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "source_scene": "../scene.json",
+  "rgb_source": "../../brush_0/rgb.png",
+  "method": "local_visual_functional_annotation",
+  "units": "m",
+  "frame": "each object frame as in scene.json assets",
+  "objects": {
+    "brush": {
+      "concept_path": "brush.json",
+      "mesh_path": "../assets/brush.obj",
+      "mesh_sha256": "ae1eac2fcd82e8a05977563831433adb7e08a72175e02414722efd2f86d478d0",
+      "concept_sha256": "14a8f5c1796d790e9875f5c181ce17bee6d025099bf216c463ddd18b50746bba",
+      "part_names": [
+        "grip_handle",
+        "bristle_face"
+      ]
+    },
+    "cube": {
+      "concept_path": "cube.json",
+      "mesh_path": "../assets/cube.obj",
+      "mesh_sha256": "ce1760060335726a88f7e805821f151ea038ea010075b51d4f54e452380e1b9c",
+      "concept_sha256": "8c633c61593518ada328dfa40809605d8736d9a124ef32a35613e05868dbe153",
+      "part_names": [
+        "body"
+      ]
+    },
+    "dustpan": {
+      "concept_path": "dustpan.json",
+      "mesh_path": "../assets/dustpan.obj",
+      "mesh_sha256": "8a31f9511369b4c4203164a1651440f3ee4a8dedeb6be249806db16a18687ba7",
+      "concept_sha256": "30274e434d8e7e31685de7df0668c249ae6dfc8ac285c9963fd2c8fc4a965184",
+      "part_names": [
+        "grip_handle",
+        "receiving_tray"
+      ]
+    }
+  },
+  "cube_scene_scale_factor": 0.5
+}

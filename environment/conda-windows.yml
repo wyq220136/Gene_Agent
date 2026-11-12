@@ -1,0 +1,10 @@
+name: curobo
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+variables:
+  PYTHONNOUSERSITE: '1'
+  MUJOCO_GL: glfw
+  PYTHONUTF8: '1'

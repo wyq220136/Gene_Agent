@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "scene_template": "data/realworld/my_scene_0/scenes/sweep_long/scene.xml",
+  "frame_profile": "config/robots/pika_frames.nominal.json",
+  "calibration_status": "nominal_audit_only",
+  "calibration_source": "EXAMPLE ONLY: replace camera, table, mesh alignment and base transforms with site measurements",
+  "T_sdk_urdf_base": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_sdk_camera": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_sdk_table": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.38
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      -0.02
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "table_size_xyz_m": [
+    0.96,
+    1.0,
+    0.04
+  ],
+  "max_snapshot_age_s": 120.0,
+  "max_flange_position_error_m": 0.003,
+  "max_flange_rotation_error_deg": 1.0,
+  "max_candidates": 12,
+  "base_table_mounting_contact": true,
+  "extra_obstacles": [],
+  "objects": {
+    "brush": {
+      "body_name": "brush_long",
+      "concept_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/my_scene_0/concepts/brush_long/concept.json",
+      "object_id": "Brush/Brush_0",
+      "session": "FILL_REGISTERED_SESSION",
+      "T_perception_asset": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "concept_part_aliases": {
+        "grasp_handle": "grip_handle",
+        "sweeping_face": "bristle_face"
+      }
+    },
+    "cube": {
+      "body_name": "cube",
+      "concept_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/concepts/cube.json",
+      "object_id": "Cube/Cube_0",
+      "session": "FILL_REGISTERED_SESSION",
+      "T_perception_asset": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "dustpan": {
+      "body_name": "dustpan",
+      "concept_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/concepts/dustpan.json",
+      "object_id": "Dustpan/Dustpan_0",
+      "session": "FILL_REGISTERED_SESSION",
+      "T_perception_asset": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  },
+  "devices": {
+    "robot_ip": "FILL_ROBOT_IP",
+    "measured_gripper_width_m": 0.04,
+    "pose_server": "http://127.0.0.1:18081",
+    "camera": {
+      "serial": "FILL_CAMERA_SERIAL",
+      "endpoint": "tcp://127.0.0.1:18082"
+    }
+  },
+  "brush_variant": "long",
+  "demo_source_run": "runs/sweep_long/old_success_seed36_adjusted_20261020"
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "units": "meter_degree_second",
+  "defaults": {
+    "grasp_tilt_deg": -20.0,
+    "tcp_above_handle_m": 0.009,
+    "approach_distance_m": 0.07,
+    "lift_distance_m": 0.045,
+    "open_width_m": 0.04,
+    "hold_duration_s": 0.3,
+    "lift_policy": "world_z",
+    "verify_hold_for_pick": true
+  },
+  "environments": {
+    "simulation": {},
+    "realworld": {
+      "lift_policy": "pregrasp_direction",
+      "verify_hold_for_pick": false
+    },
+    "preview": {
+      "lift_policy": "pregrasp_direction",
+      "verify_hold_for_pick": false
+    }
+  }
+}

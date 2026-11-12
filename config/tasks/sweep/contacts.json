@@ -1,0 +1,6 @@
+{
+  "tool": "brush",
+  "support": "table",
+  "receiver": "dustpan",
+  "gripper_links": ["pika_gripper_left_link", "pika_gripper_right_link"]
+}

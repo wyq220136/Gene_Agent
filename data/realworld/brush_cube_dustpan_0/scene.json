@@ -1,0 +1,646 @@
+{
+  "schema_version": 1,
+  "scene_xml_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/scene.xml",
+  "world_frame": "single_robot_base",
+  "length_unit": "m",
+  "robot": {
+    "profile": "realman_single_pika",
+    "T_world_base": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "metadata_path": "robot/robot_metadata.json",
+    "start_keyframe": "scene_start",
+    "standby_joint_positions_rad": [
+      0.0,
+      -0.56916,
+      0.0,
+      0.95157,
+      0.0,
+      1.77422,
+      0.0
+    ],
+    "standby_tcp_position_world_m": [
+      0.22478293914772998,
+      1.7804597179356678e-07,
+      0.46244583813034346
+    ]
+  },
+  "table": {
+    "top_z_m": 0.0,
+    "center_xy_m": [
+      0.38,
+      0.0
+    ],
+    "size_xy_m": [
+      0.96,
+      1.0
+    ]
+  },
+  "layout_mode": "task_friendly_rearrangement",
+  "objects": {
+    "brush": {
+      "role": "tool",
+      "T_world_object": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.38
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.26
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "mesh_path": "assets/brush.obj",
+      "source_mesh_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_0/meshes/obj_mesh_simplified.obj",
+      "source_kind": "sam3d_existing",
+      "mesh_sha256": "ae1eac2fcd82e8a05977563831433adb7e08a72175e02414722efd2f86d478d0",
+      "source_sha256": "6127ccb952df07514a9b1a3c6ba9fe907a59bcde1847a7f78c9d579a3184429c",
+      "T_object_source_mesh": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.00015478999999999493
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.02277791
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.03915808
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "perception": {
+        "mask_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_0/mask.png",
+        "mask_sha256": "ef8c19dfedf4b4604c2cd0c7d008a09a60472ca017afd0dbbb64aa24edef8fca",
+        "observed_center_camera_m": [
+          -0.059076885235253215,
+          0.016997163660538415,
+          0.893
+        ],
+        "prompt": "a brush"
+      },
+      "extents_xyz_m": [
+        0.23592676,
+        0.04566219,
+        0.07842906
+      ],
+      "collision": "vhacd_convex_parts",
+      "collision_parts": [
+        {
+          "mesh_path": "assets/brush_collision_00.obj",
+          "geom_name": "brush_collision_00",
+          "volume_m3": 0.00019611158032582885,
+          "sha256": "c5eeef9614b299632f396b5c94cdb5d898823a229359cd71268024a359402f8e"
+        },
+        {
+          "mesh_path": "assets/brush_collision_01.obj",
+          "geom_name": "brush_collision_01",
+          "volume_m3": 1.529837361304212e-05,
+          "sha256": "53215a63bafecd71dab2baebcd082927c631ef7ff865c0801bbaa55c8a3bd569"
+        },
+        {
+          "mesh_path": "assets/brush_collision_02.obj",
+          "geom_name": "brush_collision_02",
+          "volume_m3": 2.1889225324844683e-05,
+          "sha256": "f40832579e1f0f42c4faeb19d121baa2ee2d4259371984a2f4e5d35c7a06c4dc"
+        },
+        {
+          "mesh_path": "assets/brush_collision_03.obj",
+          "geom_name": "brush_collision_03",
+          "volume_m3": 1.8868059187175153e-05,
+          "sha256": "b82aa883af8a97fce47b9b489c4e480e14d8e372fe32926a88f5e9bb1352f4f3"
+        }
+      ],
+      "collision_method": {
+        "name": "VHACD",
+        "max_convex_hulls": 4,
+        "resolution": 100000,
+        "max_vertices_per_hull": 48,
+        "total_mass_kg": 0.12
+      },
+      "brush_face_normal_object": [
+        0,
+        0,
+        -1
+      ],
+      "orientation_rule": "bristles_down_face_parallel_to_table"
+    },
+    "cube": {
+      "role": "movable_block",
+      "T_world_object": [
+        [
+          0.9396926207859084,
+          0.3420201433256687,
+          0.0,
+          0.32
+        ],
+        [
+          -0.3420201433256687,
+          0.9396926207859084,
+          0.0,
+          -0.09
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "mesh_path": "assets/cube.obj",
+      "source_mesh_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/perception/cube/mesh.obj",
+      "source_kind": "mask_depth_metric_box_user_scaled",
+      "mesh_sha256": "ce1760060335726a88f7e805821f151ea038ea010075b51d4f54e452380e1b9c",
+      "source_sha256": "4a445b9ad74428b76f03744649133d2b56f9140e7187a4731db3200c66978cd6",
+      "T_object_source_mesh": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          -0.0,
+          -0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0112038
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "perception": {
+        "mask_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/perception/cube_mask.png",
+        "mask_sha256": "6ab5d6d839b64f53653e73f08fa65ff30b78108e02d6d064064cbdb820d56ac9",
+        "observed_center_camera_m": [
+          -0.27327899082620466,
+          0.10442025818825687,
+          0.85
+        ],
+        "prompt": "a small green cube"
+      },
+      "inferred_side_m": 0.044815203090564484,
+      "scene_scale_factor": 0.5,
+      "extents_xyz_m": [
+        0.0224076,
+        0.0224076,
+        0.0224076
+      ],
+      "collision": "box_proxy",
+      "orientation_rule": "variable_yaw_cube"
+    },
+    "cube_red": {
+      "role": "movable_block",
+      "T_world_object": [
+        [
+          0.8660254037844387,
+          -0.49999999999999994,
+          0.0,
+          0.43
+        ],
+        [
+          0.49999999999999994,
+          0.8660254037844387,
+          0.0,
+          -0.12
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "mesh_path": "assets/cube.obj",
+      "source_mesh_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/perception/cube/mesh.obj",
+      "source_kind": "shared_cube_asset",
+      "mesh_sha256": "ce1760060335726a88f7e805821f151ea038ea010075b51d4f54e452380e1b9c",
+      "source_sha256": "4a445b9ad74428b76f03744649133d2b56f9140e7187a4731db3200c66978cd6",
+      "T_object_source_mesh": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          -0.0,
+          -0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0112038
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "perception": null,
+      "inferred_side_m": 0.044815203090564484,
+      "scene_scale_factor": 0.5,
+      "extents_xyz_m": [
+        0.0224076,
+        0.0224076,
+        0.0224076
+      ],
+      "concept_path": "concepts/cube.json",
+      "derived_from": "cube",
+      "collision": "box_proxy",
+      "orientation_rule": "variable_yaw_cube"
+    },
+    "cube_blue": {
+      "role": "movable_block",
+      "T_world_object": [
+        [
+          0.8090169943749475,
+          0.5877852522924731,
+          0.0,
+          0.38
+        ],
+        [
+          -0.5877852522924731,
+          0.8090169943749475,
+          0.0,
+          -0.02
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "mesh_path": "assets/cube.obj",
+      "source_mesh_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/perception/cube/mesh.obj",
+      "source_kind": "shared_cube_asset",
+      "mesh_sha256": "ce1760060335726a88f7e805821f151ea038ea010075b51d4f54e452380e1b9c",
+      "source_sha256": "4a445b9ad74428b76f03744649133d2b56f9140e7187a4731db3200c66978cd6",
+      "T_object_source_mesh": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          -0.0,
+          -0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0112038
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "perception": null,
+      "inferred_side_m": 0.044815203090564484,
+      "scene_scale_factor": 0.5,
+      "extents_xyz_m": [
+        0.0224076,
+        0.0224076,
+        0.0224076
+      ],
+      "concept_path": "concepts/cube.json",
+      "derived_from": "cube",
+      "collision": "box_proxy",
+      "orientation_rule": "variable_yaw_cube"
+    },
+    "dustpan": {
+      "role": "receptacle",
+      "T_world_object": [
+        [
+          6.123233995736766e-17,
+          1.0,
+          0.0,
+          0.38
+        ],
+        [
+          -1.0,
+          6.123233995736766e-17,
+          0.0,
+          0.12
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "mesh_path": "assets/dustpan.obj",
+      "source_mesh_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/perception/dustpan/mesh_simplified.obj",
+      "source_kind": "sam3d_single_view",
+      "mesh_sha256": "8a31f9511369b4c4203164a1651440f3ee4a8dedeb6be249806db16a18687ba7",
+      "source_sha256": "3e2a4236a6c33efb87fd95095afa6771450e98c5a85ca649ebc86486bebba122",
+      "T_object_source_mesh": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          1.0335000000000205e-05
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          -0.00018682999999999894
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.00949939
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "perception": {
+        "mask_path": "/home/ubuntu/Documents/yixuan/Gene_Agent/data/realworld/brush_cube_dustpan_0/perception/dustpan_mask.png",
+        "mask_sha256": "19f83bf3cfca2ff148749e24601119cdfb020b10ad35a3bb5a9c5cc5839d7022",
+        "observed_center_camera_m": [
+          -0.2842673821582169,
+          -0.07365225599168036,
+          1.105
+        ],
+        "prompt": "a white plastic dustpan"
+      },
+      "extents_xyz_m": [
+        0.16473935,
+        0.1463134,
+        0.01978986
+      ],
+      "collision": "open_tray_proxy",
+      "orientation_rule": "scoop_opening_toward_cube"
+    }
+  },
+  "randomization": {
+    "distribution": "independent_uniform_xy_yaw_about_nominal",
+    "frame": "world",
+    "length_unit": "m",
+    "angle_unit": "rad",
+    "ranges_xyyaw_rad": {
+      "brush": [
+        0.06,
+        0.055,
+        0.6108652381980153
+      ],
+      "cube": [
+        0.09,
+        0.07,
+        1.5707963267948966
+      ],
+      "cube_red": [
+        0.09,
+        0.07,
+        1.5707963267948966
+      ],
+      "cube_blue": [
+        0.09,
+        0.07,
+        1.5707963267948966
+      ],
+      "dustpan": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "table_bounds_xy_m": [
+      -0.1,
+      0.86,
+      -0.5,
+      0.5
+    ],
+    "min_clearance_m": 0.015,
+    "max_attempts": 200,
+    "fixed_objects": [
+      "dustpan"
+    ],
+    "valid_initial_state": "inside_table_and_clear_at_sampling_then_settled_without_excess_displacement"
+  },
+  "reachability_probe": {
+    "brush": {
+      "target_tcp_position_world_m": [
+        0.38,
+        -0.26,
+        0.14
+      ],
+      "position_error_m": 1.77506469314945e-05,
+      "joint_positions_rad": [
+        -0.34361382631718174,
+        0.5527663778884875,
+        -0.1787823489736303,
+        1.046236923869825,
+        -0.11991358757808868,
+        1.2060977086325335,
+        5.3889587603666996e-05
+      ],
+      "position_only_reachable": true,
+      "orientation_checked": false,
+      "collision_and_path_checked": false
+    },
+    "cube": {
+      "target_tcp_position_world_m": [
+        0.32,
+        -0.09,
+        0.14
+      ],
+      "position_error_m": 1.3847421463276576e-05,
+      "joint_positions_rad": [
+        -0.12261009769017565,
+        0.330128053892021,
+        -0.08368584899192126,
+        1.2658343536578147,
+        -0.0630742401865738,
+        1.432987800048916,
+        2.6744759632441683e-05
+      ],
+      "position_only_reachable": true,
+      "orientation_checked": false,
+      "collision_and_path_checked": false
+    },
+    "cube_red": {
+      "target_tcp_position_world_m": [
+        0.43,
+        -0.12,
+        0.14
+      ],
+      "position_error_m": 1.6421747336913617e-05,
+      "joint_positions_rad": [
+        -0.15077013470468342,
+        0.518517241885201,
+        -0.08209597903917457,
+        1.0591850698240428,
+        -0.05650886980273527,
+        1.2396348008043674,
+        2.508774961253326e-05
+      ],
+      "position_only_reachable": true,
+      "orientation_checked": false,
+      "collision_and_path_checked": false
+    },
+    "cube_blue": {
+      "target_tcp_position_world_m": [
+        0.38,
+        -0.02,
+        0.14
+      ],
+      "position_error_m": 1.4380744743031782e-05,
+      "joint_positions_rad": [
+        -0.025797485823223016,
+        0.40528147925336355,
+        -0.016115864514609415,
+        1.1740054318741564,
+        -0.011746526421102658,
+        1.357421436446812,
+        5.050785986490312e-06
+      ],
+      "position_only_reachable": true,
+      "orientation_checked": false,
+      "collision_and_path_checked": false
+    },
+    "dustpan": {
+      "target_tcp_position_world_m": [
+        0.38,
+        0.12,
+        0.14
+      ],
+      "position_error_m": 1.5065181769179709e-05,
+      "joint_positions_rad": [
+        0.15575199321939048,
+        0.43754326201384464,
+        0.09343407760942725,
+        1.1465771820480868,
+        0.06675583234636193,
+        1.3242286460192154,
+        -2.8927715278997354e-05
+      ],
+      "position_only_reachable": true,
+      "orientation_checked": false,
+      "collision_and_path_checked": false
+    }
+  },
+  "task_draft": {
+    "id": "sweep_cube_into_dustpan",
+    "status": "mujoco_skill_available",
+    "tool": "brush",
+    "targets": [
+      "cube",
+      "cube_red",
+      "cube_blue"
+    ],
+    "receptacle": "dustpan"
+  },
+  "simulation_attachment_pairs": {
+    "left": "brush"
+  },
+  "limitations": [
+    "物体相对机械臂位置是可达性导向的仿真排布，不是未标定相机的严格实景复现。",
+    "源 mesh 为单视角重建，collision 是近似代理；随机评测仅覆盖 scene.json 声明的 XY/yaw 分布，刷柄夹持使用接触核验后的仿真辅助 weld。",
+    "Pika 法兰平移和 TCP 未经实物标定。"
+  ]
+}

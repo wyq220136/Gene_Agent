@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "source": "AffordToolAct/data/task_1/debug/pose_planner_comparison/microwave_task1_Bowl_0.json:scene_snapshot.objects[virtual_table]",
+  "legacy_dimensions_source": "AffordToolAct/scripts/run_microwave_door_cycle.py:_add_table_collision",
+  "source_scene_table": {
+    "center_world_m": [0.5, 0.4, -0.1375],
+    "size_xyz_m": [0.9, 0.9, 0.035]
+  },
+  "legacy_virtual_table": {
+    "center_world_m": [0.1, 0.3, -0.21601678639650346],
+    "size_xyz_m": [0.6, 0.6, 0.02]
+  },
+  "note": "只用于 task_1 旧视觉取出桌面碰撞与显示对齐；旧 profile 的 TCP/keypose 数值不变。"
+}

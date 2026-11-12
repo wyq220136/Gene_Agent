@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "sweep_long_task",
+  "version": 1,
+  "title": "竖立长刷抓取与三方块入簸箕",
+  "scene": {
+    "module": "benchmarks.sweep_long_task.scene",
+    "input": "data/realworld/my_scene_0/scenes/sweep_long",
+    "initialization": "prepare_long_brush_scene；保留 small/wide/stress 分布及有效初态重采样规则"
+  },
+  "evaluation": {
+    "module": "benchmarks.sweep_cube_task.evaluation",
+    "entry": "evaluate_cube_in_dustpan",
+    "evidence": "与普通刷使用相同入盘判据；另保留顶抓与离架操作检查"
+  },
+  "evidence_mode": "MuJoCo 接触；双指核验后显式辅助持刷，机器人重力补偿按场景记录"
+}

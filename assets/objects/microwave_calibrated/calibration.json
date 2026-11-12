@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "method": "annotated RGB-D plane fits and handle-relative constrained scaling",
+  "source": "data/task_1",
+  "units": "meter",
+  "depth_conversion_to_m": 0.001,
+  "camera_frame": "OpenCV: +X right, +Y down, +Z forward",
+  "model_frame": "+X appliance right, -Y front, +Z up; root at source cabinet ground origin",
+  "axis_scale_factors_xyz": [
+    0.9332155122417093,
+    0.8130123684872834,
+    0.8130123684872834
+  ],
+  "closed_dimensions_including_handle_m": [
+    0.4479434458760204,
+    0.3065056629197058,
+    0.23577358686131217
+  ],
+  "cabinet_shell_dimensions_m": [
+    0.4479434458760204,
+    0.26829408160080354,
+    0.2211393642285411
+  ],
+  "T_camera_from_scaled_model": [
+    [
+      -0.041384128930686465,
+      -0.9991373340887637,
+      0.003455647934594957,
+      -0.46571687411464896
+    ],
+    [
+      -0.8710834325638667,
+      0.03438566727560701,
+      -0.4899298719191997,
+      -0.0017351319517119994
+    ],
+    [
+      0.48938840135969813,
+      -0.0232854786510972,
+      -0.8717549994686521,
+      0.8728330840991768
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "position_camera_m": [
+    -0.46571687411464896,
+    -0.0017351319517119994,
+    0.8728330840991768
+  ],
+  "quaternion_camera_wxyz": [
+    -0.17410236850504787,
+    -0.670071862426404,
+    0.6977687288197545,
+    -0.18387731112512667
+  ],
+  "transform_application": "p_camera = R_camera_from_model @ (axis_scale_factors_xyz * p_source_model) + position_camera_m",
+  "T_right_frame_from_scaled_model_if_extrinsic_is_camera_to_right": [
+    [
+      -0.011088820073694368,
+      0.9990248803563045,
+      -0.04273586568627138,
+      0.6422432416699206
+    ],
+    [
+      -0.9997300422805634,
+      -0.011949127242335248,
+      -0.019928199605369075,
+      0.3310605942581378
+    ],
+    [
+      -0.02041942271493362,
+      0.042503347037074694,
+      0.998887650376317,
+      -0.010741903477732184
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "extrinsic_warning": "right_extrinsic_matrix is supplied without direction metadata; downstream must confirm its convention before using right-frame pose. Camera-frame calibration does not depend on it.",
+  "observations": {
+    "mask_is_handle_only": true,
+    "mask_bbox_uv": [
+      255,
+      59,
+      342,
+      235
+    ],
+    "top_to_visible_door_bottom_m": 0.21951333949156648,
+    "handle_center_to_appliance_left_plane_m": 0.33595758440701534,
+    "bottom_edge_point_count": 280,
+    "handle_point_count": 2411,
+    "bottom_edge_z_median_absolute_deviation_m": 0.0025894227190815244,
+    "handle_axis_x_median_absolute_deviation_m": 0.001687003499653117,
+    "image_cropped_at": [
+      "top",
+      "left"
+    ],
+    "prior_conceptual_full_mesh_extents_xyz_m": [
+      0.35000000000000003,
+      0.23,
+      0.26
+    ],
+    "prior_simplified_mesh_extents_xyz_m": [
+      0.028126770000000002,
+      0.13058827,
+      0.055807289999999996
+    ]
+  },
+  "fit_metrics": {
+    "top": {
+      "normal": [
+        -0.002271498097907711,
+        -0.4992113653466848,
+        -0.8664772662944422
+      ],
+      "offset": 0.5174807095085243,
+      "samples": 11633,
+      "inliers": 9867,
+      "rms_m": 0.0014859984986822553,
+      "median_absolute_residual_m": 0.001191404079533056
+    },
+    "front": {
+      "normal": [
+        0.9976758306763498,
+        -0.054635605304329975,
+        0.04071716489743597
+      ],
+      "offset": 0.28535645108917373,
+      "samples": 6103,
+      "inliers": 5474,
+      "rms_m": 0.0011849002540417495,
+      "median_absolute_residual_m": 0.0008116824293391907
+    },
+    "left_side": {
+      "normal": [
+        0.015121639223999159,
+        0.8769764569727008,
+        -0.4802953569864985
+      ],
+      "offset": 0.2062271083651027,
+      "samples": 1045,
+      "inliers": 992,
+      "rms_m": 0.0012695722985276263,
+      "median_absolute_residual_m": 0.0007663488934336495
+    }
+  },
+  "axis_evidence": {
+    "x": "Constrained by measured left-side-plane to handle-center span; total width extrapolated using original handle lateral placement. Full right edge is cropped.",
+    "y": "Prior only: source depth/height ratio retained by sy=sz. Rear depth boundary is outside image; no claim of measured full depth.",
+    "z": "Top plane to visible lower front edge measured in RGB-D; mapping assumes source door bottom z=.020 and top z=.290. Feet and exact lowest body point are not directly observed."
+  },
+  "uncertainty": {
+    "type": "engineering estimates, not statistical confidence intervals",
+    "observed_height_m_plus_minus": 0.008,
+    "observed_handle_left_span_m_plus_minus": 0.01,
+    "full_width_m_plus_minus": 0.03,
+    "full_depth_m_plus_minus": 0.05,
+    "full_height_m_plus_minus": 0.012,
+    "orientation_deg_plus_minus": 2,
+    "translation_m_plus_minus": 0.015
+  },
+  "assumptions": [
+    "RGB and depth pixels are registered and share the supplied intrinsic matrix.",
+    "Visible top, front and left side are approximately orthogonal despite rounded/beveled enamel.",
+    "Front ROI describes the nearly planar door skin; the model front plane is y=-.184 m before scaling.",
+    "Bottom-edge corridor is manually annotated; color selection is valid for this image only.",
+    "Handle mask is not used as whole-object segmentation.",
+    "Existing pose is used only for normal-sign disambiguation and handle outlier rejection.",
+    "Full width relies on authored handle placement; depth relies entirely on prior proportions.",
+    "Cavity, far side, feet, mass, inertia and joint axes are not fully recoverable from this cropped RGB-D frame."
+  ],
+  "manual_annotations": {
+    "plane_roi_pixels": {
+      "top": [
+        [
+          0,
+          5
+        ],
+        [
+          175,
+          5
+        ],
+        [
+          65,
+          400
+        ],
+        [
+          0,
+          390
+        ]
+      ],
+      "front": [
+        [
+          136,
+          411
+        ],
+        [
+          192,
+          485
+        ],
+        [
+          251,
+          519
+        ],
+        [
+          268,
+          484
+        ],
+        [
+          216,
+          443
+        ],
+        [
+          212,
+          415
+        ]
+      ],
+      "left_side": [
+        [
+          5,
+          489
+        ],
+        [
+          65,
+          490
+        ],
+        [
+          160,
+          555
+        ],
+        [
+          10,
+          561
+        ]
+      ]
+    },
+    "bottom_edge_corridor": "u = 359 - .164*v, v in [260,545], search u-10..u+7, sample 2 px inside ivory boundary"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "profiles": {
+    "microwave_door_handle": {
+      "generator": "trifold_handle",
+      "part": "microwave_handle",
+      "parameters": {
+        "vertical_offset_m": {"values": [0.04]},
+        "tip_x_deg": {"values": [-60.0]},
+        "tip_y_deg": {"values": [0.0]},
+        "depth_m": {"values": [0.013]}
+      },
+      "closing_width": {"mode": "geometry", "clearance_m": 0.001},
+      "postprocess": [
+        {"type": "translate", "frame": "tcp", "xyz_m": [0.0, 0.0, -0.012]}
+      ]
+    }
+  }
+}

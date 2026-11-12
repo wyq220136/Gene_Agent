@@ -1,0 +1,18 @@
+{
+  "profiles": {
+    "microwave_knob_0": {
+      "generator": "cylinder_axial",
+      "part": "knob_0",
+      "parameters": {
+        "surface": ["top"],
+        "depth_m": {"values": [0.005]},
+        "azimuth_deg": {"values": [210]},
+        "tip_x_deg": {"values": [10]}
+      },
+      "closing_width": {"mode": "geometry", "clearance_m": 0.001},
+      "postprocess": [
+        {"type": "translate", "frame": "tcp", "xyz_m": [0, 0, -0.015]}
+      ]
+    }
+  }
+}

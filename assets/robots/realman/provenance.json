@@ -1,0 +1,121 @@
+{
+  "source_root": "/home/ubuntu/Documents/yixuan/AffordToolAct",
+  "files": {
+    "assets/robots/realman/collision/robot_body.json": {
+      "sha256": "cd7f448a7b8b95fafa099d0a2b8f851ef1e0840b65cd16f39544b373279a6664",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/collision/robot_body.json"
+    },
+    "assets/robots/realman/config/realman_left.yml": {
+      "sha256": "a921d0a00265f18d20f0ab81d753ae94b5cb8dee4c4187cff05c1c87bbb7e4f5",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/config/realman_left.yml"
+    },
+    "assets/robots/realman/config/realman_right.yml": {
+      "sha256": "83b2f4dc7383047e7392dc68e8433456d8d478d8c7db8845a0c184fb92d394ca",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/config/realman_right.yml"
+    },
+    "assets/robots/realman/installation.json": {
+      "sha256": "e2916f0f15cfa35b3f6672f30fc1a23db68d8b57a75d36e8c69247daeff8b14b",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/installation.json"
+    },
+    "assets/robots/realman/meshes/arm/base_link.STL": {
+      "sha256": "1518ff4c95ec501172756540cc40f6a072a47ad84249259cb4c98c35d12cc37e",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/base_link.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_1.STL": {
+      "sha256": "cde9bb9c6755ed79ab6b85476f3c9e1cda3176268ba7c96c14d65e07e7bac171",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_1.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_2.STL": {
+      "sha256": "ad12b9f2fc80edbfbba9e12049c58a36aedddb78d58694f558b6b5ef7331faba",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_2.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_3.STL": {
+      "sha256": "4a0b2f1193c05a2846fdd9b6c2333070b6b90957134bb3f22b3e3a67e305e227",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_3.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_4.STL": {
+      "sha256": "5d903745e9369009ac064bc24c080d03f503b3386b8e14325a318cf8fde0959d",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_4.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_5.STL": {
+      "sha256": "2fc93b2bc970eadca950afa3120129766e2bead60234c6d8752d3b223e407046",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_5.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_6.STL": {
+      "sha256": "f9d0216056f7e1512858033163b0415973e1db573a1fee5af1609171967c043f",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_6.STL"
+    },
+    "assets/robots/realman/meshes/arm/link_7.STL": {
+      "sha256": "4e6475a890a85384b300f595b07dcfb6014828477acd34a8f0e50d2920db2e0c",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/arm/link_7.STL"
+    },
+    "assets/robots/realman/meshes/body/realman_body_without_arms.obj": {
+      "sha256": "92af202ce8f07486091ee911fd16fcee1982d42e0fcd2345b9ecaba014668ffd",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/body/realman_body_without_arms.obj"
+    },
+    "assets/robots/realman/meshes/gripper/l_inspire_jaw_base_link.STL": {
+      "sha256": "a178bea319ec7ba651c7b6e5d9bdf4bfc5d783a44f0b1e33e73368f22a464faf",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/l_inspire_jaw_base_link.STL"
+    },
+    "assets/robots/realman/meshes/gripper/l_inspire_jaw_link1.STL": {
+      "sha256": "4b2c0aa630c2785f775b34c58309fd170e97ddfd57fbbff854172eaad96f2403",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/l_inspire_jaw_link1.STL"
+    },
+    "assets/robots/realman/meshes/gripper/l_inspire_jaw_link11.STL": {
+      "sha256": "fd15566513c32ffed9d1d89fea61cd039230de0f54bc951e0eb9e1ba0d4ed016",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/l_inspire_jaw_link11.STL"
+    },
+    "assets/robots/realman/meshes/gripper/l_inspire_jaw_link2.STL": {
+      "sha256": "4b2c0aa630c2785f775b34c58309fd170e97ddfd57fbbff854172eaad96f2403",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/l_inspire_jaw_link2.STL"
+    },
+    "assets/robots/realman/meshes/gripper/l_inspire_jaw_link22.STL": {
+      "sha256": "347811bed7c6bfe350b840cfbdbb92472250155d9e1cdd82c3f4cfb3c8da4e73",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/l_inspire_jaw_link22.STL"
+    },
+    "assets/robots/realman/meshes/gripper/long_gripper_collision.stl": {
+      "sha256": "2c10a1091cc497f2ba48101c15e4a1f9e26b731ead161490ef88cc89381f089a",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/long_gripper_collision.stl"
+    },
+    "assets/robots/realman/meshes/gripper/r_inspire_jaw_base_link.STL": {
+      "sha256": "a178bea319ec7ba651c7b6e5d9bdf4bfc5d783a44f0b1e33e73368f22a464faf",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/r_inspire_jaw_base_link.STL"
+    },
+    "assets/robots/realman/meshes/gripper/r_inspire_jaw_link1.STL": {
+      "sha256": "4b2c0aa630c2785f775b34c58309fd170e97ddfd57fbbff854172eaad96f2403",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/r_inspire_jaw_link1.STL"
+    },
+    "assets/robots/realman/meshes/gripper/r_inspire_jaw_link11.STL": {
+      "sha256": "fd15566513c32ffed9d1d89fea61cd039230de0f54bc951e0eb9e1ba0d4ed016",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/r_inspire_jaw_link11.STL"
+    },
+    "assets/robots/realman/meshes/gripper/r_inspire_jaw_link2.STL": {
+      "sha256": "4b2c0aa630c2785f775b34c58309fd170e97ddfd57fbbff854172eaad96f2403",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/r_inspire_jaw_link2.STL"
+    },
+    "assets/robots/realman/meshes/gripper/r_inspire_jaw_link22.STL": {
+      "sha256": "347811bed7c6bfe350b840cfbdbb92472250155d9e1cdd82c3f4cfb3c8da4e73",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/meshes/gripper/r_inspire_jaw_link22.STL"
+    },
+    "assets/robots/realman/urdf/realman_left.urdf": {
+      "sha256": "a4e7aac05b2354b5fefe7022f6e8db6a6d5a81a450ed60a40fe8d3fc065b2383",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/urdf/realman_left.urdf"
+    },
+    "assets/robots/realman/urdf/realman_right.urdf": {
+      "sha256": "ca8877d6a454a902087c3f5979a9948f85cbc3ab0267b60f2def49800e4b12f3",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/tamp/curobo/assets/realman/urdf/realman_right.urdf"
+    },
+    "config/robots/realman_left_default_pose.json": {
+      "sha256": "585d06095ac5c6b3abf5a1fa8825d77364922abd471716859b2976f9d5c11679",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/configs/robots/realman_left_default_pose.json"
+    },
+    "config/robots/realman_right_default_pose.json": {
+      "sha256": "7e9eccf2c35ca5686cc00c8735391eceb8dcfaaa5afbe6f12e8c3f9f9e0f4fcf",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/configs/robots/realman_right_default_pose.json"
+    },
+    "config/robots/standard_gripper.json": {
+      "sha256": "2470fd9877c956a50b9482218c3b89b0b8fd8746a55e15b012ed89f208be05b5",
+      "source": "/home/ubuntu/Documents/yixuan/AffordToolAct/configs/gripper/standard_gripper.json"
+    }
+  }
+}

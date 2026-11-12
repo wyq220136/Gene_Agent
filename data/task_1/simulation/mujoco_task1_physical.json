@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "seed": 123,
+  "microwave_pose_world": [[0, 1, 0, 0.52], [-1, 0, 0, 0.29], [0, 0, 1, 0.04], [0, 0, 0, 1]],
+  "bowl_pose_world": [[0.36038499164656834, 0, -0.9328036544717773, 0.255], [-0.9328036544717773, 0, -0.3603849916465684, 0.12], [0, 1, 0, -0.078], [0, 0, 0, 1]],
+  "turntable_height_offset_m": -0.011,
+  "microwave_floor_height_offset_m": -0.005,
+  "simulation_attachment_pairs": {"right": "bowl"},
+  "door_config_template": "data/task_1/simulation/door_physical_open.json",
+  "pick_depth_m": 0.015,
+  "insert_depth_offset_m": 0.02,
+  "insert_tcp_table_angle_max_deg": 70,
+  "insert_max_bowl_tilt_deg": 14,
+  "insert_retreat_clearance_margin_m": 0.005,
+  "insert_retreat_minimum_lift_m": 0.0,
+  "insert_retreat_rotation_local_deg": [0, 0, 0],
+  "knob_azimuth_deg": 210,
+  "knob_tip_x_deg": 10,
+  "extract_arm_kp_scale": 16.0,
+  "door_arm_kp_scale": 2.0,
+  "evidence_note": "门真实接触开关；抓碗和取碗仅在双侧指垫接触后使用仿真 weld；旋钮机器人轨迹真实执行，旋钮角沿用 Viser 的运动学提交。"
+}

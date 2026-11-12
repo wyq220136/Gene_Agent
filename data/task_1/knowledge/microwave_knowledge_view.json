@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "preview_microwave_xy_m": [0.52, 0.29],
+  "handle_visual_geom": "microwave_door_handle_visual",
+  "door_joint": "microwave_door_joint",
+  "door_panel_geom": "microwave_door_panel_collision",
+  "knob_joint": "knob_0_joint",
+  "knob_profile": "task_1_knob_0",
+  "handle_profile": "trifold_handle",
+  "profile_overrides": {
+    "task_1_knob_0": {
+      "surface": ["top"]
+    }
+  },
+  "door_push_mode": "right_open",
+  "door_start_angle_rad": 0.5235987755982988,
+  "door_target_angle_rad": 1.4835298641951802,
+  "door_step_rad": 0.3490658503988659,
+  "knob_target_angle_rad": 0.45,
+  "waypoint_step_rad": 0.05,
+  "door_push": {
+    "hinge_fraction_offset": 0.0,
+    "top_down_distance_offset_m": 0.0,
+    "standoff_offset_m": 0.0,
+    "tip_x_offset_deg": 0.0,
+    "tip_y_offset_deg": 0.0,
+    "surface": "auto"
+  }
+}

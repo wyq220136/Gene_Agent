@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gene Agent Task Failure Diagnosis"
+  short_description: "从阶段图、日志和视频追到设计根因并实施可验证修复"
+  default_prompt: "Use $gene-agent-task-failure-diagnosis to trace a completed Gene Agent run to its upstream code cause, audit condition semantics, implement the root-cause fix, and replay the original failed state."

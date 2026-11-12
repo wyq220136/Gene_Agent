@@ -1,0 +1,24 @@
+{
+  "success": true,
+  "mujoco_version": "3.14.0",
+  "links": 4,
+  "joints": 3,
+  "visuals": 57,
+  "collisions": 16,
+  "closed_dimensions_m": [
+    0.44794344,
+    0.3065056626,
+    0.23577359
+  ],
+  "checks": [
+    "All relative mesh references exist",
+    "MuJoCo URDF import succeeds",
+    "Link poses match MJCF at four joint configurations",
+    "Mass, COM and principal inertia match calibrated MJCF",
+    "Exported visual bounds match calibrated dimensions"
+  ],
+  "limitations": [
+    "URDF cannot represent all MJCF solver, contact, armature and site settings.",
+    "This export preserves the existing estimated calibration, not a new fit."
+  ]
+}
