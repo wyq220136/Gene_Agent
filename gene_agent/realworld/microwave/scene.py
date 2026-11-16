@@ -482,7 +482,27 @@ def make_live_microwave_observer(
             expected_serial=expected_serial, max_age_s=max_age_s,
             output_dir=folder / "tracked",
         )
-        angles = angle_reader(observed)
+        from .live_perception import HandleOrbitError
+        diagnostics_path = folder / "door_handle_diagnostics.json"
+        try:
+            angles = angle_reader(observed)
+        except HandleOrbitError as error:
+            try:
+                diagnostics_path.write_text(
+                    json.dumps(error.diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError as write_error:
+                # 诊断写盘失败不能覆盖首个感知拒绝；数值仍保留在原异常中。
+                raise error from write_error
+            raise
+        # 校验失败也留下原始帧与数值；不能只在碰撞场景成功导出后才记录。
+        diagnostics = angles["door"].get("diagnostics")
+        if diagnostics is not None:
+            diagnostics_path.write_text(
+                json.dumps(diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
         anchor = (None if microwave_root_anchor_reader is None else
                   microwave_root_anchor_reader(observed))
         if observation_filter is not None:

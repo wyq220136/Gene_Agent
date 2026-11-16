@@ -35,11 +35,20 @@ def _signed_angle(reference, current, axis) -> float:
     return float(np.arctan2(axis @ np.cross(first, second), first @ second))
 
 
+class HandleOrbitError(ValueError):
+    """保留被拒绝帧的几何证据；上层可在导出碰撞场景前落盘。"""
+
+    def __init__(self, message: str, diagnostics: dict):
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
 class LiveArticulationReader:
     """保持已标定柜体参考，用新把手轨迹检查并更新状态。
 
     门角沿用 AffordToolAct 的把手绕门轴投影 atan2；这里的轴来自 URDF
-    正关节方向，所以不再反号。柜体必须固定，残差检查不能代替独立柜体跟踪。
+    正关节方向，所以不再反号。圆轨道残差检查与测角使用同一个把手中心，
+    不把 mesh 完整朝向误当作额外关节测量。柜体必须固定，这不替代独立柜体跟踪。
     """
 
     def __init__(self, setup: dict, *, include_knob: bool = False,
@@ -54,6 +63,7 @@ class LiveArticulationReader:
         self.root = self.reference[MICROWAVE] @ self.alignment
         self.handle_local = self.alignment @ validate_pose(self.assets["T_asset_handle"])
         self.max_translation = float(max_translation_m)
+        # 旋转上限仅用于依靠朝向测角的旋钮；门把手检查中心圆轨道。
         self.max_rotation = float(max_rotation_rad)
         self._knob_angle = 0.
         self._last_frame = -1
@@ -87,14 +97,51 @@ class LiveArticulationReader:
         raw_door = _signed_angle(closed_handle[:3, 3] - point, live_handle[:3, 3] - point, axis)
         door = self._bounded(raw_door, limits, name="门角")
         expected_handle_mesh = _axis_rotation(axis, door, point) @ self.reference[MICROWAVE]
-        position_error = float(np.linalg.norm(expected_handle_mesh[:3, 3] - current[MICROWAVE][:3, 3]))
+        expected_handle = expected_handle_mesh @ self.handle_local
+        # FoundationPose 返回 mesh 原坐标系 pose；它的原点不等于把手中心。
+        # 测角只使用中心的圆周运动（与 AffordToolAct 一致）。朝向估计变化
+        # 即使不改变中心，也会移动 mesh 原点，不能据此断言柜体移动。
+        residual = live_handle[:3, 3] - expected_handle[:3, 3]
+        position_error = float(np.linalg.norm(residual))
+        mesh_position_error = float(np.linalg.norm(expected_handle_mesh[:3, 3] - current[MICROWAVE][:3, 3]))
         rotation_error = float(Rotation.from_matrix(expected_handle_mesh[:3, :3].T @ current[MICROWAVE][:3, :3]).magnitude())
-        if position_error > self.max_translation or rotation_error > self.max_rotation:
-            raise ValueError("把手观测不符合固定门轴：柜体可能移动或 tracking 漂移，请重新准备感知")
+        closed_vector = closed_handle[:3, 3] - point
+        live_vector = live_handle[:3, 3] - point
+        closed_radius = float(np.linalg.norm(closed_vector - axis * (closed_vector @ axis)))
+        live_radius = float(np.linalg.norm(live_vector - axis * (live_vector @ axis)))
+        diagnostics = {
+            "status": "rejected" if position_error > self.max_translation else "accepted",
+            "check": "handle_center_orbit", "frame_number": observed.frame_number,
+            "observed_at_unix_ms": observed.timestamp_ms,
+            "raw_angle_rad": raw_door, "angle_rad": door,
+            "handle_center_error_m": position_error, "max_translation_m": self.max_translation,
+            "radius_error_m": live_radius - closed_radius,
+            "axial_error_m": float((live_vector - closed_vector) @ axis),
+            "mesh_origin_error_m": mesh_position_error,
+            "mesh_rotation_error_rad": rotation_error,
+            "mesh_rotation_is_diagnostic_only": True,
+            "axis_point_sdk": point.tolist(), "axis_direction_sdk": axis.tolist(),
+            "T_mesh_handle": self.handle_local.tolist(),
+            "reference_mesh_pose_sdk": self.reference[MICROWAVE].tolist(),
+            "observed_mesh_pose_sdk": current[MICROWAVE].tolist(),
+            "expected_handle_center_sdk": expected_handle[:3, 3].tolist(),
+            "observed_handle_center_sdk": live_handle[:3, 3].tolist(),
+        }
+        if position_error > self.max_translation:
+            raise HandleOrbitError(
+                "把手中心偏离固定门轴圆轨道："
+                f"中心误差 {position_error * 1000:.2f} mm > {self.max_translation * 1000:.2f} mm，"
+                f"半径差 {diagnostics['radius_error_m'] * 1000:.2f} mm，"
+                f"轴向差 {diagnostics['axial_error_m'] * 1000:.2f} mm，"
+                f"门角 {math.degrees(raw_door):.2f}°，帧 {observed.frame_number}；"
+                "柜体可能移动或 tracking 漂移，请核对关门参考、mask、标定和当前帧",
+                diagnostics,
+            )
 
         source = f"same_frame_foundationpose:{observed.frame_number}"
         readings = {"door": {"angle_rad": door, "observed_at_unix_ms": observed.timestamp_ms,
-                             "source": source + ":handle_orbit", "raw_angle_rad": raw_door}}
+                             "source": source + ":handle_orbit", "raw_angle_rad": raw_door,
+                             "diagnostics": diagnostics}}
         if self.include_knob:
             point_knob, axis_knob, knob_limits = self._joint("knob")
             reference_knob = self.reference[KNOB]

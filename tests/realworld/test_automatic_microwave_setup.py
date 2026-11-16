@@ -9,7 +9,7 @@ import pytest
 
 from gene_agent.realworld.microwave import perception_setup as setup
 from gene_agent.realworld.microwave.configuration import runtime_configuration
-from gene_agent.realworld.microwave.live_perception import LiveArticulationReader, collision_objects, _axis_rotation
+from gene_agent.realworld.microwave.live_perception import HandleOrbitError, LiveArticulationReader, collision_objects, _axis_rotation
 from gene_agent.realworld.perception import ObservedScene
 from tools.run import run_microwave_task1_realworld as cli
 
@@ -111,12 +111,104 @@ def test_door_angle_and_fixed_cabinet_from_current_frame(prepared_no_knob, door_
     assert set(collision_objects(frame).object_poses_sdk) == {setup.BOWL, setup.MICROWAVE}
 
 
+@pytest.mark.parametrize("door_deg", [0, 40, 85])
+@pytest.mark.parametrize("orientation_deg", [12, 180])
+def test_handle_orientation_change_at_same_center_is_not_cabinet_motion(
+    prepared_no_knob, door_deg, orientation_deg,
+):
+    """中心轨迹不变的朝向估计变化曾被完整 6D pose 校验误拒绝。"""
+    _, record = prepared_no_knob
+    reader = LiveArticulationReader(record)
+    frame = observed(record, door=math.radians(door_deg))
+    mesh = frame.object_poses_sdk[setup.MICROWAVE]
+    center = (mesh @ reader.handle_local)[:3, 3].copy()
+    changed = _axis_rotation([0, 0, 1], math.radians(orientation_deg), center) @ mesh
+    frame.object_poses_sdk[setup.MICROWAVE] = changed
+
+    reading = reader(frame)["door"]
+
+    assert reading["angle_rad"] == pytest.approx(math.radians(door_deg), abs=1e-8)
+    assert reading["diagnostics"]["handle_center_error_m"] == pytest.approx(0., abs=1e-12)
+    assert reading["diagnostics"]["mesh_rotation_error_rad"] == pytest.approx(math.radians(orientation_deg))
+    assert reading["diagnostics"]["mesh_rotation_is_diagnostic_only"] is True
+    np.testing.assert_allclose(reader.anchor(frame)["T_world_scene_asset"], reader.root)
+    # 测角约束不改写 FoundationPose 原始观测；不能伪装为更精确的感知。
+    np.testing.assert_allclose(frame.object_poses_sdk[setup.MICROWAVE], changed)
+
+
+@pytest.mark.parametrize("radial, axial", [(0., .02), (.02, 0.), (-.02, 0.), (.011, .011)])
+def test_handle_center_off_orbit_still_rejected_with_numeric_evidence(prepared_no_knob, radial, axial):
+    _, record = prepared_no_knob
+    reader = LiveArticulationReader(record)
+    reader(observed(record))
+    frame = observed(record, frame=2, door=math.radians(40))
+    point, axis, _ = reader._joint("door")
+    center = (frame.object_poses_sdk[setup.MICROWAVE] @ reader.handle_local)[:3, 3]
+    radius = center - point
+    radius -= axis * (radius @ axis)
+    frame.object_poses_sdk[setup.MICROWAVE][:3, 3] += radial * radius / np.linalg.norm(radius) + axial * axis
+
+    with pytest.raises(HandleOrbitError, match="中心误差.*15.00 mm.*帧 2") as failure:
+        reader(frame)
+
+    evidence = failure.value.diagnostics
+    assert evidence["status"] == "rejected"
+    assert evidence["handle_center_error_m"] == pytest.approx(math.hypot(radial, axial))
+    assert evidence["radius_error_m"] == pytest.approx(radial)
+    assert evidence["axial_error_m"] == pytest.approx(axial)
+    assert evidence["max_translation_m"] == .015
+    with pytest.raises(ValueError, match="尚未通过当前帧几何核对"):
+        reader.anchor(frame)
+
+
+def test_orbit_check_does_not_depend_on_mesh_coordinate_origin(prepared_no_knob):
+    """同一几何换 mesh 坐标原点后，测角和验收结果应不变。"""
+    _, record = prepared_no_knob
+    reader = LiveArticulationReader(record)
+    frame = observed(record, door=math.radians(40))
+    center = (frame.object_poses_sdk[setup.MICROWAVE] @ reader.handle_local)[:3, 3]
+    frame.object_poses_sdk[setup.MICROWAVE] = (
+        _axis_rotation([0, 0, 1], .1, center) @ frame.object_poses_sdk[setup.MICROWAVE])
+    first = reader(frame)["door"]
+    rebased = json.loads(json.dumps(record))
+    change = _axis_rotation([1, 0, 0], .3, [0, 0, 0])
+    change[:3, 3] = [.5, .2, -.3]
+    rebased["assets"]["alignment"] = (np.linalg.inv(change) @ reader.alignment).tolist()
+    rebased["closed_reference_poses_sdk"][setup.MICROWAVE] = (reader.reference[setup.MICROWAVE] @ change).tolist()
+    frame.object_poses_sdk[setup.MICROWAVE] = frame.object_poses_sdk[setup.MICROWAVE] @ change
+
+    second = LiveArticulationReader(rebased)(frame)["door"]
+
+    assert second["angle_rad"] == pytest.approx(first["angle_rad"])
+    assert second["diagnostics"]["handle_center_error_m"] == pytest.approx(first["diagnostics"]["handle_center_error_m"], abs=1e-12)
+    assert second["diagnostics"]["mesh_origin_error_m"] > .015
+
+
+@pytest.mark.parametrize("angle_deg", [-5, 115])
+def test_orbit_change_preserves_door_joint_limits(prepared_no_knob, angle_deg):
+    _, record = prepared_no_knob
+    with pytest.raises(ValueError, match="超出资产关节范围"):
+        LiveArticulationReader(record)(observed(record, door=math.radians(angle_deg)))
+
+
 def test_knob_wrap_uses_real_orientation_not_commanded_angle(prepared):
     _, record = prepared
     reader = LiveArticulationReader(record, include_knob=True)
     for i, angle in enumerate((0, 90, 179, 185, 260, 270)):
         frame = observed(record, frame=i, stamp=1000 + i * 100, knob=math.radians(angle))
         assert reader(frame)["knob"]["angle_rad"] == pytest.approx(math.radians(angle), abs=1e-5)
+
+
+def test_handle_orbit_change_does_not_disable_knob_orientation_check(prepared):
+    _, record = prepared
+    reader = LiveArticulationReader(record, include_knob=True)
+    frame = observed(record)
+    point, axis, _ = reader._joint("knob")
+    column = int(np.argmin(np.abs(frame.object_poses_sdk[setup.KNOB][:3, :3].T @ axis)))
+    tilt_axis = frame.object_poses_sdk[setup.KNOB][:3, column]
+    frame.object_poses_sdk[setup.KNOB] = _axis_rotation(tilt_axis, .3, point) @ frame.object_poses_sdk[setup.KNOB]
+    with pytest.raises(ValueError, match="旋钮观测不符合固定柜体关节轴"):
+        reader(frame)
 
 
 def test_rejects_repeated_frames_missing_knob_and_cabinet_motion(prepared):
@@ -402,12 +494,62 @@ def test_live_observer_checks_camera_then_measures_enabled_objects(prepared, tmp
         microwave_pose_mesh_path=record["meshes"][setup.MICROWAVE])
     assert observer()["door"]["angle_rad"] == pytest.approx(0.)
     assert observer()["door"]["angle_rad"] == pytest.approx(math.radians(85))
+    evidence = json.loads((tmp_path / "observe/0001/door_handle_diagnostics.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "accepted"
+    assert evidence["frame_number"] == 2
+    assert evidence["angle_rad"] == pytest.approx(math.radians(85))
     expected = {setup.BOWL, setup.MICROWAVE} | ({setup.KNOB} if include_knob else set())
     assert all(set(sessions) == expected for sessions in tracked)
     serial[0] = "different-camera"
     with pytest.raises(ValueError, match="serial"):
         observer()
     assert len(tracked) == 2
+
+
+@pytest.mark.parametrize("write_failure", [False, True])
+def test_live_observer_saves_rejected_orbit_before_robot_read_or_scene_export(
+    prepared_no_knob, tmp_path, monkeypatch, write_failure,
+):
+    from gene_agent.realworld.microwave import scene
+    _, record = prepared_no_knob
+    frame = observed(record)
+    frame.object_poses_sdk[setup.MICROWAVE][2, 3] += .1
+
+    def capture(**kwargs):
+        folder = kwargs["output_dir"]
+        folder.mkdir(parents=True)
+        return folder
+
+    monkeypatch.setattr(scene, "capture_frozen_scene_frame", capture)
+    monkeypatch.setattr(scene, "track_observed_scene_from_capture", lambda **kwargs: frame)
+    monkeypatch.setattr(scene, "build_live_microwave_collision_scene",
+                        lambda **kwargs: pytest.fail("rejected perception reached robot read / scene export"))
+    reader = LiveArticulationReader(record)
+    observer = scene.make_live_microwave_observer(
+        output_dir=tmp_path / "observe", camera_endpoint="tcp://camera", expected_serial="camera-1",
+        pose_client=object(), sessions=record["sessions"], side="right", camera_id="0",
+        T_sdk_camera=np.eye(4), robots={}, grippers={}, angle_reader=reader,
+        microwave_root_anchor_reader=reader.anchor, observation_filter=collision_objects,
+        scene_parameters={}, max_age_s=5., include_knob=False,
+        microwave_pose_mesh_path=record["meshes"][setup.MICROWAVE])
+
+    if write_failure:
+        def fail_write(*args, **kwargs):
+            raise OSError("disk full")
+        monkeypatch.setattr(Path, "write_text", fail_write)
+    with pytest.raises(HandleOrbitError) as failure:
+        observer()
+
+    assert not (tmp_path / "observe/0000/scene").exists()
+    if write_failure:
+        assert isinstance(failure.value.__cause__, OSError)
+        assert failure.value.diagnostics["handle_center_error_m"] == pytest.approx(.1)
+        return
+    evidence = json.loads((tmp_path / "observe/0000/door_handle_diagnostics.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "rejected"
+    assert evidence["handle_center_error_m"] == pytest.approx(.1)
+    assert evidence["frame_number"] == frame.frame_number
+    np.testing.assert_allclose(evidence["observed_mesh_pose_sdk"], frame.object_poses_sdk[setup.MICROWAVE])
 
 
 def test_existing_manual_calibration_output_is_accepted_only_for_right_arm(prepared):
