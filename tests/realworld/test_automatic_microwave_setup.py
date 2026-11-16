@@ -43,10 +43,23 @@ def prepared(tmp_path):
     return path, record
 
 
+@pytest.fixture
+def prepared_no_knob(prepared):
+    path, record = prepared
+    record["include_knob"] = False
+    record["reference_confirmation"] = "CLOSED"
+    for field in ("sessions", "closed_reference_poses_sdk", "meshes"):
+        record[field].pop(setup.KNOB)
+    setup.save_json(path, record)
+    return path, record
+
+
 def observed(record, *, frame=1, stamp=1000., door=0., knob=0.):
     refs = {k: np.array(v) for k, v in record["closed_reference_poses_sdk"].items()}
     root = refs[setup.MICROWAVE] @ np.array(record["assets"]["alignment"])
     for name, key, angle in (("door", setup.MICROWAVE, door), ("knob", setup.KNOB, knob)):
+        if key not in refs:
+            continue
         joint = record["assets"]["joints"][name]
         point = (root @ np.array(joint["T_asset_joint"]))[:3, 3]
         axis = root[:3, :3] @ np.array(joint["axis_asset"])
@@ -59,6 +72,9 @@ def test_configuration_requires_no_site_or_state_file(prepared):
     path, _ = prepared
     config = runtime_configuration(perception=path.parent, left_ip="192.168.1.1", right_ip="192.168.1.2")
     assert "state_file" not in config
+    assert config["include_knob"] is False
+    assert set(config["pose_sessions"]) == {setup.BOWL, setup.MICROWAVE}
+    assert "knob" not in config["subtask_options"]
     assert config["robot_ports"] == {"left": 8080, "right": 8080}
     assert config["scene_drift_limits"] is not None
     for kind, options in config["subtask_options"].items():
@@ -68,33 +84,36 @@ def test_configuration_requires_no_site_or_state_file(prepared):
     np.testing.assert_allclose(alignment @ inverse, np.eye(4), atol=1e-12)
 
 
-def test_static_cli_never_connects_devices(prepared, monkeypatch, capsys):
-    path, _ = prepared
+@pytest.mark.parametrize("flags", [[], ["--no-knob"]])
+def test_static_cli_never_connects_devices(prepared_no_knob, monkeypatch, capsys, flags):
+    path, _ = prepared_no_knob
     monkeypatch.setattr(cli, "run_site", lambda *a, **k: pytest.fail("static check connected devices"))
     assert cli.main(["--perception", str(path.parent), "--left-ip", "192.168.1.1", "--right-ip", "192.168.1.2",
-                     "--subtask", "all", "--no-knob", "--check-config"]) == 0
+                     "--subtask", "all", "--check-config", *flags]) == 0
     assert "自动装配" in capsys.readouterr().out
     assert not (path.parent / "realworld_state.json").exists()
 
 
 @pytest.mark.parametrize("door_deg", [0, 20, 85, 110])
-def test_door_angle_and_fixed_cabinet_from_current_frame(prepared, door_deg):
-    _, record = prepared
+def test_door_angle_and_fixed_cabinet_from_current_frame(prepared_no_knob, door_deg):
+    _, record = prepared_no_knob
     reader = LiveArticulationReader(record)
     first = observed(record)
     reader(first)
     frame = observed(record, frame=2, stamp=90000., door=math.radians(door_deg))
     reading = reader(frame)
+    assert set(reading) == {"door"}
     assert reading["door"]["angle_rad"] == pytest.approx(math.radians(door_deg), abs=1e-5)
     assert reading["door"]["observed_at_unix_ms"] == 90000.
     assert reader.anchor(frame)["verified_at_unix_ms"] == 90000.
+    assert reader.anchor(frame)["checked_parts"] == ["door"]
     np.testing.assert_allclose(reader.anchor(frame)["T_world_scene_asset"], reader.root)
     assert set(collision_objects(frame).object_poses_sdk) == {setup.BOWL, setup.MICROWAVE}
 
 
 def test_knob_wrap_uses_real_orientation_not_commanded_angle(prepared):
     _, record = prepared
-    reader = LiveArticulationReader(record)
+    reader = LiveArticulationReader(record, include_knob=True)
     for i, angle in enumerate((0, 90, 179, 185, 260, 270)):
         frame = observed(record, frame=i, stamp=1000 + i * 100, knob=math.radians(angle))
         assert reader(frame)["knob"]["angle_rad"] == pytest.approx(math.radians(angle), abs=1e-5)
@@ -102,7 +121,7 @@ def test_knob_wrap_uses_real_orientation_not_commanded_angle(prepared):
 
 def test_rejects_repeated_frames_missing_knob_and_cabinet_motion(prepared):
     _, record = prepared
-    reader = LiveArticulationReader(record)
+    reader = LiveArticulationReader(record, include_knob=True)
     frame = observed(record)
     reader(frame)
     with pytest.raises(ValueError, match="同一新帧"):
@@ -120,6 +139,63 @@ def test_reference_input_tampering_rejected(prepared):
     Path(record["camera"]["path"]).write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="输入已改变"):
         runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2")
+
+
+def test_with_knob_requires_perception_prepared_for_knob(prepared_no_knob):
+    path, _ = prepared_no_knob
+    with pytest.raises(ValueError, match="--with-knob"):
+        runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2", no_knob=False)
+
+
+@pytest.mark.parametrize("flags, enabled", [([], False), (["--no-knob"], False), (["--with-knob"], True)])
+def test_prepare_cli_defaults_to_no_knob(tmp_path, monkeypatch, flags, enabled):
+    from tools.run import prepare_microwave_realworld as prepare_cli
+    monkeypatch.setattr(prepare_cli.sys.stdin, "isatty", lambda: True)
+    calls = []
+    def prepare(**kwargs):
+        calls.append(kwargs)
+        return tmp_path / "perception_setup.json"
+    monkeypatch.setattr(prepare_cli, "prepare_perception", prepare)
+    assert prepare_cli.main(["--camera-params", str(tmp_path / "camera.json"),
+                             "--output", str(tmp_path / "new"), *flags]) == 0
+    assert len(calls) == 1
+    assert calls[0]["include_knob"] is enabled
+
+
+def test_with_knob_explicitly_reuses_legacy_three_sessions(prepared):
+    path, _ = prepared
+    config = runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2", no_knob=False)
+    assert config["include_knob"] is True
+    assert setup.KNOB in config["pose_sessions"]
+    assert "knob" in config["subtask_options"]
+    assert cli.main(["--perception", str(path), "--left-ip", "192.168.1.1", "--right-ip", "192.168.1.2",
+                     "--subtask", "rotate_knob", "--with-knob", "--check-config"]) == 0
+
+
+def test_rotate_knob_is_blocked_before_devices(prepared_no_knob, monkeypatch, tmp_path):
+    path, _ = prepared_no_knob
+    config = runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2")
+    monkeypatch.setattr("gene_agent.realworld.devices.arms.realman.connection.connect_realman",
+                        lambda *a, **k: pytest.fail("disabled knob connected robot"))
+    with pytest.raises(ValueError, match="no_knob"):
+        cli.main(["--perception", str(path), "--left-ip", "192.168.1.1", "--right-ip", "192.168.1.2",
+                  "--subtask", "rotate_knob", "--check-config"])
+    with pytest.raises(ValueError, match="no_knob"):
+        cli.run_site(config, subtask="rotate_knob", output_dir=tmp_path / "disabled", execute=False)
+    assert not (tmp_path / "disabled").exists()
+
+
+def test_no_knob_reader_still_rejects_reused_frame_and_moved_handle(prepared_no_knob):
+    _, record = prepared_no_knob
+    reader = LiveArticulationReader(record)
+    frame = observed(record)
+    reader(frame)
+    with pytest.raises(ValueError, match="同一新帧"):
+        reader(frame)
+    moved = observed(record, frame=2)
+    moved.object_poses_sdk[setup.MICROWAVE][2, 3] += .1
+    with pytest.raises(ValueError, match="柜体可能移动"):
+        reader(moved)
 
 
 def test_table_comes_from_depth_and_mask():
@@ -143,7 +219,8 @@ def test_generated_knob_mesh_keeps_pointer(tmp_path):
     assert mesh.extents.max() < .1
 
 
-def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_path, monkeypatch):
+@pytest.mark.parametrize("include_knob", [False, True])
+def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_path, monkeypatch, include_knob):
     _, record = prepared
     calibration = record["camera"]
     registered = []
@@ -156,6 +233,8 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
                     "frame_number": 1, "timestamp_ms": 12., "captured_at_unix_ms": 1000.})
         return directory
     def segment(server, image_path, items):
+        expected = {"bowl", "handle", "table"} | ({"knob"} if include_knob else set())
+        assert {Path(item["mask_path"]).stem for item in items} == expected
         for item in items:
             Image.fromarray(np.full((100, 100), 255, np.uint8)).save(item["mask_path"])
         return 200, {"ok": True}
@@ -169,18 +248,23 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     monkeypatch.setattr("gene_agent.perception_modules.segmentation.seg_client.segment_image", segment)
     monkeypatch.setattr("gene_agent.perception_modules.segmentation.seg_client.unload_model", lambda *a: {})
     monkeypatch.setattr("gene_agent.perception_modules.pose_est.pose_client.PoseClient", Pose)
-    answers = iter(("CLOSED_ZERO", "ACCEPT"))
-    path = setup.prepare_perception(camera_params=calibration["path"], output=tmp_path / "generated", ask=lambda _: next(answers))
+    if not include_knob:
+        monkeypatch.setattr(setup, "export_knob_mesh", lambda *a, **k: pytest.fail("default exported knob mesh"))
+    answers = iter(("CLOSED_ZERO" if include_knob else "CLOSED", "ACCEPT"))
+    flags = {"include_knob": True} if include_knob else {}
+    path = setup.prepare_perception(camera_params=calibration["path"], output=tmp_path / "generated", ask=lambda _: next(answers), **flags)
     _, result = setup.load_perception_setup(path.parent)
-    assert len(registered) == 3
+    assert len(registered) == (3 if include_knob else 2)
+    assert result["include_knob"] is include_knob
+    assert (setup.KNOB in result["sessions"]) is include_knob
     assert len({str(row["rgb_path"]) for row in registered}) == 1
     assert result["accepted"] is True
     assert not list((tmp_path / "generated").rglob("*site*.json"))
     assert not list((tmp_path / "generated").rglob("*state*.json"))
 
 
-def test_new_run_entry_binds_live_reader_and_never_reads_angle_file(prepared, tmp_path, monkeypatch):
-    path, record = prepared
+def test_new_run_entry_binds_live_reader_and_never_reads_angle_file(prepared_no_knob, tmp_path, monkeypatch):
+    path, record = prepared_no_knob
     config = runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2")
     connections, closed = [], []
     class Connection:
@@ -193,10 +277,13 @@ def test_new_run_entry_binds_live_reader_and_never_reads_angle_file(prepared, tm
         connections.append((ip, kwargs))
         return Connection(kwargs["group"])
     def make_observer(**kwargs):
+        assert kwargs["include_knob"] is False
+        assert set(kwargs["sessions"]) == {setup.BOWL, setup.MICROWAVE}
         frames = iter([observed(record), observed(record, frame=2, stamp=90000., door=math.radians(85))])
         def observe():
             frame = next(frames)
             angles = kwargs["angle_reader"](frame)
+            assert set(angles) == {"door"}
             anchor = kwargs["microwave_root_anchor_reader"](frame)
             filtered = kwargs["observation_filter"](frame)
             assert set(filtered.object_poses_sdk) == {setup.BOWL, setup.MICROWAVE}
@@ -239,9 +326,13 @@ def test_gripper_tcp_mismatch_is_rejected(prepared, tmp_path):
         runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2", gripper_config=changed)
 
 
-def test_live_observer_checks_camera_then_measures_three_objects_before_filtering(prepared, tmp_path, monkeypatch):
+@pytest.mark.parametrize("include_knob", [False, True])
+def test_live_observer_checks_camera_then_measures_enabled_objects(prepared, tmp_path, monkeypatch, include_knob):
     from gene_agent.realworld.microwave import scene
     _, record = prepared
+    if not include_knob:
+        for field in ("sessions", "closed_reference_poses_sdk", "meshes"):
+            record[field].pop(setup.KNOB)
     frames = iter([observed(record), observed(record, frame=2, stamp=90000., door=math.radians(85))])
     serial = [record["camera"]["serial"]]
     tracked = []
@@ -259,6 +350,8 @@ def test_live_observer_checks_camera_then_measures_three_objects_before_filterin
         return next(frames)
 
     def build(**kwargs):
+        assert kwargs["include_knob"] is include_knob
+        assert set(kwargs["angles"]) == ({"door", "knob"} if include_knob else {"door"})
         assert set(kwargs["observed"].object_poses_sdk) == {setup.BOWL, setup.MICROWAVE}
         assert kwargs["microwave_root_anchor"]["verified_at_unix_ms"] == kwargs["observed"].timestamp_ms
         return kwargs["angles"]
@@ -266,17 +359,19 @@ def test_live_observer_checks_camera_then_measures_three_objects_before_filterin
     monkeypatch.setattr(scene, "capture_frozen_scene_frame", capture)
     monkeypatch.setattr(scene, "track_observed_scene_from_capture", track)
     monkeypatch.setattr(scene, "build_live_microwave_collision_scene", build)
-    reader = LiveArticulationReader(record)
+    reader = LiveArticulationReader(record, include_knob=include_knob)
     observer = scene.make_live_microwave_observer(
         output_dir=tmp_path / "observe", camera_endpoint="tcp://camera", expected_serial=serial[0],
         pose_client=object(), sessions=record["sessions"], side="right", camera_id="0",
         T_sdk_camera=np.eye(4), robots={}, grippers={}, angle_reader=reader,
         microwave_root_anchor_reader=reader.anchor, observation_filter=collision_objects,
         camera_calibration=record["camera"], scene_parameters={}, max_age_s=5.,
+        include_knob=include_knob,
         microwave_pose_mesh_path=record["meshes"][setup.MICROWAVE])
     assert observer()["door"]["angle_rad"] == pytest.approx(0.)
     assert observer()["door"]["angle_rad"] == pytest.approx(math.radians(85))
-    assert all(set(sessions) == {setup.BOWL, setup.MICROWAVE, setup.KNOB} for sessions in tracked)
+    expected = {setup.BOWL, setup.MICROWAVE} | ({setup.KNOB} if include_knob else set())
+    assert all(set(sessions) == expected for sessions in tracked)
     serial[0] = "different-camera"
     with pytest.raises(ValueError, match="serial"):
         observer()

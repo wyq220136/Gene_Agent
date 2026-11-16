@@ -4,6 +4,7 @@
 **启动服务 → 提供相机标定 → 自动准备感知 → plan-only → 确认后执行**。
 不再创建或手工填写 `realworld_site.json`，也不需要手写门角、旋钮角状态 JSON。
 程序生成的 JSON 用于保存感知结果和运行证据，操作者无需编辑。
+准备感知和运行任务都默认 `no_knob`：不分割、不注册、不跟踪旋钮，也不执行旋钮动作。
 
 `run_microwave_task1_physical.py` 是 MuJoCo 仿真入口。真机概览见[真机微波炉任务入口](realworld_microwave_entry.md)。
 
@@ -14,7 +15,7 @@
 - 当前使用右臂 SDK base 作为场景参考，柜体和相机在本次运行期间必须固定。
 - 使用任务对应的微波炉、碗和标准夹爪资产；标准夹爪 TCP、开口范围必须与规划模型一致。
 - 正式使用 `--collision-mode full`，不能用 `robot_only` 掩盖场景碰撞问题。当前没有任意阶段停止的 `--stop-after-stage` 参数。
-- 旋钮接触需现场单独验收。整条任务可先用 `--no-knob` 跳过旋钮动作；仍跟踪旋钮以核对柜体参考。
+- 当前流程只感知碗、把手和桌面；实时跟踪碗与把手、测量门角。完整任务跳过旋钮，保留第二次开门前的过渡动作。
 
 ## 2. 环境与解释器
 
@@ -120,8 +121,8 @@ CAMERA_PARAMS="$CALIB_OUT/cam_param.json"
 
 ## 5. 自动准备感知
 
-将碗、微波炉和机械臂摆到本次初始位置，把门关紧，上方旋钮置零。
-让相机看清碗、把手、上方旋钮及完整桌面边界。此命令只调用感知服务，不连接机械臂：
+将碗、微波炉和机械臂摆到本次初始位置，把门关紧；无需旋钮置零。
+让相机看清碗、把手及完整桌面边界。此命令只调用感知服务，不连接机械臂：
 
 ```bash
 PERCEPTION=runs/realworld/perception_$(date +%Y%m%d-%H%M%S)
@@ -130,21 +131,21 @@ PERCEPTION=runs/realworld/perception_$(date +%Y%m%d-%H%M%S)
   --output "$PERCEPTION" \
   --bowl-prompt "blue bowl" \
   --handle-prompt "pink microwave door handle" \
-  --knob-prompt "upper microwave knob including pointer" \
   --table-prompt "table top"
 ```
 
 prompt 按实际外观调整。非默认地址用 `--camera-endpoint`、`--seg-server`、`--pose-server` 指定。
 
-1. 输入 `CLOSED_ZERO`，确认门关紧、旋钮零位、柜体和相机固定。
-2. 程序采集同一帧 RGB-D，核对相机标定，自动请求 SAM3 分割四个目标。
-3. 打开输出目录中的 `masks_preview.png`，检查四个 mask；核对终端显示的桌面中心和 XY 尺寸。拟合诊断保存在 `table_measurement.json`，无需编辑。
+1. 输入 `CLOSED`，确认门关紧、柜体和相机固定，不要求旋钮零位。
+2. 程序采集同一帧 RGB-D，核对相机标定，自动请求 SAM3 分割碗、把手和桌面三个目标。
+3. 打开输出目录中的 `masks_preview.png`，检查三个 mask；核对终端显示的桌面中心和 XY 尺寸。拟合诊断保存在 `table_measurement.json`，无需编辑。
 4. 确认桌面边界完整、mask 和标定正确后输入 `ACCEPT`。若边界裁剪或 mask 错误，停止并调整视角或 prompt，使用新目录重跑。
-5. 程序卸载 SAM3，自动注册碗、门把手和旋钮三个 FoundationPose session。碗和把手使用已有 mesh；旋钮 mesh 从当前 URDF 的 visual 自动导出。
-6. 成功后生成 `perception_setup.json`，保存 session、零位参考、桌面结果及标定和资产来源哈希，无需编辑。
+5. 程序卸载 SAM3，使用已有 mesh 自动注册碗和门把手两个 FoundationPose session；不导出旋钮 mesh，不注册旋钮。
+6. 成功后生成 `perception_setup.json`，保存感知范围、session、关门参考、桌面结果及标定和资产来源哈希，无需编辑。
 
-准备完成后保持 Pose 服务运行。运行时读取新帧；初始零位姿态只作为几何参考，不充当当前门角。
+准备完成后保持 Pose 服务运行。运行时读取新帧；初始关门姿态只作为几何参考，不充当当前门角。
 改变标定、资产或准备输入后，需以新目录重新准备。
+切换到本流程时，按上述命令在新目录准备一次。旧版三路感知记录仍可读取，但默认运行也只跟踪碗和把手；不要手改旧记录。
 
 ## 6. 配置和状态来源
 
@@ -152,10 +153,10 @@ prompt 按实际外观调整。非默认地址用 `--camera-endpoint`、`--seg-s
 |---|---|
 | 两臂 IP、端口 | 命令行；端口默认 8080 |
 | 相机外参、内参、序列号 | 已有标定输出 |
-| 碗、把手、旋钮 session | 准备命令自动注册 |
+| 碗、把手 session | 准备命令自动注册，两路跟踪 |
 | 门角 | 当前帧把手 pose 相对固定门轴的圆周投影 |
-| 旋钮角 | 当前帧旋钮方向相对零位的转角，支持跨越 180° |
-| 柜体 pose | 关闭参考与资产 frame 配对；每帧核对把手、旋钮的关节几何一致性 |
+| 旋钮 | 不感知、不操作；碰撞模型保留资产零角的静态代理，标为未观测，不代表实际旋钮角 |
+| 柜体 pose | 关闭参考与资产 frame 配对；每帧核对把手的门轴几何一致性 |
 | 桌面高度、可见 XY 范围 | RGB-D 与桌面 mask 拟合，并由操作者确认 |
 | 资产 frame、关节轴、限位 | 已有场景配置和 URDF，自动读取 |
 | TCP、开口范围 | 标准夹爪 profile，并与规划模型校验 |
@@ -167,7 +168,7 @@ plan-only 时核对碰撞模型与现场一致，更换支撑尺寸时不能直�
 
 角度和 pose 使用同一采集帧的真实时间戳，不会再因忘记更新门角 JSON 而过期。
 但采集、tracking 或场景导出超过 `--max-age-s`（默认 5 秒）时，仍会拒绝过期观测；
-应检查服务延迟或相机状态，不能伪造新时间戳。`--no-knob` 不关闭状态测量。
+应检查服务延迟或相机状态，不能伪造新时间戳。默认 `no_knob` 只关闭旋钮感知，门角和碗、把手 pose 仍实时测量并检查时效。
 
 ## 7. 配置检查与 plan-only
 
@@ -221,11 +222,13 @@ OUT=runs/realworld/insert_bowl_$(date +%Y%m%d-%H%M%S)
 ```bash
 OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 "$PY" tools/run/run_microwave_task1_realworld.py \
-  "${COMMON[@]}" --subtask all --no-knob --collision-mode full --output "$OUT" \
+  "${COMMON[@]}" --subtask all --collision-mode full --output "$OUT" \
   --execute --yes
 ```
 
-旋钮单独验证后再去掉 `--no-knob`。结束或中断后按实物状态检查和复位，不能假定机器人已经回 home。
+省略旋钮参数或显式加 `--no-knob` 的效果相同，单个子任务也使用该默认配置。
+默认模式会直接拒绝 `--subtask rotate_knob`。现有旋钮实现保留为可选能力；以后需要启用时，必须在准备感知和运行命令中都显式加 `--with-knob`，并另行完成旋钮接触验收，不属于本文当前流程。
+结束或中断后按实物状态检查和复位，不能假定机器人已经回 home。
 
 ## 9. 中断与恢复
 
@@ -234,7 +237,7 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 | mask 错误、桌面边界不全 | 调整视角或 prompt，以新目录重新准备 |
 | 相机序列号、内参或标定不一致 | 修正相机配置或重新标定，再准备感知 |
 | tracking session 不存在 | 检查 Pose 服务是否重启，重新准备感知 |
-| 把手或旋钮不符合固定关节轴 | 检查柜体移动、mask、标定及 tracking 漂移，不手改角度 |
+| 把手不符合固定门轴 | 检查柜体移动、mask、标定及 tracking 漂移，不手改角度 |
 | 门角或观测过期 | 检查采集与计算延迟，取得新帧，不修改记录时间 |
 | 阶段失败或夹持不可靠 | 停止后按实物状态复位，保留记录 |
 
@@ -242,9 +245,9 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 
 ## 10. 运行证据
 
-- 感知目录：原始 RGB-D、mask、桌面拟合、零位参考、session 和来源哈希。
+- 感知目录：原始 RGB-D、三个 mask、桌面拟合、关门参考、两个 session 和来源哈希。
 - `runtime_input.json`：自动装配的有效配置、输入来源、profile 和运行参数。
-- `observations/`：每次新帧 tracking、门角和旋钮角、场景与碰撞导出。
+- `observations/`：碗与把手的新帧 tracking、门角、场景与碰撞导出。旋钮仅记录静态碰撞代理及未观测标记，没有实测角或观测时间戳。
 - 各阶段计划、SDK 执行结果、人工确认和异常 traceback。
 
 反馈问题时提供实际命令、解释器和上述输出目录，不要只提交最后一行异常。

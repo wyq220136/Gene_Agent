@@ -139,10 +139,19 @@ def compare_scene_drift(
             failures.append(f"{group} 夹爪开口已偏离规划状态")
     articulated_errors = {}
     for name in ("door_angle_rad", "knob_angle_rad"):
+        part = "door" if name == "door_angle_rad" else "knob"
+        old_unobserved = part == "knob" and before.get("live_state", {}).get(part, {}).get("observed") is False
+        new_unobserved = part == "knob" and after.get("live_state", {}).get(part, {}).get("observed") is False
+        if old_unobserved != new_unobserved:
+            failures.append(f"{name} 感知启用范围已改变")
+        if old_unobserved or new_unobserved:
+            static_error = abs(float(after[name]) - float(before[name]))
+            if not math.isfinite(static_error) or static_error > 1e-9:
+                failures.append("未观测旋钮的静态碰撞代理已变化")
+            continue  # 静态资产占位不构成观测，不能报告它通过了实测漂移检查。
         # 碰撞使用的可能是角度网格。若现场同时保留了原始实测角，
         # 必须两种角度都检查；否则同一网格内的真实门运动会被漏掉。
         grid_error = abs(float(after[name]) - float(before[name]))
-        part = "door" if name == "door_angle_rad" else "knob"
         old_raw = before.get("live_state", {}).get(part, {}).get("measured_angle_rad")
         new_raw = after.get("live_state", {}).get(part, {}).get("measured_angle_rad")
         if (old_raw is None) != (new_raw is None):

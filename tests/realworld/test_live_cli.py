@@ -181,12 +181,11 @@ def test_no_knob_full_task_allows_missing_knob_profile_and_checks_cli(tmp_path, 
                  "--no-knob", "--check-config"]) == 0
 
 
-def test_no_knob_flag_rejected_for_single_subtask(tmp_path):
-    """跳过旋钮只影响完整任务，不能改变单个子任务的含义。"""
+def test_no_knob_flag_allowed_for_single_subtask(tmp_path, monkeypatch):
+    """不感知旋钮同样适用于单个非旋钮子任务。"""
     path = _site_config(tmp_path)
-    with pytest.raises(ValueError, match="--no-knob.*all"):
-        main([*_cli_args(path),
-              "--no-knob", "--check-config"])
+    _inject_legacy_fixture(monkeypatch, path)
+    assert main([*_cli_args(path), "--no-knob", "--check-config"]) == 0
 
 
 def test_missing_camera_extrinsic_rejected_before_connection(tmp_path):

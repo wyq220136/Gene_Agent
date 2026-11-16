@@ -109,7 +109,7 @@ def test_full_task_uses_same_subtask_functions_and_passes_actual_reports(
                      ("run_observed_bowl_extract", extracted),
                      ("run_observed_table_place", table)):
         monkeypatch.setattr(module, name, fn)
-    result = module.run_observed_microwave_task1(**_options(tmp_path))
+    result = module.run_observed_microwave_task1(**_options(tmp_path), include_knob=True)
     assert result["success"] is True
     assert result["status"] == "executed"
     assert tuple(row["step_id"] for row in result["steps"]) == _ORDER
@@ -171,9 +171,9 @@ def test_no_knob_task_reuses_same_subtasks_and_keeps_reopen_transition(
     monkeypatch.setattr(module, "run_observed_bowl_extract", extract)
     monkeypatch.setattr(module, "run_observed_table_place", table)
 
-    result = module.run_observed_microwave_task1(
-        **_options(tmp_path), include_knob=False,
-    )
+    options = _options(tmp_path)
+    del options["subtask_options"]["knob"]
+    result = module.run_observed_microwave_task1(**options)
 
     assert result["success"] is True
     assert result["include_knob"] is False

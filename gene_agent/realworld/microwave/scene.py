@@ -295,6 +295,7 @@ def build_live_microwave_collision_scene(
     scene_parameters: Mapping, max_age_s: float,
     microwave_pose_mesh_path: str | Path,
     microwave_root_anchor: Mapping | None = None,
+    include_knob: bool = True,
 ) -> dict:
     """读两臂与夹爪后调用现有碰撞导出，不运行 MuJoCo 动力学。
 
@@ -307,6 +308,8 @@ def build_live_microwave_collision_scene(
     作为整个微波炉本体的 pose；注册来源真实性还需现场核对。
     若另给本体锚点，须在本次现场确认机身仍静止并提供确认时间；当前
     帧的把手 pose 仍不得写进机身根 pose。
+    ``include_knob=False`` 时只消费门角；旋钮保留资产零角静态代理，
+    来源明确标为未观测，不提供虚假的实测角或新时间戳。
     """
     age_limit = float(max_age_s)
     if not math.isfinite(age_limit) or age_limit <= 0:
@@ -315,8 +318,9 @@ def build_live_microwave_collision_scene(
         raise ValueError("物体 pose 未验证同帧来源")
     if set(robots) != {"left", "right"} or set(grippers) != {"left", "right"}:
         raise ValueError("必须读取两臂关节和两臂夹爪，不能沿用仿真默认状态")
-    if set(angles) != {"door", "knob"}:
-        raise ValueError("必须提供门角与旋钮角的现场读数及来源")
+    required_angles = (("door", "门角"), ("knob", "旋钮角")) if include_knob else (("door", "门角"),)
+    if set(angles) != {key for key, _ in required_angles}:
+        raise ValueError("必须按启用范围提供门角与旋钮角的现场读数及来源")
     reserved = {
         "observed", "joint_positions_by_group", "gripper_widths_m",
         "door_angle_rad", "knob_angle_rad", "turntable_height_offset_m",
@@ -338,7 +342,7 @@ def build_live_microwave_collision_scene(
     check_age(observed.timestamp_ms, "物体同帧 pose ")
     joint_limits = microwave_articulated_joint_limits()
     checked_angles = {}
-    for key, title in (("door", "门角"), ("knob", "旋钮角")):
+    for key, title in required_angles:
         reading = angles[key]
         angle = float(reading["angle_rad"])
         source = reading["source"]
@@ -360,6 +364,10 @@ def build_live_microwave_collision_scene(
                     or abs(measured - angle) > math.radians(5.) + 1e-9):
                 raise ValueError(f"{title}实测值与规划角度不一致")
             checked_angles[key]["measured_angle_rad"] = measured
+    if not include_knob:
+        checked_angles["knob"] = {"angle_rad": 0., "observed": False,
+                                   "source": "disabled_knob_static_asset",
+                                   "claim": "仅碰撞资产默认关节值；未感知、未操作，不是实测角"}
     mesh_name = Path(microwave_pose_mesh_path).name.lower()
     if not mesh_name:
         raise ValueError("必须记录微波炉 FoundationPose 注册 mesh")
@@ -404,7 +412,7 @@ def build_live_microwave_collision_scene(
     completed_at_ms = time.time() * 1000.
     if completed_at_ms - observed.timestamp_ms > age_limit * 1000.:
         raise ValueError("碰撞场景导出完成时物体观测已过期，必须重新采集")
-    for key, title in (("door", "门角"), ("knob", "旋钮角")):
+    for key, title in required_angles:
         if completed_at_ms - checked_angles[key]["observed_at_unix_ms"] > age_limit * 1000.:
             raise ValueError(f"碰撞场景导出完成时{title}已过期，必须重新测量")
     if anchor is not None and completed_at_ms - float(anchor["verified_at_unix_ms"]) > age_limit * 1000.:
@@ -413,7 +421,8 @@ def build_live_microwave_collision_scene(
         "robot_sampled_at_unix_ms": sampled_at_ms,
         "declared_microwave_pose_mesh_path": str(microwave_pose_mesh_path),
         "door": checked_angles["door"], "knob": checked_angles["knob"],
-        "claim": "物体同帧；机器人与关节物体分别在有效期内读取，非同时曝光",
+        "include_knob": bool(include_knob),
+        "claim": "启用物体同帧；机器人与已测关节分别在有效期内读取，未观测部件不代表实测状态",
     }
     output = Path(scene_parameters["output_dir"]).resolve()
     (output / "observed_scene_provenance.json").write_text(
@@ -434,6 +443,7 @@ def make_live_microwave_observer(
     microwave_root_anchor_reader: Callable[[ObservedScene], Mapping | None] | None = None,
     observation_filter: Callable[[ObservedScene], ObservedScene] | None = None,
     camera_calibration: Mapping | None = None,
+    include_knob: bool = True,
 ) -> Callable[[], dict]:
     """生成子任务与完整 Task 共用的同步现场观测回调。
 
@@ -475,6 +485,7 @@ def make_live_microwave_observer(
             angles=angles, scene_parameters={**static, "output_dir": folder / "scene"},
             max_age_s=max_age_s, microwave_pose_mesh_path=microwave_pose_mesh_path,
             microwave_root_anchor=anchor,
+            include_knob=include_knob,
         )
 
     return observe

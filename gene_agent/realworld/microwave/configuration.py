@@ -11,7 +11,7 @@ import numpy as np
 
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.realworld.scene_drift import SceneDriftLimits
-from .perception_setup import ROOT, BOWL, MICROWAVE, load_perception_setup, sha256
+from .perception_setup import ROOT, BOWL, MICROWAVE, KNOB, load_perception_setup, sha256
 
 
 def _positive(value, name):
@@ -23,9 +23,12 @@ def _positive(value, name):
 
 def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str,
                           left_port=8080, right_port=8080, max_age_s=5., speed_scale=.1,
-                          gripper_config=None, no_knob=False) -> dict:
+                          gripper_config=None, no_knob=True) -> dict:
     """默认值属于设备适配层；操作 profile 和阶段算法保持原样。"""
     source, setup = load_perception_setup(perception)
+    objects = (BOWL, MICROWAVE) if no_knob else (BOWL, MICROWAVE, KNOB)
+    if any(name not in setup["sessions"] for name in objects):
+        raise ValueError("启用旋钮需要先用 prepare_microwave_realworld.py --with-knob 重新准备感知")
     ips = {}
     ports = {}
     for side, ip, port in (("left", left_ip, left_port), ("right", right_ip, right_port)):
@@ -81,6 +84,8 @@ def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str
                   "max_table_translation_m": .005, "max_table_rotation_rad": .15,
                   "table_height_alignment": table_alignment},
     }
+    if no_knob:
+        options.pop("knob")
     camera = setup["camera"]
     return {
         "source_path": str(source), "source_sha256": sha256(source), "perception_setup": setup,
@@ -89,7 +94,7 @@ def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str
         "camera": {"endpoint": setup["camera_endpoint"], "serial": camera["serial"],
                    "camera_id": "0", "side": "right", "T_sdk_camera": np.array(camera["T_sdk_camera"]),
                    "max_age_s": max_age_s},
-        "pose_server": setup["pose_server"], "pose_sessions": setup["sessions"],
+        "pose_server": setup["pose_server"], "pose_sessions": {name: setup["sessions"][name] for name in objects},
         "microwave_pose_mesh_path": Path(setup["meshes"][MICROWAVE]),
         "scene_parameters": {"T_world_sdk": np.eye(4),
             "T_perception_object_scene_asset": {BOWL: np.eye(4), MICROWAVE: alignment},

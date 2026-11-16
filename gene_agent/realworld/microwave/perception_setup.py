@@ -181,7 +181,8 @@ def _preview_masks(rgb, masks: dict, output: Path) -> Path:
 def prepare_perception(*, camera_params: str | Path, output: str | Path,
                        camera_endpoint="tcp://127.0.0.1:18082",
                        pose_server="http://127.0.0.1:18081",
-                       seg_server="http://127.0.0.1:18080", prompts=None, ask=input) -> Path:
+                       seg_server="http://127.0.0.1:18080", prompts=None, ask=input,
+                       include_knob: bool = False) -> Path:
     """先确认关闭参考与 mask，再自动注册；只调用感知服务，不连接机械臂。"""
     from gene_agent.perception_modules.pose_est.pose_client import PoseClient
     from gene_agent.perception_modules.segmentation.seg_client import segment_image, unload_model
@@ -190,8 +191,11 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     folder = Path(output).expanduser().resolve()
     if folder.exists() and any(folder.iterdir()):
         raise ValueError("感知准备目录已有内容，请使用新目录")
-    if ask("请关紧门、将上方旋钮置零、固定柜体和相机；确认后输入 CLOSED_ZERO: ").strip() != "CLOSED_ZERO":
-        raise ValueError("未确认门/旋钮零位参考，不采集")
+    confirmation = "CLOSED_ZERO" if include_knob else "CLOSED"
+    reference_prompt = ("请关紧门、将上方旋钮置零、固定柜体和相机" if include_knob else
+                        "请关紧门、固定柜体和相机（当前不感知或操作旋钮）")
+    if ask(f"{reference_prompt}；确认后输入 {confirmation}: ").strip() != confirmation:
+        raise ValueError("未确认本次关闭参考，不采集")
     capture = capture_frozen_scene_frame(output_dir=folder / "capture", endpoint=camera_endpoint,
                                          expected_serial=calibration["serial"])
     rgb = np.asarray(Image.open(capture / "rgb.png").convert("RGB"))
@@ -201,7 +205,8 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     folder.joinpath("masks").mkdir()
     prompts = prompts or {"bowl": "bowl", "handle": "microwave door handle",
                           "knob": "upper microwave knob including pointer", "table": "table top"}
-    masks = {name: folder / "masks" / f"{name}.png" for name in ("bowl", "handle", "knob", "table")}
+    mask_names = ("bowl", "handle", "knob", "table") if include_knob else ("bowl", "handle", "table")
+    masks = {name: folder / "masks" / f"{name}.png" for name in mask_names}
     items = [{"category": name, "prompt": prompts[name], "mask_path": str(path)} for name, path in masks.items()]
     status, response = segment_image(seg_server, capture / "rgb.png", items)
     if status != 200 or response.get("ok") is False:
@@ -213,12 +218,13 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     save_json(folder / "table_measurement.json", table)
     print(f"检查 mask: {preview}\n检查桌面测量: {folder / 'table_measurement.json'}\n"
           f"桌面中心: {np.array(table['table_pose_world'])[:3, 3]}，XY尺寸: {table['table_size_xy_m']}")
-    if ask("确认四个 mask、完整桌面边界及标定正确后输入 ACCEPT（裁剪不全则重采集）: ").strip() != "ACCEPT":
+    if ask(f"确认 {len(masks)} 个 mask、完整桌面边界及标定正确后输入 ACCEPT（裁剪不全则重采集）: ").strip() != "ACCEPT":
         raise ValueError("感知/桌面结果未确认；没有生成可运行的感知记录")
     unload_model(seg_server)
     meshes = {BOWL: ROOT / "data/task_1/objs/Bowl/Bowl_0/meshes/obj_mesh.obj",
-              MICROWAVE: ROOT / "data/task_1/objs/Microwave/Microwave_0/meshes/handle_mesh.obj",
-              KNOB: export_knob_mesh(folder)}
+              MICROWAVE: ROOT / "data/task_1/objs/Microwave/Microwave_0/meshes/handle_mesh.obj"}
+    if include_knob:
+        meshes[KNOB] = export_knob_mesh(folder)
     mask_keys = {BOWL: "bowl", MICROWAVE: "handle", KNOB: "knob"}
     client = PoseClient(pose_server)
     token = uuid4().hex[:12]
@@ -246,12 +252,12 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     sources = {**assets["sources"], calibration["path"]: calibration["sha256"]}
     sources.update({str(path): sha256(path) for path in [*meshes.values(), *masks.values(),
                    capture / "rgb.png", capture / "depth.png", capture / "camera.json"]})
-    record = {"format": FORMAT, "accepted": True, "camera": calibration,
+    record = {"format": FORMAT, "accepted": True, "camera": calibration, "include_knob": bool(include_knob),
               "camera_endpoint": camera_endpoint, "pose_server": pose_server,
               "sessions": sessions, "meshes": {key: str(path) for key, path in meshes.items()},
               "closed_reference_poses_sdk": poses, "reference_frame": camera,
               "assets": assets, "table": table, "input_sha256": sources,
-              "reference_confirmation": "CLOSED_ZERO", "mask_confirmation": "ACCEPT"}
+              "reference_confirmation": confirmation, "mask_confirmation": "ACCEPT"}
     # 只有完成感知和确认才写入口文件；失败目录仅保存诊断，不被运行命令接受。
     path = folder / "perception_setup.json"
     save_json(path, record)
@@ -263,12 +269,19 @@ def load_perception_setup(path: str | Path) -> tuple[Path, dict]:
     if path.is_dir():
         path = path / "perception_setup.json"
     record = json.loads(path.read_text(encoding="utf-8"))
+    # 兼容旧版三个 session 的记录；新记录必须明确保存所选感知范围。
+    include_knob = record.get("include_knob", True)
+    if not isinstance(include_knob, bool):
+        raise ValueError("感知记录的 include_knob 必须为布尔值")
+    expected = {BOWL, MICROWAVE, KNOB} if include_knob else {BOWL, MICROWAVE}
     if (record.get("format") != FORMAT or record.get("accepted") is not True
-            or record.get("reference_confirmation") != "CLOSED_ZERO"
+            or record.get("reference_confirmation") != ("CLOSED_ZERO" if include_knob else "CLOSED")
             or record.get("mask_confirmation") != "ACCEPT"):
         raise ValueError("需要 prepare_microwave_realworld.py 自动生成并确认的感知记录")
-    if set(record["sessions"]) != {BOWL, MICROWAVE, KNOB} or len(set(record["sessions"].values())) != 3:
-        raise ValueError("感知记录必须包含碗、门把手和旋钮三个独立 session")
+    if set(record["sessions"]) != expected or len(set(record["sessions"].values())) != len(expected):
+        raise ValueError("感知 session 必须与准备时选择的对象一致，且每个对象使用独立 session")
+    if set(record["meshes"]) != expected or set(record["closed_reference_poses_sdk"]) != expected:
+        raise ValueError("感知 mesh、关闭参考和 session 的对象集合必须一致")
     if not record.get("input_sha256"):
         raise ValueError("感知记录缺少输入来源哈希")
     for source, digest in record["input_sha256"].items():

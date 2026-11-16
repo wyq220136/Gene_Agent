@@ -326,14 +326,14 @@ def run_observed_microwave_task1(
     output_dir: str | Path, subtask_options: Mapping[str, Mapping],
     execute: bool = False,
     scene_drift_limits: SceneDriftLimits | None = None,
-    include_knob: bool = True, selection: str = "all",
+    include_knob: bool = False, selection: str = "all",
 ) -> dict:
     """按旧 Task1 顺序调用同一批现场子任务，每段消费新的现场观测。
 
     `subtask_options` 分别提供 door/pick/insert/knob/extract/table 的现场
     容差、标定及后置检查器；任务级撤离复用 door 配置。完整 Task 不生成
     第二套操作目标或轨迹，也不隐式重置关节；失败或检查证据未知即停止。
-    `include_knob=False` 沿用旧真机无旋钮流程；第二次开门前的 Task
+    默认 `include_knob=False` 沿用旧真机无旋钮流程；第二次开门前的 Task
     过渡仍保留。`execute=False` 只预检第一段，
     绝不把预测终点交给后续子任务。
     """

@@ -497,6 +497,8 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
     if hashlib.sha256(source.read_bytes()).hexdigest() != config["source_sha256"]:
         raise ValueError("现场配置文件或感知记录在检查后已改变，请重新检查再运行")
     setup = config.get("perception_setup")
+    if subtask == "rotate_knob" and not config.get("include_knob", False):
+        raise ValueError("当前为 no_knob 流程，不允许 rotate_knob")
     if setup is not None:
         from gene_agent.realworld.microwave.perception_setup import load_perception_setup
         load_perception_setup(source)
@@ -513,7 +515,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         "site_config_path": str(source),
         "site_config_sha256": config["source_sha256"],
         "subtask": subtask, "execute": bool(execute),
-        "include_knob": config.get("include_knob", True),
+        "include_knob": config.get("include_knob", False),
         "prepare_held_bowl": bool(prepare_held_bowl),
         "active_group": config["active_group"],
         "robot_ports": config["robot_ports"],
@@ -554,10 +556,11 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
     observer_options = {}
     if setup is not None:
         from gene_agent.realworld.microwave.live_perception import LiveArticulationReader, collision_objects
-        reader = LiveArticulationReader(setup)
+        reader = LiveArticulationReader(setup, include_knob=config.get("include_knob", False))
         read_angles = reader
         read_anchor = reader.anchor
-        observer_options = {"observation_filter": collision_objects, "camera_calibration": setup["camera"]}
+        observer_options = {"observation_filter": collision_objects, "camera_calibration": setup["camera"],
+                            "include_knob": config.get("include_knob", False)}
 
     with _record_entry_errors(output, config["source_sha256"]), ExitStack() as stack:
         try:
@@ -649,7 +652,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                     observe_collision_scene=observer, make_runtime=make_runtime,
                     planner_pool=pool, output_dir=output, subtask_options=options,
                     execute=execute, scene_drift_limits=config["scene_drift_limits"],
-                    include_knob=config.get("include_knob", True),
+                    include_knob=config.get("include_knob", False),
                 )
             hold = config.get("prepared_hold_report")
             prepared = None if hold is None else json.loads(hold.read_text(encoding="utf-8"))
@@ -695,8 +698,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subtask", choices=("all", *SUBTASK_NAMES), required=True)
     parser.add_argument("--output", help="本次记录目录；省略时自动创建带时间戳的目录")
     parser.add_argument("--check-config", action="store_true", help="只检查静态配置，不连接设备")
-    parser.add_argument("--no-knob", action="store_true",
-                        help="仅完整 Task：跳过旋钮，保留第二次开门前过渡")
+    knobs = parser.add_mutually_exclusive_group()
+    knobs.add_argument("--no-knob", dest="no_knob", action="store_true",
+                       help="默认：不感知、不操作旋钮，保留第二次开门前过渡")
+    knobs.add_argument("--with-knob", dest="no_knob", action="store_false",
+                       help="显式启用旋钮；感知记录也必须包含旋钮 session")
+    parser.set_defaults(no_knob=True)
     parser.add_argument("--execute", action="store_true", help="逐段向机器人发令")
     parser.add_argument("--yes", action="store_true", help="确认执行模式；仍需现场后置检查")
     parser.add_argument("--prepare-held-bowl", action="store_true",
@@ -704,8 +711,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.execute and not args.yes:
         raise ValueError("执行真机运动必须显式加 --yes")
-    if args.no_knob and args.subtask != "all":
-        raise ValueError("--no-knob 只适用于 --subtask all")
+    if args.no_knob and args.subtask == "rotate_knob":
+        raise ValueError("默认 no_knob，不执行 rotate_knob；启用旋钮需显式 --with-knob")
     if args.prepare_held_bowl and args.subtask not in {"insert_bowl", "place_bowl_on_table"}:
         raise ValueError("--prepare-held-bowl 只适用于独立放碗或桌面 Place")
     if args.subtask in {"insert_bowl", "place_bowl_on_table"} and not args.prepare_held_bowl:

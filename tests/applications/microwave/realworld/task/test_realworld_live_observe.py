@@ -2,6 +2,7 @@
 
 import json
 import math
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,16 +80,57 @@ def test_live_scene_uses_robot_gripper_and_articulated_readings(tmp_path, monkey
     assert result["provenance"]["live_state"]["robot_sampled_at_unix_ms"] == 1000000.
 
 
-def test_live_scene_rejects_stale_door_reading_before_scene_export(tmp_path, monkeypatch):
+def test_no_knob_scene_does_not_require_or_invent_knob_observation(tmp_path, monkeypatch):
+    from gene_agent.realworld.microwave import scene as module
+    monkeypatch.setattr(module.time, "time", lambda: 1000.)
+    observed, robots, grippers, angles, static = _inputs(tmp_path)
+    del angles["knob"]
+    result = build_live_microwave_collision_scene(
+        observed=observed, robots=robots, grippers=grippers,
+        angles=angles, scene_parameters=static, max_age_s=2., include_knob=False,
+        microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj",
+    )
+    live = result["provenance"]["live_state"]
+    assert live["include_knob"] is False
+    assert live["knob"]["observed"] is False
+    assert live["knob"]["source"] == "disabled_knob_static_asset"
+    assert "observed_at_unix_ms" not in live["knob"]
+    assert "measured_angle_rad" not in live["knob"]
+    model = mujoco.MjModel.from_xml_path(str(result["scene_xml_path"]))
+    qpos = result["snapshot"]["qpos_snapshot"]
+    assert qpos[model.joint("knob_0_joint").qposadr[0]] == pytest.approx(0.)
+    assert qpos[model.joint("microwave_door_joint").qposadr[0]] == pytest.approx(.3)
+    current = deepcopy(result)
+    current["provenance"]["source_frame_number"] += 1
+    limits = SceneDriftLimits(.005, .15, .02, .005, .05)
+    check = compare_scene_drift(result, current, limits=limits)
+    assert check.status == "pass"
+    assert set(check.evidence["articulated_angle_error_rad"]) == {"door_angle_rad"}
+    current["provenance"]["knob_angle_rad"] = .1
+    check = compare_scene_drift(result, current, limits=limits)
+    assert check.status == "fail"
+    assert "静态碰撞代理" in check.reason
+    current["provenance"]["knob_angle_rad"] = 0.
+    current["provenance"]["live_state"]["knob"] = {"angle_rad": 0., "source": "tracking"}
+    check = compare_scene_drift(result, current, limits=limits)
+    assert check.status == "fail"
+    assert "感知启用范围" in check.reason
+
+
+@pytest.mark.parametrize("include_knob", [False, True])
+def test_live_scene_rejects_stale_door_reading_before_scene_export(tmp_path, monkeypatch, include_knob):
     """上一轮门角不能流入新一轮碰撞场景。"""
     from gene_agent.realworld.microwave import scene as module
     monkeypatch.setattr(module.time, "time", lambda: 1000.)
     observed, robots, grippers, angles, static = _inputs(tmp_path)
     angles["door"]["observed_at_unix_ms"] = 996000.
+    if not include_knob:
+        del angles["knob"]
     with pytest.raises(ValueError, match="门角.*过期"):
         build_live_microwave_collision_scene(
             observed=observed, robots=robots, grippers=grippers,
             angles=angles, scene_parameters=static, max_age_s=2.,
+            include_knob=include_knob,
             microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj",
         )
     assert not static["output_dir"].exists()
