@@ -15,7 +15,7 @@
 - 当前使用右臂 SDK base 作为场景参考，柜体和相机在本次运行期间必须固定。
 - 使用任务对应的微波炉、碗和标准夹爪资产；标准夹爪 TCP、开口范围必须与规划模型一致。
 - 正式使用 `--collision-mode full`，不能用 `robot_only` 掩盖场景碰撞问题。当前没有任意阶段停止的 `--stop-after-stage` 参数。
-- 当前流程只感知碗、把手和桌面；实时跟踪碗与把手、测量门角。完整任务跳过旋钮，保留第二次开门前的过渡动作。
+- 当前流程只分割和跟踪碗、把手，实时测量门角；桌面按已有矩形范围和场景深度直接计算，不分割、不做 pose estimation。完整任务跳过旋钮，保留第二次开门前的过渡动作。
 
 ## 2. 环境与解释器
 
@@ -122,7 +122,7 @@ CAMERA_PARAMS="$CALIB_OUT/cam_param.json"
 ## 5. 自动准备感知
 
 将碗、微波炉和机械臂摆到本次初始位置，把门关紧；无需旋钮置零。
-让相机看清碗、把手及完整桌面边界。此命令只调用感知服务，不连接机械臂：
+让相机看清碗、把手，并在已有桌面范围内采到足够的桌面深度；不要求完整桌面边界入镜。此命令只调用感知服务，不连接机械臂：
 
 ```bash
 PERCEPTION=runs/realworld/perception_$(date +%Y%m%d-%H%M%S)
@@ -130,22 +130,21 @@ PERCEPTION=runs/realworld/perception_$(date +%Y%m%d-%H%M%S)
   --camera-params "$CAMERA_PARAMS" \
   --output "$PERCEPTION" \
   --bowl-prompt "blue bowl" \
-  --handle-prompt "pink microwave door handle" \
-  --table-prompt "table top"
+  --handle-prompt "pink microwave door handle"
 ```
 
 prompt 按实际外观调整。非默认地址用 `--camera-endpoint`、`--seg-server`、`--pose-server` 指定。
 
 1. 输入 `CLOSED`，确认门关紧、柜体和相机固定，不要求旋钮零位。
-2. 程序采集同一帧 RGB-D，核对相机标定，自动请求 SAM3 分割碗、把手和桌面三个目标。
-3. 打开输出目录中的 `masks_preview.png`，检查三个 mask；核对终端显示的桌面中心和 XY 尺寸。拟合诊断保存在 `table_measurement.json`，无需编辑。
-4. 确认桌面边界完整、mask 和标定正确后输入 `ACCEPT`。若边界裁剪或 mask 错误，停止并调整视角或 prompt，使用新目录重跑。
+2. 程序采集同一帧 RGB-D，核对相机标定，只请求 SAM3 分割碗、把手两个目标。
+3. 程序按 AffordToolAct 的方式，在已有矩形桌面范围内从标定后的点云计算水平桌面高度；不请求桌面分割，也不做桌面 pose estimation。计算记录保存在 `table_measurement.json`，无需编辑。
+4. 打开 `masks_preview.png` 检查两个物体 mask，核对终端显示的桌面顶高、固定中心和尺寸与现场相符后输入 `ACCEPT`。若物体 mask 错误，调整 prompt；若桌面高度异常，检查深度、标定和场景位置，然后使用新目录重跑。
 5. 程序卸载 SAM3，使用已有 mesh 自动注册碗和门把手两个 FoundationPose session；不导出旋钮 mesh，不注册旋钮。
 6. 成功后生成 `perception_setup.json`，保存感知范围、session、关门参考、桌面结果及标定和资产来源哈希，无需编辑。
 
 准备完成后保持 Pose 服务运行。运行时读取新帧；初始关门姿态只作为几何参考，不充当当前门角。
 改变标定、资产或准备输入后，需以新目录重新准备。
-切换到本流程时，按上述命令在新目录准备一次。旧版三路感知记录仍可读取，但默认运行也只跟踪碗和把手；不要手改旧记录。
+切换到本流程时，按上述命令在新目录重新准备。旧桌面分割流程的记录因桌面来源已改变，需重新生成；不要手改记录或继续使用失败目录。
 
 ## 6. 配置和状态来源
 
@@ -157,13 +156,16 @@ prompt 按实际外观调整。非默认地址用 `--camera-endpoint`、`--seg-s
 | 门角 | 当前帧把手 pose 相对固定门轴的圆周投影 |
 | 旋钮 | 不感知、不操作；碰撞模型保留资产零角的静态代理，标为未观测，不代表实际旋钮角 |
 | 柜体 pose | 关闭参考与资产 frame 配对；每帧核对把手的门轴几何一致性 |
-| 桌面高度、可见 XY 范围 | RGB-D 与桌面 mask 拟合，并由操作者确认 |
+| 桌面高度 | 同帧深度经标定转换到右臂 SDK base，在固定矩形范围内计算最密集水平高度带 |
+| 桌面 XY、厚度 | 已迁移的 AffordToolAct Task1 桌面几何，自动读取；不依赖桌面 mask 或可见边界 |
 | 资产 frame、关节轴、限位 | 已有场景配置和 URDF，自动读取 |
 | TCP、开口范围 | 标准夹爪 profile，并与规划模型校验 |
 | 操作 Skill 参数 | 原有 profile；现场误差检查由配置层统一装配 |
 
 柜体参考依赖“柜体固定”的前提，几何一致性检查不能替代独立柜体测量。
-桌面 XY 是可见范围；桌板厚度和微波炉支撑代理仍来自任务资产，未自动测得。
+桌面默认中心 XY 为 `[0.1, 0.3] m`、尺寸为 `0.6 × 0.6 m`、碰撞厚度为 `0.02 m`，位于右臂 SDK base；来自已有 `data/task_1/knowledge/legacy_extract_visual_table.json` 的 Task1 几何，不需另填文件。
+只复用该文件的 XY 和厚度，旧 Z 高度不参与计算；本次桌面顶高来自深度，碰撞盒中心放在顶高下方 `0.01 m`。
+这与 AffordToolAct 的微波炉桌面处理一致：假设桌面水平，范围固定，高度由场景点云计算。桌面 XY、厚度和微波炉支撑代理均不是本次自动测得的尺寸。
 plan-only 时核对碰撞模型与现场一致，更换支撑尺寸时不能直接沿用。
 
 角度和 pose 使用同一采集帧的真实时间戳，不会再因忘记更新门角 JSON 而过期。
@@ -234,7 +236,8 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 
 | 现象 | 处理 |
 |---|---|
-| mask 错误、桌面边界不全 | 调整视角或 prompt，以新目录重新准备 |
+| 碗或把手 mask 错误 | 调整物体视角或 prompt，以新目录重新准备 |
+| 固定桌面范围内有效深度点太少、计算高度异常 | 检查深度图、标定和场景位置；无需桌面 mask，不手填高度 |
 | 相机序列号、内参或标定不一致 | 修正相机配置或重新标定，再准备感知 |
 | tracking session 不存在 | 检查 Pose 服务是否重启，重新准备感知 |
 | 把手不符合固定门轴 | 检查柜体移动、mask、标定及 tracking 漂移，不手改角度 |
@@ -245,7 +248,7 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 
 ## 10. 运行证据
 
-- 感知目录：原始 RGB-D、三个 mask、桌面拟合、关门参考、两个 session 和来源哈希。
+- 感知目录：原始 RGB-D、两个物体 mask、桌面高度计算及固定几何来源、关门参考、两个 session 和来源哈希。
 - `runtime_input.json`：自动装配的有效配置、输入来源、profile 和运行参数。
 - `observations/`：碗与把手的新帧 tracking、门角、场景与碰撞导出。旋钮仅记录静态碰撞代理及未观测标记，没有实测角或观测时间戳。
 - 各阶段计划、SDK 执行结果、人工确认和异常 traceback。

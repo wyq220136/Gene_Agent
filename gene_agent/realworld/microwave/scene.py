@@ -191,8 +191,15 @@ def build_observed_collision_scene(
     if not np.allclose(support_center, config["microwave_support"]["center_xy_local_m"],
                        rtol=0, atol=1e-9):
         raise ValueError("已核对支撑中心与场景资产不一致；请先校验代理资产")
+    table_config = None
     if not math.isclose(thickness, config["table"]["thickness_m"], rel_tol=0, abs_tol=1e-9):
-        raise ValueError("已核对桌面厚度与场景资产不一致；请先校验代理资产")
+        from .perception_setup import task1_table_geometry
+        if not math.isclose(thickness, task1_table_geometry()["thickness_m"], rel_tol=0, abs_tol=1e-9):
+            raise ValueError("已核对桌面厚度与场景资产不一致；请先校验代理资产")
+        # 真机使用 AffordToolAct 的薄桌面盒，必须同时更新导出几何和元数据，
+        # 不能只改记录里的厚度而仍生成仿真资产的 3.5 cm 厚盒。
+        table_config = {"center_xy_m": table_pose[:2, 3].tolist(), "size_xy_m": table_size.tolist(),
+                        "thickness_m": thickness, "top_z_m": float(table_pose[2, 3] + thickness / 2)}
 
     # 场景只用来计算已有资产的 FK 和碰撞几何；不进行 mj_step、落稳或
     # 接触模拟。物体 pose 来自同一观测帧，桌面由现场单独标定。
@@ -204,7 +211,7 @@ def build_observed_collision_scene(
         destination / "scene", seed=0, perturb=False,
         pose_overrides=poses, table_size_xy_m=tuple(table_size),
         turntable_height_offset_m=0.0, microwave_floor_height_offset_m=0.0,
-        robot_profile="realman_dual_standard",
+        robot_profile="realman_dual_standard", table_config=table_config,
     )
     robot = metadata["robot"]
     positions = {}

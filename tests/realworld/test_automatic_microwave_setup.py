@@ -198,16 +198,40 @@ def test_no_knob_reader_still_rejects_reused_frame_and_moved_handle(prepared_no_
         reader(moved)
 
 
-def test_table_comes_from_depth_and_mask():
+def test_table_uses_fixed_geometry_and_current_depth_in_sdk_frame():
     depth = np.ones((100, 100))
     K = np.array([[100, 0, 50], [0, 100, 50], [0, 0, 1]])
-    mask = np.zeros_like(depth, bool)
-    mask[10:90, 20:80] = True
-    table = setup.table_from_mask(depth, K, np.eye(4), mask, thickness_m=.035)
-    assert np.array(table["table_pose_world"])[2, 3] == pytest.approx(.9825)
-    np.testing.assert_allclose(table["table_size_xy_m"], [.59, .79], atol=1e-6)
-    with pytest.raises(ValueError, match="可靠水平平面"):
-        setup.table_from_mask(depth, K, np.eye(4), np.zeros_like(mask), thickness_m=.035)
+    assets = setup.asset_geometry()
+    assert assets["table_geometry"] == {"center_xy_m": [.1, .3], "size_xy_m": [.6, .6]}
+    assert assets["table_thickness_m"] == .02
+    transform = np.eye(4)
+    transform[2, 3] = -1.2
+    # 只看到部分桌面仍使用已有完整矩形；不要求分割或观察全部边界。
+    depth[:70] = 0.
+    table = setup.table_from_scene_geometry(depth, K, transform, assets["table_geometry"], thickness_m=.02)
+    np.testing.assert_allclose(np.array(table["table_pose_world"])[:3, 3], [.1, .3, -.21], atol=1e-7)
+    assert table["table_top_z_m"] == pytest.approx(-.2)
+    assert table["table_size_xy_m"] == [.6, .6]
+    assert table["footprint_is_visible_extent"] is False
+    assert table["source"] == "registered_rgbd_fixed_table_geometry"
+
+
+def test_table_height_ignores_obstacles_without_requiring_seventy_percent_plane():
+    depth = np.ones((100, 100))
+    depth[:40] = .5
+    K = np.array([[100, 0, 50], [0, 100, 50], [0, 0, 1]])
+    table = setup.table_from_scene_geometry(depth, K, np.eye(4),
+        {"center_xy_m": [0., 0.], "size_xy_m": [2., 2.]}, thickness_m=.02)
+    assert table["table_top_z_m"] == pytest.approx(1.)
+    assert table["point_counts"]["inliers"] == 6000
+    assert table["point_counts"]["inside_geometry"] == 10000
+
+
+@pytest.mark.parametrize("depth", [np.zeros((10, 10)), np.full((10, 10), np.nan), np.full((10, 10), 4.)])
+def test_table_missing_depth_does_not_invent_height(depth):
+    with pytest.raises(ValueError, match="有效深度点太少"):
+        setup.table_from_scene_geometry(depth, np.eye(3), np.eye(4),
+            {"center_xy_m": [0., 0.], "size_xy_m": [.6, .6]}, thickness_m=.02)
 
 
 def test_generated_knob_mesh_keeps_pointer(tmp_path):
@@ -233,7 +257,7 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
                     "frame_number": 1, "timestamp_ms": 12., "captured_at_unix_ms": 1000.})
         return directory
     def segment(server, image_path, items):
-        expected = {"bowl", "handle", "table"} | ({"knob"} if include_knob else set())
+        expected = {"bowl", "handle"} | ({"knob"} if include_knob else set())
         assert {Path(item["mask_path"]).stem for item in items} == expected
         for item in items:
             Image.fromarray(np.full((100, 100), 255, np.uint8)).save(item["mask_path"])
@@ -259,6 +283,14 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     assert (setup.KNOB in result["sessions"]) is include_knob
     assert len({str(row["rgb_path"]) for row in registered}) == 1
     assert result["accepted"] is True
+    assert not (path.parent / "masks/table.png").exists()
+    assert result["table"]["table_size_xy_m"] == [.6, .6]
+    assert result["table"]["accepted_table_thickness_m"] == .02
+    config = runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2")
+    assert config["scene_parameters"]["accepted_table_thickness_m"] == .02
+    assert config["scene_parameters"]["table_size_xy_m"] == [.6, .6]
+    assert config["scene_parameters"]["table_pose_world"][2, 3] == pytest.approx(.99)
+    assert config["runtime"]["min_tcp_z_m"] == pytest.approx(1.02)
     assert not list((tmp_path / "generated").rglob("*site*.json"))
     assert not list((tmp_path / "generated").rglob("*state*.json"))
 

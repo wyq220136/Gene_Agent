@@ -22,5 +22,5 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 
 命令和前置条件见 [真机入口说明](../../docs/user/microwave/realworld_microwave_entry.md)。微波炉自动输入由
 `microwave/perception_setup.py` 采集、分割、注册并保存，`microwave/configuration.py` 读取标定和设备参数，
-`microwave/live_perception.py` 默认从同一新帧的碗、把手跟踪结果测门角并核对固定柜体参考，不感知或操作旋钮；显式 `--with-knob` 才启用旋钮。准备阶段默认分割碗、把手和桌面，不要求手填站点或角度 JSON。
+`microwave/live_perception.py` 默认从同一新帧的碗、把手跟踪结果测门角并核对固定柜体参考，不感知或操作旋钮；显式 `--with-knob` 才启用旋钮。准备阶段只分割碗和把手；桌面复用已迁移的 AffordToolAct Task1 固定 XY 和厚度，从标定后的场景点云计算高度，不做桌面分割或 pose estimation，不要求手填站点或角度 JSON。
 目录合并尚未统一三种后端的完整任务循环，实机效果仍需现场验收。

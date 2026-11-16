@@ -80,6 +80,35 @@ def test_live_scene_uses_robot_gripper_and_articulated_readings(tmp_path, monkey
     assert result["provenance"]["live_state"]["robot_sampled_at_unix_ms"] == 1000000.
 
 
+def test_computed_table_height_and_afford_geometry_reach_collision_export(tmp_path, monkeypatch):
+    from gene_agent.realworld.microwave import scene as module
+    from gene_agent.realworld.microwave.perception_setup import asset_geometry, table_from_scene_geometry
+    monkeypatch.setattr(module.time, "time", lambda: 1000.)
+    observed, robots, grippers, angles, static = _inputs(tmp_path)
+    assets = asset_geometry()
+    K = np.array([[100, 0, 50], [0, 100, 50], [0, 0, 1]])
+    transform = np.eye(4)
+    transform[2, 3] = -1.2
+    table = table_from_scene_geometry(np.ones((100, 100)), K, transform,
+                                     assets["table_geometry"], thickness_m=assets["table_thickness_m"])
+    for key in ("table_pose_world", "table_size_xy_m", "accepted_table_thickness_m"):
+        static[key] = table[key]
+    result = build_live_microwave_collision_scene(
+        observed=observed, robots=robots, grippers=grippers,
+        angles={"door": angles["door"]}, scene_parameters=static, max_age_s=2., include_knob=False,
+        microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj",
+    )
+    model = mujoco.MjModel.from_xml_path(str(result["scene_xml_path"]))
+    data = mujoco.MjData(model)
+    data.qpos[:] = result["snapshot"]["qpos_snapshot"]
+    mujoco.mj_forward(model, data)
+    geom = model.geom("scene_table")
+    np.testing.assert_allclose(geom.size, [.3, .3, .01])
+    np.testing.assert_allclose(data.geom_xpos[geom.id], [.1, .3, -.21], atol=1e-7)
+    assert data.geom_xpos[geom.id, 2] + geom.size[2] == pytest.approx(table["table_top_z_m"])
+    assert result["provenance"]["accepted_table_thickness_m"] == .02
+
+
 def test_no_knob_scene_does_not_require_or_invent_knob_observation(tmp_path, monkeypatch):
     from gene_agent.realworld.microwave import scene as module
     monkeypatch.setattr(module.time, "time", lambda: 1000.)

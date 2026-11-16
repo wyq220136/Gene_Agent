@@ -22,7 +22,6 @@ def main(argv=None):
     parser.add_argument("--bowl-prompt", default="bowl")
     parser.add_argument("--handle-prompt", default="microwave door handle")
     parser.add_argument("--knob-prompt", default="upper microwave knob including pointer")
-    parser.add_argument("--table-prompt", default="table top")
     knobs = parser.add_mutually_exclusive_group()
     knobs.add_argument("--no-knob", dest="include_knob", action="store_false", help="默认：不分割或跟踪旋钮")
     knobs.add_argument("--with-knob", dest="include_knob", action="store_true", help="显式启用旋钮感知和零位确认")
@@ -34,7 +33,7 @@ def main(argv=None):
     path = prepare_perception(camera_params=args.camera_params, output=output,
         camera_endpoint=args.camera_endpoint, pose_server=args.pose_server, seg_server=args.seg_server,
         include_knob=args.include_knob,
-        prompts={name: getattr(args, f"{name}_prompt") for name in ("bowl", "handle", "knob", "table")})
+        prompts={name: getattr(args, f"{name}_prompt") for name in ("bowl", "handle", "knob")})
     print(f"感知准备完成：{path.parent}\n运行入口使用 --perception {path.parent}；无需填写站点或角度 JSON。")
     return 0
 

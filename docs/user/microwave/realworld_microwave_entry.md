@@ -12,7 +12,7 @@ python tools/run/prepare_microwave_realworld.py \
   --output runs/realworld/perception_current
 ```
 
-默认 `no_knob`。输入 `CLOSED` 确认关门、柜体和相机固定，无需旋钮置零；核对碗、把手、桌面三个 mask 和桌面结果。程序只注册碗、把手两个 session，并生成 `perception_setup.json`，该文件用于复用感知结果，无需编辑。正式 CLI 不读取旧 `realworld_site.json`，也不再提供 `--config` 参数。
+默认 `no_knob`。输入 `CLOSED` 确认关门、柜体和相机固定，无需旋钮置零；核对碗、把手两个 mask 和计算出的桌面结果。桌面使用已有矩形范围和标定后的场景深度计算，不分割、不做 pose estimation。程序只注册碗、把手两个 session，并生成 `perception_setup.json`，该文件用于复用感知结果，无需编辑。正式 CLI 不读取旧 `realworld_site.json`，也不再提供 `--config` 参数。
 
 ## 检查和运行
 
@@ -45,7 +45,7 @@ python tools/run/run_microwave_task1_realworld.py \
 每次观测使用同一新 RGB-D 帧跟踪碗与把手，再计算门角；不注册或跟踪旋钮。碰撞中的旋钮保留资产零角的静态代理，标为未观测，不代表实测状态。不再依赖人工更新门角文件；真实过期帧仍会被默认 5 秒时效检查拒绝。
 柜体必须固定，几何一致性检查不等于独立柜体测量。Pose 服务重启、输入改变、柜体或相机移动后需重新准备，必要时重新标定。
 
-桌面 pose 与可见 XY 范围来自 RGB-D；桌板厚度和支撑尺寸仍来自任务资产，需要现场核对。输入校验和 plan-only 通过均不代表真实接触、整条任务通过。
+桌面沿用 AffordToolAct Task1 的固定范围：右臂 SDK base 下中心 `[0.1, 0.3] m`、尺寸 `0.6 × 0.6 m`、碰撞厚度 `0.02 m`；仅高度从本帧深度计算，无需桌面 mask、完整边界入镜或新增手填 JSON。切换后在新目录重新准备感知。固定尺寸和支撑代理需与现场核对；输入校验和 plan-only 通过均不代表真实接触、整条任务通过。
 FoundationPose 可继续使用 Python 3.9；依赖环境保持独立，详见操作指南。
 
 执行目录中的 `runtime_input.json` 保存自动配置及来源。任务接线位于 `gene_agent/realworld/microwave/task.py`；模块边界见[真机模块说明](../../../gene_agent/realworld/README.md)。

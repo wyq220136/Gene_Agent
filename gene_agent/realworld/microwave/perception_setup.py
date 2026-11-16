@@ -14,9 +14,8 @@ from scipy.spatial.transform import Rotation
 
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.realworld.pose_tracking import capture_frozen_scene_frame
-from gene_agent.perception_modules.camera.calibration.inspection.geometry import (
-    backproject_base, plane_diagnostics,
-)
+from gene_agent.perception_modules.camera.calibration.inspection.geometry import backproject_base
+from gene_agent.perception_modules.table_geometry import fit_horizontal_table_plane
 
 ROOT = Path(__file__).resolve().parents[3]
 BOWL = "Bowl/Bowl_0"
@@ -76,6 +75,18 @@ def check_capture_camera(camera: dict, calibration: dict, shape: tuple[int, int]
         raise ValueError("采集分辨率与标定不一致")
 
 
+def task1_table_geometry() -> dict:
+    """只读取已迁移的 Task1 桌面 XY 和厚度；旧 Z 不能充当本次测量。"""
+    path = ROOT / "data/task_1/knowledge/legacy_extract_visual_table.json"
+    table = json.loads(path.read_text(encoding="utf-8"))["legacy_virtual_table"]
+    center, size = np.asarray(table["center_world_m"], float), np.asarray(table["size_xyz_m"], float)
+    if (center.shape != (3,) or size.shape != (3,) or not np.isfinite(center).all()
+            or not np.isfinite(size).all() or np.any(size <= 0)):
+        raise ValueError("已有 Task1 桌面几何的中心或尺寸无效")
+    return {"center_xy_m": center[:2].tolist(), "size_xy_m": size[:2].tolist(),
+            "thickness_m": float(size[2]), "path": str(path), "sha256": sha256(path)}
+
+
 def asset_geometry() -> dict:
     """复用已配对的旧感知 frame 与标定资产 frame；不修改操作 profile。"""
     scene_path = ROOT / "config/scenes/task_1.json"
@@ -100,10 +111,13 @@ def asset_geometry() -> dict:
     handle_path = ROOT / "assets/objects/microwave_calibrated/handle_concept.json"
     handle = json.loads(handle_path.read_text(encoding="utf-8"))
     T_asset_handle = validate_pose(handle["conceptualization"][0]["parameters"]["pose_matrix"])
+    table = task1_table_geometry()
     return {"alignment": alignment.tolist(), "T_asset_handle": T_asset_handle.tolist(),
             "joints": joints, "support": scene["microwave_support"],
-            "table_thickness_m": scene["table"]["thickness_m"],
-            "sources": {str(p): sha256(p) for p in (scene_path, urdf_path, handle_path)}}
+            "table_geometry": {key: table[key] for key in ("center_xy_m", "size_xy_m")},
+            "table_thickness_m": table["thickness_m"],
+            "sources": {**{str(p): sha256(p) for p in (scene_path, urdf_path, handle_path)},
+                        table["path"]: table["sha256"]}}
 
 
 def export_knob_mesh(output: Path) -> Path:
@@ -133,29 +147,42 @@ def export_knob_mesh(output: Path) -> Path:
     return path
 
 
-def table_from_mask(depth_m, K, transform, mask, *, thickness_m: float) -> dict:
-    """用桌面分割内的 RGB-D 拟合平面与可见 footprint；结果必须人工检查。"""
+def table_from_scene_geometry(depth_m, K, transform, geometry: dict, *, thickness_m: float) -> dict:
+    """沿用 AffordToolAct：固定矩形范围内的点云计算高度，不做桌面分割或 pose estimation。
+
+    点云只通过标定外参转换一次到右臂 SDK base。桌面假设水平；两次高度计算
+    与 perceive_table_from_geometry 一致，XY 范围不随相机裁剪或分割结果变化。
+    """
+    center, size = np.asarray(geometry["center_xy_m"], float), np.asarray(geometry["size_xy_m"], float)
+    thickness_m = float(thickness_m)
+    if (center.shape != (2,) or size.shape != (2,) or not np.isfinite(center).all()
+            or not np.isfinite(size).all() or np.any(size <= 0)
+            or not np.isfinite(thickness_m) or thickness_m <= 0):
+        raise ValueError("桌面固定几何的中心、尺寸或厚度无效")
     points, valid = backproject_base(depth_m, K, transform, max_depth=3.)
-    mask = np.asarray(mask, bool)
-    if mask.shape != valid.shape:
-        raise ValueError("桌面 mask 与深度尺寸不一致")
-    selected = points[valid & mask]
-    plane = plane_diagnostics(selected)
-    if not plane["available"] or plane["tilt_deg"] > 5. or plane["inlier_fraction"] < .7:
-        raise ValueError("桌面分割内没有可靠水平平面，请检查 mask 和标定")
-    normal = np.asarray(plane["normal_sdk"])
-    inliers = selected[np.abs(selected @ normal + plane["offset_m"]) <= .005]
-    # 桌面放置沿世界 Z；使用已验收的近水平顶面代理，不把相机裁剪范围当桌面尺寸。
-    low, high = np.min(inliers[:, :2], axis=0), np.max(inliers[:, :2], axis=0)
-    size = high - low
-    if np.any(size < .1) or np.any(size > 3.):
-        raise ValueError("桌面可见范围过小或过大，请检查完整桌面分割")
+    points = points[valid]
+    # 与旧入口 load_rgbd_scene_points 一样，在裁剪前均匀抽样最多五万个点。
+    if len(points) > 50000:
+        points = points[np.linspace(0, len(points) - 1, 50000, dtype=np.int64)]
+    inside = np.all((points[:, :2] >= center - size / 2) & (points[:, :2] <= center + size / 2), axis=1)
+    selected = points[inside]
+    if len(selected) < 10:
+        raise ValueError(f"固定桌面范围内有效深度点太少 ({len(selected)})，请检查深度、标定和场景位置")
+    threshold = .005
+    plane = fit_horizontal_table_plane(selected, distance_threshold=threshold)
+    inliers = selected[np.abs(selected[:, 2] - plane.height) <= threshold * 3]
+    plane = fit_horizontal_table_plane(inliers, distance_threshold=threshold)
     pose = np.eye(4)
-    pose[:2, 3] = (low + high) / 2
-    pose[2, 3] = plane["median_height_m"] - thickness_m / 2
+    pose[:2, 3] = center
+    pose[2, 3] = plane.height - thickness_m / 2
     return {"table_pose_world": pose.tolist(), "table_size_xy_m": size.tolist(),
-            "accepted_table_thickness_m": thickness_m, "plane_diagnostics": plane,
-            "source": "registered_rgbd_table_mask", "footprint_is_visible_extent": True}
+            "accepted_table_thickness_m": thickness_m, "table_top_z_m": plane.height,
+            "source": "registered_rgbd_fixed_table_geometry", "frame": "right_sdk_base",
+            "method": "AffordToolAct:perceive_table_from_geometry",
+            "point_counts": {"scene": len(points), "inside_geometry": len(selected),
+                             "height_band": len(inliers), "inliers": int(plane.inlier_mask.sum())},
+            "distance_threshold_m": threshold, "footprint_is_visible_extent": False,
+            "assumption": "水平桌面；XY 和厚度来自已有 Task1 几何，高度由本帧深度计算"}
 
 
 def _preview_masks(rgb, masks: dict, output: Path) -> Path:
@@ -170,7 +197,7 @@ def _preview_masks(rgb, masks: dict, output: Path) -> Path:
         tile = Image.fromarray(overlay)
         ImageDraw.Draw(tile).text((10, 10), name, fill="white", stroke_width=2, stroke_fill="black")
         tiles.append(tile)
-    canvas = Image.new("RGB", (rgb.shape[1] * 2, rgb.shape[0] * 2))
+    canvas = Image.new("RGB", (rgb.shape[1] * 2, rgb.shape[0] * ((len(tiles) + 1) // 2)))
     for i, tile in enumerate(tiles):
         canvas.paste(tile, ((i % 2) * rgb.shape[1], (i // 2) * rgb.shape[0]))
     path = output / "masks_preview.png"
@@ -204,21 +231,21 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     check_capture_camera(camera, calibration, depth.shape)
     folder.joinpath("masks").mkdir()
     prompts = prompts or {"bowl": "bowl", "handle": "microwave door handle",
-                          "knob": "upper microwave knob including pointer", "table": "table top"}
-    mask_names = ("bowl", "handle", "knob", "table") if include_knob else ("bowl", "handle", "table")
+                          "knob": "upper microwave knob including pointer"}
+    mask_names = ("bowl", "handle", "knob") if include_knob else ("bowl", "handle")
     masks = {name: folder / "masks" / f"{name}.png" for name in mask_names}
     items = [{"category": name, "prompt": prompts[name], "mask_path": str(path)} for name, path in masks.items()]
     status, response = segment_image(seg_server, capture / "rgb.png", items)
     if status != 200 or response.get("ok") is False:
         raise ValueError(f"SAM3 分割失败: {response}")
     preview = _preview_masks(rgb, masks, folder)
-    table = table_from_mask(depth, camera["intrinsic_matrix"], calibration["T_sdk_camera"],
-                            np.asarray(Image.open(masks["table"]).convert("L")) > 0,
-                            thickness_m=assets["table_thickness_m"])
+    table = table_from_scene_geometry(depth, camera["intrinsic_matrix"], calibration["T_sdk_camera"],
+                                      assets["table_geometry"], thickness_m=assets["table_thickness_m"])
     save_json(folder / "table_measurement.json", table)
-    print(f"检查 mask: {preview}\n检查桌面测量: {folder / 'table_measurement.json'}\n"
-          f"桌面中心: {np.array(table['table_pose_world'])[:3, 3]}，XY尺寸: {table['table_size_xy_m']}")
-    if ask(f"确认 {len(masks)} 个 mask、完整桌面边界及标定正确后输入 ACCEPT（裁剪不全则重采集）: ").strip() != "ACCEPT":
+    print(f"检查物体 mask: {preview}\n桌面计算记录: {folder / 'table_measurement.json'}\n"
+          f"桌面顶高: {table['table_top_z_m']:.4f} m，固定中心 XY: {assets['table_geometry']['center_xy_m']}，"
+          f"固定 XY 尺寸: {table['table_size_xy_m']}")
+    if ask(f"确认 {len(masks)} 个物体 mask、标定及计算桌面与现场相符后输入 ACCEPT（不分割桌面）: ").strip() != "ACCEPT":
         raise ValueError("感知/桌面结果未确认；没有生成可运行的感知记录")
     unload_model(seg_server)
     meshes = {BOWL: ROOT / "data/task_1/objs/Bowl/Bowl_0/meshes/obj_mesh.obj",
