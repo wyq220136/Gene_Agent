@@ -41,7 +41,7 @@ _CANONICAL_TEMPLATE = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PartSummary:
     """供 UI/Agent 选择 part 的稳定摘要。"""
 
@@ -66,7 +66,7 @@ def _readonly_array(value: ArrayLike, *, shape_tail: tuple[int, ...], name: str)
     return result
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ReferenceMesh:
     """object frame 下的参考三角 mesh。"""
 
@@ -115,7 +115,7 @@ class ReferenceMesh:
         return np.max(self.vertices, axis=0)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class MeshData:
     """Viser 可直接显示的三角 mesh 数组。"""
 

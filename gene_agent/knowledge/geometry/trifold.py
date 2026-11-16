@@ -11,7 +11,7 @@ from .basic import _positive_scalar, _positive_vector3
 from .transforms import validate_pose
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TrifoldSegment:
     """Trifold 局部 frame 中的一个长方体段，尺寸单位为米。"""
 
@@ -29,7 +29,7 @@ class TrifoldSegment:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TrifoldConcept:
     """三段式结构及其相对 object frame 的位姿。
 

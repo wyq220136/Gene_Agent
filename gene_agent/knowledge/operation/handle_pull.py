@@ -21,7 +21,7 @@ _HANDLE_LOCAL_Y_ROTATION_DEGREES = (0., 5., -5., 10., -10., 15., -15.)
 _HANDLE_LOCAL_X_ROTATION_DEGREES = (0., 10., -10., 20., -20., 30., -30.)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class HandlePullCandidate:
     """Task1 把手路线的一个局部姿态候选。"""
 

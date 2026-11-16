@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from pathlib import Path
 from collections.abc import Mapping
@@ -127,7 +129,7 @@ def select_legacy_push_candidate(planner, joint_names, positions, candidates):
         if len(results) != len(group):
             raise RuntimeError("推门候选 batch IK 返回数量不符")
         checked += len(group)
-        reachable = [candidate for candidate, result in zip(group, results, strict=True)
+        reachable = [candidate for candidate, result in strict_zip(group, results)
                      if result.get("success")]
         if reachable:
             # preference_rank 是同一角度候选生成时的索引，与旧稳定排序一致。

@@ -9,7 +9,7 @@
 | Viser 碗 Skill/子任务 | [visualization/bowl_visual_debug.json](visualization/bowl_visual_debug.json) |
 | Viser 完整 Task1 | [visualization/task1_visual_explicit90_verified.json](visualization/task1_visual_explicit90_verified.json) |
 | Knowledge 调参 | [knowledge/microwave_knowledge_view.json](knowledge/microwave_knowledge_view.json) 与同层抓取 profile |
-| 真机站点配置 | [realworld/realworld_site.example.json](realworld/realworld_site.example.json)，另填本机副本；运动需单独授权 |
+| 真机输入 | [自动感知准备与运行流程](../../docs/user/microwave/realworld_task1_operation_guide.md)：标定产物 → 自动生成感知记录 → CLI 设备参数；无需手填站点或角度 JSON |
 
 在仓库根目录的 cuRobo 环境运行：
 

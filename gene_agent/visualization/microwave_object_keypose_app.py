@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,11 +46,11 @@ def projected_keyposes(
     # 放入 Skill 必须用本次选中抓取的 T_tcp_object 计算物体终点。
     place = fixed_place_targets(T_world_legacy, profile, np.eye(4))
     extract = fixed_extract_targets(T_world_legacy, profile)
-    targets = dict(zip(PLACE_LABELS, (
+    targets = dict(strict_zip(PLACE_LABELS, (
         place.pre_place_tcp, place.place_tcp,
         place.post_place_1_tcp, place.post_place_2_tcp,
-    ), strict=True))
-    targets.update(zip(EXTRACT_LABELS, extract, strict=True))
+    )))
+    targets.update(strict_zip(EXTRACT_LABELS, extract))
     placed_object = T_world_legacy @ np.asarray(profile["microwave_from_placed_object"], dtype=float)
     return targets, placed_object
 

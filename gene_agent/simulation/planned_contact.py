@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from collections.abc import Mapping, Sequence
 
 import mujoco
@@ -109,7 +111,7 @@ def validate_planned_target_contacts(
     forbidden: list[dict] = []
     max_allowed_penetration = 0.0
     for index, positions in enumerate(trajectory.positions_rad):
-        for name, value in zip(trajectory.joint_names, positions, strict=True):
+        for name, value in strict_zip(trajectory.joint_names, positions):
             frozen.qpos[model.joint(name).qposadr[0]] = value
         mujoco.mj_forward(model, frozen)
         for contact in frozen.contact:

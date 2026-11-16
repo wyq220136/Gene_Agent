@@ -1,3 +1,4 @@
+from gene_agent._compat import strict_zip
 import numpy as np
 import pytest
 import json
@@ -64,7 +65,7 @@ def test_online_door_phases_match_knowledge_and_angles():
         phases = [phase for phase in session.phases
                   if phase.skill_id == skill and phase.name not in skill_events]
         assert len(phases) == len(path.waypoints)
-        for phase, point in zip(phases, path.waypoints, strict=True):
+        for phase, point in strict_zip(phases, path.waypoints):
             np.testing.assert_allclose(phase.tcp_pose_world, point.tcp_pose_world, atol=1e-9)
             assert phase.door_angle_rad == pytest.approx(point.angle_rad)
     assert session.phases[-1].door_angle_rad == pytest.approx(0)

@@ -26,7 +26,7 @@ PALM_COLOR_RGBA = (255, 209, 91, 255)
 FINGER_COLOR_RGBA = (255, 112, 66, 255)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ProxyGeometry:
     """Viser 示意夹爪在 TCP 局部 frame 中的盒体尺寸和中心。"""
 

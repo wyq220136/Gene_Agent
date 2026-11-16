@@ -1,5 +1,7 @@
 """感知调试图使用的 RGB-D 点云读取。"""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np

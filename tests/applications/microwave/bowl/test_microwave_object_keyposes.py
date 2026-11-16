@@ -1,5 +1,7 @@
 """旧 Viser 的微波炉固定 keypose 数值迁移检查。"""
 
+from gene_agent._compat import strict_zip
+
 import hashlib
 import json
 from pathlib import Path
@@ -76,7 +78,7 @@ def test_fixed_bowl_extract_targets_keep_five_legacy_waypoints():
         "microwave_from_post_extract_1_tcp",
         "microwave_from_post_extract_2_tcp",
     )
-    for target, name in zip(targets, expected_names, strict=True):
+    for target, name in strict_zip(targets, expected_names):
         np.testing.assert_allclose(target, profile[name])
 
 

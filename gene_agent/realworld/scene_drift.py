@@ -20,7 +20,7 @@ from gene_agent.realworld.runtime import RealWorldRuntime
 from gene_agent.tasks.checks import CheckResult
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class SceneDriftLimits:
     max_object_translation_m: float
     max_object_rotation_rad: float

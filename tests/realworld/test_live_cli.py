@@ -13,14 +13,26 @@ from tools.run.run_microwave_task1_realworld import load_site_config, main, run_
 from tools.run import run_microwave_task1_realworld as cli
 
 
+def _cli_args(path, subtask="pick_bowl"):
+    return ["--perception", str(path), "--left-ip", "169.254.1.1", "--right-ip", "169.254.1.2",
+            "--subtask", subtask]
+
+
+def _inject_legacy_fixture(monkeypatch, path, subtask="pick_bowl", no_knob=False):
+    """保留旧配置边界的离线用例；CLI 已改由自动感知装配，不再接收 --config。"""
+    monkeypatch.setattr(cli, "runtime_configuration", lambda **kwargs: load_site_config(
+        path, subtask=subtask, execute=False, no_knob=no_knob))
+
+
 def test_documented_script_runs_from_project_root_without_pythonpath():
     """用户按文档直接运行脚本时，不应依赖 shell 预设 PYTHONPATH。"""
     root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
+    env["PYTHONUTF8"] = "1"
     completed = subprocess.run(
         [sys.executable, "tools/run/run_microwave_task1_realworld.py", "--help"],
-        cwd=root, env=env, capture_output=True, text=True, check=False,
+        cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", check=False,
     )
     assert completed.returncode == 0, completed.stderr
     assert "--check-config" in completed.stdout
@@ -39,6 +51,8 @@ def _site_config(tmp_path: Path) -> Path:
         "schema_version": 1,
         "active_group": "right",
         "robot_ips": {"left": "169.254.1.1", "right": "169.254.1.2"},
+        "robot_ports": {"left": 8080, "right": 8080},
+        "gripper_config": "config/robots/standard_gripper.json",
         "camera": {
             "endpoint": "tcp://127.0.0.1:18082", "serial": "camera-1",
             "camera_id": "0", "side": "right", "T_sdk_camera": identity,
@@ -98,8 +112,8 @@ def test_check_config_does_not_connect_robot_or_camera(tmp_path, capsys, monkeyp
         lambda *a, **k: pytest.fail("检查配置时不能连接机器人"),
     )
 
-    code = main([
-        "--config", str(path), "--subtask", "pick_bowl",
+    _inject_legacy_fixture(monkeypatch, path)
+    code = main([*_cli_args(path),
         "--output", str(tmp_path / "run"), "--check-config",
     ])
 
@@ -151,7 +165,7 @@ def test_complete_synthetic_site_config_covers_every_full_task_subtask(tmp_path)
     assert loaded["subtask_options"]["knob"]["task_path"] == options["knob"]["task_path"]
 
 
-def test_no_knob_full_task_allows_missing_knob_profile_and_checks_cli(tmp_path):
+def test_no_knob_full_task_allows_missing_knob_profile_and_checks_cli(tmp_path, monkeypatch):
     """旧版 `--no-knob` 对应的完整任务不能强迫填写未启用的旋钮 Skill 参数。"""
     path, _ = _full_site_config(tmp_path)
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -162,7 +176,8 @@ def test_no_knob_full_task_allows_missing_knob_profile_and_checks_cli(tmp_path):
 
     assert loaded["include_knob"] is False
     assert "knob" not in loaded["subtask_options"]
-    assert main(["--config", str(path), "--subtask", "all",
+    _inject_legacy_fixture(monkeypatch, path, subtask="all", no_knob=True)
+    assert main([*_cli_args(path, "all"),
                  "--no-knob", "--check-config"]) == 0
 
 
@@ -170,7 +185,7 @@ def test_no_knob_flag_rejected_for_single_subtask(tmp_path):
     """跳过旋钮只影响完整任务，不能改变单个子任务的含义。"""
     path = _site_config(tmp_path)
     with pytest.raises(ValueError, match="--no-knob.*all"):
-        main(["--config", str(path), "--subtask", "pick_bowl",
+        main([*_cli_args(path),
               "--no-knob", "--check-config"])
 
 
@@ -182,6 +197,36 @@ def test_missing_camera_extrinsic_rejected_before_connection(tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
 
     with pytest.raises(ValueError, match="T_sdk_camera"):
+        load_site_config(path, subtask="pick_bowl", execute=False)
+
+
+def test_site_config_resolves_realman_ports_and_gripper_profile(tmp_path):
+    """端口与 TCP/开口宽度 profile 由站点配置决定，不隐含在连接默认值中。"""
+    path = _site_config(tmp_path)
+    profile = tmp_path / "gripper.json"
+    profile.write_text(json.dumps({
+        "max_opening_width_m": .065,
+        "flange_to_tcp_z_m": .12,
+        "flange_to_tcp_rotation_z_deg": 180.,
+    }), encoding="utf-8")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["robot_ports"]["right"] = 8081
+    data["gripper_config"] = str(profile)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = load_site_config(path, subtask="pick_bowl", execute=False)
+
+    assert loaded["robot_ports"] == {"left": 8080, "right": 8081}
+    assert Path(loaded["gripper_config"]) == profile
+
+
+def test_invalid_realman_port_rejected_before_connection(tmp_path):
+    path = _site_config(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["robot_ports"]["right"] = 70000
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="robot_ports.right"):
         load_site_config(path, subtask="pick_bowl", execute=False)
 
 
@@ -205,7 +250,7 @@ def test_execute_requires_drift_limits_and_explicit_yes(tmp_path):
     """执行模式不能因配置文件本身存在而自动授权 SDK 运动。"""
     path = _site_config(tmp_path)
     with pytest.raises(ValueError, match="--yes"):
-        main(["--config", str(path), "--subtask", "pick_bowl",
+        main([*_cli_args(path),
               "--output", str(tmp_path / "run"), "--execute"])
     data = json.loads(path.read_text(encoding="utf-8"))
     del data["scene_drift_limits"]
@@ -358,6 +403,28 @@ def test_site_config_change_after_check_stops_before_device_connection(tmp_path)
                  execute=False)
 
 
+def test_gripper_profile_change_after_check_stops_before_device_connection(tmp_path):
+    """检查后替换 TCP profile 时不能继续连接并规划。"""
+    path = _site_config(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    profile = tmp_path / "gripper.json"
+    profile.write_text(json.dumps({
+        "max_opening_width_m": .08,
+        "flange_to_tcp_z_m": .15,
+        "flange_to_tcp_rotation_z_deg": 180.,
+    }), encoding="utf-8")
+    data["gripper_config"] = str(profile)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded = load_site_config(path, subtask="pick_bowl", execute=False)
+    payload = json.loads(profile.read_text(encoding="utf-8"))
+    payload["flange_to_tcp_z_m"] = .14
+    profile.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="gripper_config.*改变"):
+        run_site(loaded, subtask="pick_bowl", output_dir=tmp_path / "run",
+                 execute=False)
+
+
 def test_connection_failure_keeps_traceable_entry_report(tmp_path, monkeypatch):
     """现场 SDK 连接失败也要留下可复查的配置与失败原因。"""
     path = _site_config(tmp_path)
@@ -397,16 +464,17 @@ def test_unknown_subtask_option_is_caught_before_connection(tmp_path):
         load_site_config(path, subtask="pick_bowl", execute=False)
 
 
-def test_check_config_has_short_command_without_output_dir(tmp_path, capsys):
+def test_check_config_has_short_command_without_output_dir(tmp_path, capsys, monkeypatch):
     """只检查配置时用户不需要手动指定一次运行的记录目录。"""
     path = _site_config(tmp_path)
-    assert main(["--config", str(path), "--subtask", "pick_bowl",
+    _inject_legacy_fixture(monkeypatch, path)
+    assert main([*_cli_args(path),
                  "--check-config"]) == 0
     assert "配置检查通过" in capsys.readouterr().out
 
 
-def test_invalid_site_config_cli_reports_field_without_traceback():
-    """命令行遇到待标定模板时，应直接指出字段，不用 Python traceback 淹没错误。"""
+def test_old_site_config_cli_is_no_longer_an_operator_entry():
+    """旧手填文件已退出 CLI；错误提示引导用户提供感知记录和设备地址。"""
     import subprocess
     import sys
 
@@ -419,7 +487,7 @@ def test_invalid_site_config_cli_reports_field_without_traceback():
     )
 
     assert result.returncode == 2
-    assert "robot_ips.left" in result.stderr
+    assert "--perception" in result.stderr
     assert "Traceback" not in result.stderr
 
 

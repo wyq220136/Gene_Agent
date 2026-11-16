@@ -1,7 +1,8 @@
 """微波炉现场子任务/完整 Task 的薄入口；默认仅规划首段。
 
 此脚本只装配现场观测、现有 cuRobo pool、真机 Runtime 和已经存在的
-子任务函数，不定义第二套操作顺序。现场标定和角度来源必须显式给出。
+子任务函数，不定义第二套操作顺序。正式入口从自动感知准备记录读取标定，
+每次观测实时计算门角和旋钮角，不要求手填站点或角度 JSON。
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from gene_agent.realworld.microwave.task import run_observed_microwave_subtask
 from gene_agent.realworld.microwave.task import run_observed_microwave_task1
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.realworld.scene_drift import SceneDriftLimits
+from gene_agent.realworld.microwave.configuration import runtime_configuration
 
 
 _OBJECT_IDS = ("Bowl/Bowl_0", "Microwave/Microwave_0")
@@ -45,6 +47,7 @@ _RIGHT_ONLY_TASK1_SUBTASKS = frozenset({
     "pick_bowl", "insert_bowl", "rotate_knob", "extract_bowl",
     "place_bowl_on_table", "all", "load_bowl", "unload_bowl",
 })
+_DEFAULT_GRIPPER_CONFIG = PROJECT_ROOT / "config/robots/standard_gripper.json"
 
 
 def _nonempty(value, name: str) -> str:
@@ -81,6 +84,24 @@ def _positive(value, name: str) -> float:
 def _path(value, *, base: Path, name: str) -> Path:
     raw = Path(_nonempty(value, name)).expanduser()
     path = raw if raw.is_absolute() else base / raw
+    path = path.resolve()
+    if not path.is_file():
+        raise ValueError(f"{name} 文件不存在：{path}")
+    return path
+
+
+def _project_path(value, *, name: str, default: Path) -> Path:
+    """Resolve a hardware profile like the AffordToolAct CLI does.
+
+    Site files live below ``data/task_1`` while robot/gripper profiles live at
+    the repository root, so relative profile paths must not depend on cwd or
+    the site file's directory.
+    """
+    if value is None:
+        path = default
+    else:
+        raw = Path(_nonempty(value, name)).expanduser()
+        path = raw if raw.is_absolute() else PROJECT_ROOT / raw
     path = path.resolve()
     if not path.is_file():
         raise ValueError(f"{name} 文件不存在：{path}")
@@ -200,7 +221,7 @@ def _check_prepared_hold_file(path: Path) -> None:
 def load_site_config(path: str | Path, *, subtask: str, execute: bool,
                      prepare_held_bowl: bool = False,
                      no_knob: bool = False) -> dict:
-    """静态检查站点输入；不连接相机、模型服务或机械臂。"""
+    """仅供旧记录的离线兼容检查；正式 CLI 不再接受手填站点文件。"""
     source = Path(path).expanduser().resolve()
     source_bytes = source.read_bytes()
     payload = json.loads(source_bytes.decode("utf-8"))
@@ -230,6 +251,15 @@ def load_site_config(path: str | Path, *, subtask: str, execute: bool,
         raise ValueError("robot_ips 必须显式包含 left 和 right")
     for side in ("left", "right"):
         _nonempty(ips[side], f"robot_ips.{side}")
+    ports = payload.get("robot_ports", {"left": 8080, "right": 8080})
+    if not isinstance(ports, dict) or set(ports) != {"left", "right"}:
+        raise ValueError("robot_ports 必须显式包含 left 和 right")
+    normalized_ports = {}
+    for side in ("left", "right"):
+        value = ports[side]
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+            raise ValueError(f"robot_ports.{side} 必须是 1~65535 的整数")
+        normalized_ports[side] = value
     _require(payload["camera"], (
         "endpoint", "serial", "camera_id", "side", "T_sdk_camera", "max_age_s",
     ), "camera")
@@ -252,6 +282,25 @@ def load_site_config(path: str | Path, *, subtask: str, execute: bool,
     if len(set(sessions.values())) != len(sessions):
         raise ValueError("两个物体不能共用 FoundationPose session")
     _nonempty(payload["pose_server"], "pose_server")
+    gripper_config = _project_path(
+        payload.get("gripper_config"), name="gripper_config",
+        default=_DEFAULT_GRIPPER_CONFIG,
+    )
+    gripper_config_bytes = gripper_config.read_bytes()
+    try:
+        gripper_payload = json.loads(gripper_config_bytes.decode("utf-8"))
+        max_width = float(gripper_payload["max_opening_width_m"])
+        tcp_z = float(gripper_payload["flange_to_tcp_z_m"])
+        tcp_rotation_z = float(gripper_payload["flange_to_tcp_rotation_z_deg"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError(
+            "gripper_config 必须包含有效的 max_opening_width_m、"
+            "flange_to_tcp_z_m 和 flange_to_tcp_rotation_z_deg"
+        ) from error
+    if not math.isfinite(max_width) or max_width <= 0:
+        raise ValueError("gripper_config.max_opening_width_m 必须为正有限数")
+    if not math.isfinite(tcp_z) or not math.isfinite(tcp_rotation_z):
+        raise ValueError("gripper_config 的 TCP 位姿参数必须为有限数")
     mesh_path = _path(payload["microwave_pose_mesh_path"], base=source.parent,
                       name="microwave_pose_mesh_path")
     state_file = _path(payload["state_file"], base=source.parent, name="state_file")
@@ -382,6 +431,9 @@ def load_site_config(path: str | Path, *, subtask: str, execute: bool,
             _check_prepared_hold_file(prepared_report)
     return {**payload, "source_path": str(source),
             "source_sha256": source_sha256,
+            "robot_ports": normalized_ports,
+            "gripper_config": gripper_config,
+            "gripper_config_sha256": hashlib.sha256(gripper_config_bytes).hexdigest(),
             "camera": camera, "scene_parameters": scene,
             "runtime": runtime, "subtask_options": options,
             "include_knob": not no_knob,
@@ -443,13 +495,20 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
     """接通设备并调用现有子任务/Task；只在 execute=True 时允许 SDK 运动。"""
     source = Path(config["source_path"])
     if hashlib.sha256(source.read_bytes()).hexdigest() != config["source_sha256"]:
-        raise ValueError("现场配置文件在检查后已改变，请重新检查再运行")
+        raise ValueError("现场配置文件或感知记录在检查后已改变，请重新检查再运行")
+    setup = config.get("perception_setup")
+    if setup is not None:
+        from gene_agent.realworld.microwave.perception_setup import load_perception_setup
+        load_perception_setup(source)
+    gripper_config = Path(config["gripper_config"])
+    if hashlib.sha256(gripper_config.read_bytes()).hexdigest() != config["gripper_config_sha256"]:
+        raise ValueError("gripper_config 在检查后已改变，请重新检查再运行")
     output = Path(output_dir).expanduser().resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError("本次输出目录已有内容，不能覆盖已有现场运行记录")
     output.mkdir(parents=True, exist_ok=True)
     drift = config["scene_drift_limits"]
-    (output / "site_input.json").write_text(json.dumps({
+    (output / ("runtime_input.json" if setup is not None else "site_input.json")).write_text(json.dumps({
         "schema_version": 1,
         "site_config_path": str(source),
         "site_config_sha256": config["source_sha256"],
@@ -457,11 +516,17 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         "include_knob": config.get("include_knob", True),
         "prepare_held_bowl": bool(prepare_held_bowl),
         "active_group": config["active_group"],
+        "robot_ports": config["robot_ports"],
+        "gripper_config": str(config["gripper_config"]),
+        "gripper_config_sha256": config["gripper_config_sha256"],
         "motion": current_motion_config().to_dict(),
         "camera_serial": config["camera"]["serial"],
         "pose_sessions": config["pose_sessions"],
         "runtime": config["runtime"],
         "scene_drift_limits": None if drift is None else asdict(drift),
+        "input_mode": "automatic_perception" if setup is not None else "legacy_offline_compatibility",
+        "angle_source": "same_frame_foundationpose" if setup is not None else "legacy_state_file",
+        "subtask_options": config["subtask_options"],
         "claim": "仅记录输入来源；设备连接、规划和实际执行需另看阶段报告",
     }, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     from gene_agent.realworld.microwave.scene import make_live_microwave_observer
@@ -469,6 +534,9 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
     from gene_agent.motion.curobo.session import CuroboPlannerPool
     from gene_agent.perception_modules.pose_est.pose_client import PoseClient
     from gene_agent.realworld.devices.arms.realman.connection import connect_realman
+    from gene_agent.realworld.devices.arms.realman.adapter import (
+        load_standard_gripper_flange_tcp,
+    )
     from gene_agent.realworld.runtime import RealWorldRuntime
 
     state_cache: dict = {}
@@ -483,10 +551,41 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
     def read_anchor(_observed):
         return state_cache["state"].get("microwave_root_anchor")
 
+    observer_options = {}
+    if setup is not None:
+        from gene_agent.realworld.microwave.live_perception import LiveArticulationReader, collision_objects
+        reader = LiveArticulationReader(setup)
+        read_angles = reader
+        read_anchor = reader.anchor
+        observer_options = {"observation_filter": collision_objects, "camera_calibration": setup["camera"]}
+
     with _record_entry_errors(output, config["source_sha256"]), ExitStack() as stack:
         try:
+            gripper_payload = json.loads(
+                Path(config["gripper_config"]).read_text(encoding="utf-8")
+            )
+            T_flange_tcp = load_standard_gripper_flange_tcp(config["gripper_config"])
+            max_width_m = float(gripper_payload["max_opening_width_m"])
+
+            def connect_side(side):
+                kwargs = {
+                    "group": side,
+                    "port": config["robot_ports"][side],
+                    "T_flange_tcp": T_flange_tcp,
+                    "max_width_m": max_width_m,
+                }
+                # This keeps lightweight injected connectors usable while the
+                # production connector receives the complete hardware profile.
+                accepted = inspect.signature(connect_realman).parameters
+                kwargs = {key: value for key, value in kwargs.items()
+                          if key in accepted or any(
+                              parameter.kind is inspect.Parameter.VAR_KEYWORD
+                              for parameter in accepted.values()
+                          )}
+                return connect_realman(config["robot_ips"][side], **kwargs)
+
             connections = {
-                side: stack.enter_context(connect_realman(config["robot_ips"][side], group=side))
+                side: stack.enter_context(connect_side(side))
                 for side in ("left", "right")
             }
         except Exception as error:
@@ -514,6 +613,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             max_age_s=camera["max_age_s"],
             microwave_pose_mesh_path=config["microwave_pose_mesh_path"],
             microwave_root_anchor_reader=read_anchor,
+            **observer_options,
         )
         group = config["active_group"]
         speed = config["runtime"]
@@ -583,7 +683,14 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="现场微波炉子任务/Task；默认只预检首段")
-    parser.add_argument("--config", required=True, help="现场标定、服务和参数 JSON")
+    parser.add_argument("--perception", required=True, help="prepare_microwave_realworld.py 自动生成的感知记录目录")
+    parser.add_argument("--left-ip", required=True, help="左臂 RealMan IPv4 地址")
+    parser.add_argument("--right-ip", required=True, help="右臂 RealMan IPv4 地址")
+    parser.add_argument("--left-port", type=int, default=8080)
+    parser.add_argument("--right-port", type=int, default=8080)
+    parser.add_argument("--gripper-config", default=str(_DEFAULT_GRIPPER_CONFIG))
+    parser.add_argument("--max-age-s", type=float, default=5., help="真实采集帧有效期；不刷新旧时间戳")
+    parser.add_argument("--speed-scale", type=float, default=.1)
     parser.add_argument("--collision-mode", choices=("full", "robot_only"))
     parser.add_argument("--subtask", choices=("all", *SUBTASK_NAMES), required=True)
     parser.add_argument("--output", help="本次记录目录；省略时自动创建带时间戳的目录")
@@ -599,13 +706,24 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("执行真机运动必须显式加 --yes")
     if args.no_knob and args.subtask != "all":
         raise ValueError("--no-knob 只适用于 --subtask all")
-    config = load_site_config(args.config, subtask=args.subtask, execute=args.execute,
-                              prepare_held_bowl=args.prepare_held_bowl,
-                              no_knob=args.no_knob)
+    if args.prepare_held_bowl and args.subtask not in {"insert_bowl", "place_bowl_on_table"}:
+        raise ValueError("--prepare-held-bowl 只适用于独立放碗或桌面 Place")
+    if args.subtask in {"insert_bowl", "place_bowl_on_table"} and not args.prepare_held_bowl:
+        raise ValueError("独立放碗/桌面 Place 需要 --prepare-held-bowl 现场确认")
+    config = runtime_configuration(perception=args.perception,
+        left_ip=args.left_ip, right_ip=args.right_ip, left_port=args.left_port, right_port=args.right_port,
+        max_age_s=args.max_age_s, speed_scale=args.speed_scale, gripper_config=args.gripper_config,
+        no_knob=args.no_knob)
+    kinds = (set(_OPTION_KEY.values()) if args.subtask == "all" else
+             set(_COMBO_KINDS[args.subtask]) if args.subtask in _COMBO_KINDS else {_OPTION_KEY[args.subtask]})
+    if args.no_knob:
+        kinds.discard("knob")
+    for kind in kinds:
+        _required_options(kind, config["subtask_options"][kind])
     if args.collision_mode is not None:
         config['motion'] = {**config.get('motion', {}), 'collision_mode': args.collision_mode}
     if args.check_config:
-        print("配置检查通过：静态字段齐全；尚未验证相机、Pose session、标定精度或真机")
+        print("配置检查通过：已从感知/标定产物自动装配；尚未验证在线相机、Pose session 或真机")
         return 0
     saved_hold_recheck = (args.subtask in {"insert_bowl", "place_bowl_on_table"}
                           and config.get("prepared_hold_report") is not None)

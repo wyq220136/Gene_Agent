@@ -432,6 +432,8 @@ def make_live_microwave_observer(
     scene_parameters: Mapping, max_age_s: float,
     microwave_pose_mesh_path: str | Path,
     microwave_root_anchor_reader: Callable[[ObservedScene], Mapping | None] | None = None,
+    observation_filter: Callable[[ObservedScene], ObservedScene] | None = None,
+    camera_calibration: Mapping | None = None,
 ) -> Callable[[], dict]:
     """生成子任务与完整 Task 共用的同步现场观测回调。
 
@@ -451,6 +453,12 @@ def make_live_microwave_observer(
             output_dir=folder / "capture", endpoint=camera_endpoint,
             expected_serial=expected_serial,
         )
+        if camera_calibration is not None:
+            from PIL import Image
+            from .perception_setup import check_capture_camera
+            camera_record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
+            with Image.open(capture / "depth.png") as depth:
+                check_capture_camera(camera_record, camera_calibration, (depth.height, depth.width))
         observed = track_observed_scene_from_capture(
             capture_dir=capture, pose_client=pose_client, sessions=sessions,
             side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
@@ -460,6 +468,8 @@ def make_live_microwave_observer(
         angles = angle_reader(observed)
         anchor = (None if microwave_root_anchor_reader is None else
                   microwave_root_anchor_reader(observed))
+        if observation_filter is not None:
+            observed = observation_filter(observed)
         return build_live_microwave_collision_scene(
             observed=observed, robots=robots, grippers=grippers,
             angles=angles, scene_parameters={**static, "output_dir": folder / "scene"},

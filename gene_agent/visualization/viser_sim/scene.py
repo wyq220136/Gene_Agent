@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -70,7 +72,7 @@ class KinematicSceneState:
         """从初态重建每一帧，拖动时间轴时不会残留后续阶段的门角或物体状态。"""
         state = sample.state
         qpos = self._base_qpos.copy()
-        for name, value in zip(state.joint_names, state.joint_positions_rad, strict=True):
+        for name, value in strict_zip(state.joint_names, state.joint_positions_rad):
             qpos[self._joint_address(name)] = float(value)
         if self._door_address is not None and state.door_angle_rad is not None:
             qpos[self._door_address] = state.door_angle_rad
@@ -155,7 +157,7 @@ class ViserVisualScene:
         scratch.qpos[:] = self.data.qpos
         points = []
         for row in stage.trajectory.positions_rad:
-            for name, value in zip(stage.trajectory.joint_names, row, strict=True):
+            for name, value in strict_zip(stage.trajectory.joint_names, row):
                 scratch.qpos[self.model.joint(name).qposadr[0]] = float(value)
             mujoco.mj_forward(self.model, scratch)
             points.append(np.asarray(scratch.site(self.tcp_site_name).xpos).copy())

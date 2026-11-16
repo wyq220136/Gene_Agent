@@ -63,6 +63,11 @@ Pika 坐标核对：`python tools/viewers/view_pika_frames.py --report runs/pika
 
 ## 微波炉完整任务（本地 Linux）
 
+真机使用 `tools/run/prepare_microwave_realworld.py --camera-params <标定产物>` 自动准备感知，
+随后用 `tools/run/run_microwave_task1_realworld.py --perception <生成目录> --left-ip <IP> --right-ip <IP> --subtask pick_bowl`
+做 plan-only；无需手填站点或角度 JSON。服务启动、现场确认与执行步骤见
+[真机操作指南](../docs/user/microwave/realworld_task1_operation_guide.md)。
+
 `python tools/run/run_microwave_task1_physical.py` 从 fresh reset 连续执行开门、放碗、关门、旋钮、再次开门、取碗、最终关门。加 `--video` 在结束后用共享模块导出完整视频；已有记录使用上面的统一入口。旧命令 `python tools/viewers/recording/record_physical_task1_video.py <运行目录>` 兼容全景与细节分文件，再用 `python tools/viewers/recording/split_physical_task1_video.py <运行目录>` 裁出七段子任务。结果是已声明的辅助夹持与运动学旋钮混合仿真验收；命令和证据说明见[用户说明](../docs/user/microwave/mujoco_task1_physical.md)。
 
 较早、不同摆位的独立开门诊断 `run_microwave_door_open.py` 已归档到本地 `archive/tools/diagnostics/`；对应旧参数保留在 `archive/task_1/configs/door_push_open_candidate.json`。当前门物理执行用 `run_experiment.py`；运行输入和开发产物的边界见 [task_1 配置清单](../data/task_1/readme.md)。

@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -757,7 +759,7 @@ def extract_visual_playback(report: dict, output_dir: Path, case: PickBowlCase):
 
     def tcp_pose(joint_names: tuple[str, ...], positions: np.ndarray) -> np.ndarray:
         scratch.qpos[:] = qpos
-        for name, position in zip(joint_names, positions, strict=True):
+        for name, position in strict_zip(joint_names, positions):
             scratch.qpos[model.joint(name).qposadr[0]] = float(position)
         mujoco.mj_forward(model, scratch)
         site = scratch.site(site_name)

@@ -1,6 +1,8 @@
 """门 Skill 在线纯视觉会话：同源 Knowledge、场景编辑与同步规划。"""
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 import logging
 from pathlib import Path
@@ -640,7 +642,7 @@ class DoorDebugSession:
         diagnostic = self._execution_diagnostic
         if diagnostic is None or diagnostic["phase_id"] != phase_id:
             raise RuntimeError("current door phase has no matching planner diagnostic")
-        by_name = dict(zip(joint_names, positions_rad, strict=True))
+        by_name = dict(strict_zip(joint_names, positions_rad))
         positions = [by_name[name] for name in diagnostic["joint_names"]]
         return diagnostic["planner"].export_execution_collision(
             positions,
@@ -806,7 +808,7 @@ class DoorDebugSession:
         if self.timeline is None:
             raise RuntimeError("尚未生成连续规划时间轴")
         sample = self.timeline.sample(time_s)
-        for name, value in zip(sample.joint_names, sample.joint_positions_rad, strict=True):
+        for name, value in strict_zip(sample.joint_names, sample.joint_positions_rad):
             self.case.data.qpos[self.case.model.joint(name).qposadr[0]] = float(value)
         door_joint = self.case.model.joint("microwave_door_joint")
         self.case.data.qpos[door_joint.qposadr[0]] = sample.channels["door_angle_rad"]
@@ -820,7 +822,7 @@ class DoorDebugSession:
             raise RuntimeError("本阶段没有可播放的当前规划轨迹")
         phase = self.phases[self.phase_index]
         index = min(self.animation_index, len(self.planned_q) - 1)
-        for name, q in zip(self.planned_joint_names, self.planned_q[index], strict=True):
+        for name, q in strict_zip(self.planned_joint_names, self.planned_q[index]):
             self.case.data.qpos[self.case.model.joint(name).qposadr[0]] = float(q)
         fraction = index / (len(self.planned_q) - 1)
         door_angle = (1. - fraction) * self.animation_door_start_rad + fraction * phase.door_angle_rad

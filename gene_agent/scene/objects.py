@@ -1,4 +1,6 @@
 """采集场景的 MuJoCo 资产；显示、Concept 和接触几何分别保存。"""
+
+from __future__ import annotations
 from pathlib import Path
 import json
 import math

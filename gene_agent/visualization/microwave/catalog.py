@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import hashlib
 from dataclasses import replace
 from dataclasses import dataclass
@@ -99,7 +101,7 @@ def apply_task_state(case: PickBowlCase, state: TaskState) -> None:
         raise ValueError("Task 状态的自由物体集合不同")
     if state.attachments:
         raise ValueError("附着状态不能只通过 MuJoCo qpos 恢复；必须使用适配器碰撞快照")
-    for name, value in zip(state.joint_names, state.joint_positions_rad, strict=True):
+    for name, value in strict_zip(state.joint_names, state.joint_positions_rad):
         data.qpos[model.joint(name).qposadr[0]] = value
     gripper_names = robot["grippers"]["right"]["joint_names"]
     for name in gripper_names:

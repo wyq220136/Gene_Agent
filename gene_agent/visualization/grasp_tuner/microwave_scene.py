@@ -1,6 +1,8 @@
 """微波炉 Knowledge 的场景校准与纯位姿 IK 结果，不依赖 Viser。"""
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import copy
 from dataclasses import dataclass
 import json
@@ -344,7 +346,7 @@ def build_microwave_knowledge(
         {**contact_parameters[0], "phase": "pre_contact"},
         *(
             {**parameters, "phase": label}
-            for parameters, label in zip(contact_parameters, contact_labels, strict=True)
+            for parameters, label in strict_zip(contact_parameters, contact_labels)
         ),
     )
     door_waypoints = (

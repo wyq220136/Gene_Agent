@@ -12,7 +12,7 @@
 | [knowledge/microwave_object_manipulation.json](knowledge/microwave_object_manipulation.json) | `object_keyposes.py` 等读取的放入/取出关键 TCP 相对位姿、标定状态；仿真与真机取放共用 |
 | [realworld/grasp_profiles.knob_0_realworld_tuned.json](realworld/grasp_profiles.knob_0_realworld_tuned.json) | 由同目录 knob_0_task_realworld_tuned.json 引用的真机旋钮抓取候选参数 |
 | [realworld/knob_0_task_realworld_tuned.json](realworld/knob_0_task_realworld_tuned.json) | `realworld/microwave/knob_planning.py` 的默认旋钮任务，引用下一文件；是运行输入而非未采用的调参输出 |
-| [realworld/realworld_site.example.json](realworld/realworld_site.example.json) | 微波炉真机站点配置示例：设备、感知 session 和子任务选项；现场填写副本应放开发目录，保留示例 |
+| [realworld/realworld_site.example.json](realworld/realworld_site.example.json) | 旧站点格式的离线兼容测试样例；正式真机 CLI 不再读取，用户无需复制或填写 |
 | [simulation/door_physical_open.json](simulation/door_physical_open.json) | `run_experiment.py` 的门物理配置，完整 MuJoCo Task1 的门模板；引用下面的关门参数 |
 | [simulation/door_push_close_physical_tuner_state.json](simulation/door_push_close_physical_tuner_state.json) | 由 door_physical_open.json 的 knowledge_states.push_close 引用的已采用关门几何偏移 |
 | [simulation/mujoco_task1_physical.json](simulation/mujoco_task1_physical.json) | `run_microwave_task1_physical.py` 默认输入：场景覆盖、Skill 参数、仿真辅助策略；引用 `door_physical_open.json` |

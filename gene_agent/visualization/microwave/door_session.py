@@ -6,6 +6,8 @@ cuRobo 规划。碰撞资产来自每阶段实际导出的 collision snapshot。
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from pathlib import Path
 
@@ -211,7 +213,7 @@ def door_visual_playback(session, run: VisualRun, *,
 
     def tcp_pose(joint_names: tuple[str, ...], positions: np.ndarray) -> np.ndarray:
         scratch.qpos[:] = base_qpos
-        for name, value in zip(joint_names, positions, strict=True):
+        for name, value in strict_zip(joint_names, positions):
             scratch.qpos[model.joint(name).qposadr[0]] = float(value)
         mujoco.mj_forward(model, scratch)
         site = scratch.site(tcp_site)

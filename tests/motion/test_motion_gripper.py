@@ -1,4 +1,6 @@
 """动态夹爪规划几何契约；CPU覆盖证据，不声称物理抓取或执行安全。"""
+
+from gene_agent._compat import strict_zip
 import numpy as np
 import pytest
 from gene_agent.motion.curobo.gripper import cover_bounds, validate_gripper_snapshot
@@ -95,11 +97,11 @@ def test_same_gripper_opening_has_stable_snapshot_across_arm_poses(dynamic_robot
     model, metadata = dynamic_robot
     data = mujoco.MjData(model)
     joints = metadata['joint_groups']['right']
-    for name, value in zip(joints, [.2, -.3, .4, -.2, .1, .25, -.15], strict=True):
+    for name, value in strict_zip(joints, [.2, -.3, .4, -.2, .1, .25, -.15]):
         data.qpos[model.joint(name).qposadr[0]] = value
     mujoco.mj_forward(model, data)
     first = export_gripper_snapshot(model, data, metadata, 'right')
-    for name, value in zip(joints, [-.4, .2, -.1, .3, -.2, -.15, .25], strict=True):
+    for name, value in strict_zip(joints, [-.4, .2, -.1, .3, -.2, -.15, .25]):
         data.qpos[model.joint(name).qposadr[0]] = value
     mujoco.mj_forward(model, data)
     second = export_gripper_snapshot(model, data, metadata, 'right')

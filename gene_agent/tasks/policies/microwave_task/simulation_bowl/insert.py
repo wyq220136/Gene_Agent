@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from pathlib import Path
 
@@ -76,7 +78,7 @@ def validate_insertion_plan(runtime, stage: str, plan: dict, tcp_bowl: np.ndarra
     adr = model.joint('bowl_free').qposadr[0]
     maximum_tilt = 0.
     for index, positions in enumerate(plan['positions_rad']):
-        for name, value in zip(plan['joint_names'], positions, strict=True):
+        for name, value in strict_zip(plan['joint_names'], positions):
             frozen.qpos[model.joint(name).qposadr[0]] = value
         mujoco.mj_forward(model, frozen)
         if held:

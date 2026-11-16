@@ -1,5 +1,7 @@
 """同步 MuJoCo 场景装配；机器人与物体的构建逻辑各自独立。"""
 
+from __future__ import annotations
+
 from pathlib import Path
 import xml.etree.ElementTree as ET
 

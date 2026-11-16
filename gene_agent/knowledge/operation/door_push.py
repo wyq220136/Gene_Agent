@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from dataclasses import dataclass
 import math
 
@@ -19,7 +21,7 @@ TASK1_DOOR_PUSH_SOURCE = (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DoorPushCandidate:
     """一个 Task1 同源门面接触候选；全部几何量位于 world frame。"""
 
@@ -70,7 +72,7 @@ class DoorPushCandidate:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DoorPushCandidateSet:
     """同一个绝对门角下按 Task1 偏好排序的接触候选。"""
 
@@ -407,7 +409,7 @@ def generate_profile_door_push_candidate_sets(
             or np.any(direction * np.diff(actual_angles) <= 0.)):
         raise ValueError("逐角推门 profile 必须从实测起点附近单调走到目标角")
     result = []
-    for index, (angle, row) in enumerate(zip(actual_angles, rows, strict=True)):
+    for index, (angle, row) in enumerate(strict_zip(actual_angles, rows)):
         panel = _panel_pose_at_angle(closed, axis, float(angle))
         parameters = {key: float(value) for key, value in row.items()
                       if key != "angle_deg"}
@@ -450,7 +452,7 @@ def select_door_push_path(
         if len(selected_ids) != len(sets):
             raise ValueError("selected_candidate_ids 必须与候选集合数量一致")
     selected = []
-    for candidate_set, candidate_id in zip(sets, selected_ids, strict=True):
+    for candidate_set, candidate_id in strict_zip(sets, selected_ids):
         match = next(
             (item for item in candidate_set.candidates if item.candidate_id == candidate_id),
             None,

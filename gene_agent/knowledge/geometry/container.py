@@ -10,7 +10,7 @@ from .basic import _positive_scalar, _positive_vector3, _unit_axis
 from .transforms import validate_pose
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ContainerWall:
     """容器局部 frame 中的一个长方体墙体。"""
 
@@ -31,7 +31,7 @@ class ContainerWall:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ContainerConcept:
     """开放式容器的轮廓、轴、高度、墙体及 ``T_object_container``。
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from dataclasses import dataclass
 import math
 from typing import Sequence
@@ -128,7 +130,7 @@ class PushDoorSkill:
             validate_pose(precontact_pose_world, field_name="precontact_pose_world"),
             None,
         )]
-        for index, (pose, angle) in enumerate(zip(poses, angles, strict=True), start=1):
+        for index, (pose, angle) in enumerate(strict_zip(poses, angles), start=1):
             stages.append(PushDoorStage(
                 f"push_{index:02d}", MotionOperation.LINEAR_TCP,
                 validate_pose(pose, field_name=f"push_pose_{index}"), angle,

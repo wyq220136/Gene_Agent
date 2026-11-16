@@ -20,4 +20,7 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
   tests/realworld/test_gripper.py tests/robots/kinematics/test_realman_udp_state.py tests/applications/sweep/realworld/test_sweep_execution.py
 ```
 
-命令和前置条件见 [真机入口说明](../../docs/user/microwave/realworld_microwave_entry.md)。目录合并尚未统一三种后端的完整任务循环，实机效果仍需现场验收。
+命令和前置条件见 [真机入口说明](../../docs/user/microwave/realworld_microwave_entry.md)。微波炉自动输入由
+`microwave/perception_setup.py` 采集、分割、注册并保存，`microwave/configuration.py` 读取标定和设备参数，
+`microwave/live_perception.py` 从同一新帧测门角/旋钮角并核对固定柜体参考；不要求手填站点或角度 JSON。
+目录合并尚未统一三种后端的完整任务循环，实机效果仍需现场验收。

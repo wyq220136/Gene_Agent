@@ -1,5 +1,7 @@
 """门 Knowledge 参数装配迁移后，原 Viewer 的完整阶段目标保持不变。"""
 
+from gene_agent._compat import strict_zip
+
 import hashlib
 import json
 from pathlib import Path
@@ -82,11 +84,11 @@ def test_shared_door_knowledge_preserves_viewer_targets(tmp_path):
         assert shared.handle_pull_labels == displayed.handle_pull_labels
         assert shared.door_push_labels == displayed.door_push_labels
         assert shared.door_selected_candidate_ids == displayed.door_selected_candidate_ids
-        for left, right in zip(shared.handle_pull_path.waypoints,
-                               displayed.handle_pull_path.waypoints, strict=True):
+        for left, right in strict_zip(shared.handle_pull_path.waypoints,
+                               displayed.handle_pull_path.waypoints):
             np.testing.assert_allclose(left.tcp_pose_world, right.tcp_pose_world, atol=1e-10)
-        for left, right in zip(shared.door_path.waypoints,
-                               displayed.door_path.waypoints, strict=True):
+        for left, right in strict_zip(shared.door_path.waypoints,
+                               displayed.door_path.waypoints):
             np.testing.assert_allclose(left.tcp_pose_world, right.tcp_pose_world, atol=1e-10)
 
 
@@ -132,7 +134,7 @@ def test_observed_door_targets_use_zero_angle_geometry_once(tmp_path):
         old = [phase for phase in viewer.phases if phase.skill_id == skill_id]
         assert _signature(result["phases"]) == EXPECTED[skill_id]
         assert len(result["phases"]) == len(old)
-        for actual, expected in zip(result["phases"], old, strict=True):
+        for actual, expected in strict_zip(result["phases"], old):
             np.testing.assert_allclose(actual.tcp_pose_world,
                                        expected.tcp_pose_world, atol=1e-9)
         assert result["observed_door_angle_rad"] == np.deg2rad(start_deg)

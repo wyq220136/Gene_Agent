@@ -1,4 +1,6 @@
 """长刷任务装配：固定 benchmark 初态后复用原清扫策略。"""
+
+from __future__ import annotations
 from pathlib import Path
 from .policy import operation_parameters, run as run_policy
 import json

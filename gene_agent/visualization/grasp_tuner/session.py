@@ -19,7 +19,7 @@ from gene_agent.knowledge.grasp import GraspProposal, load_grasp_profiles, parse
 SUPPORTED_PROFILES = ("task_1_bowl_0", "task_1_knob_0", "trifold_handle")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ObjectVisual:
     """渲染器所需的最小物体描述，不把 Viser 类型泄漏进纯数据层。"""
 
@@ -30,7 +30,7 @@ class ObjectVisual:
     pose_in_object: NDArray[np.float64] | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class GraspTunerState:
     """一个 profile 对应的不可变场景状态；物体 pose 固定为 identity。"""
 

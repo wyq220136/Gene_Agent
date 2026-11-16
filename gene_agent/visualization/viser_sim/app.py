@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from pathlib import Path
 from threading import RLock
@@ -167,8 +169,8 @@ class DoorVisualApp:
             self.pose_fields = {}
             xyz = pose[:3, 3]
             angles = Rotation.from_matrix(pose[:3, :3]).as_euler("xyz")
-            for label, initial in zip(("x", "y", "z", "roll", "pitch", "yaw"),
-                                      (*xyz, *angles), strict=True):
+            for label, initial in strict_zip(("x", "y", "z", "roll", "pitch", "yaw"),
+                                      (*xyz, *angles)):
                 field = gui.add_number(label, initial_value=float(initial), step=.01)
                 self.pose_fields[label] = field
                 field.on_update(self._locked(lambda _: self._pose_from_numbers()))
@@ -288,8 +290,8 @@ class DoorVisualApp:
         angles = Rotation.from_matrix(pose[:3, :3]).as_euler("xyz")
         self._syncing = True
         try:
-            for label, value in zip(("x", "y", "z", "roll", "pitch", "yaw"),
-                                    (*pose[:3, 3], *angles), strict=True):
+            for label, value in strict_zip(("x", "y", "z", "roll", "pitch", "yaw"),
+                                    (*pose[:3, 3], *angles)):
                 self.pose_fields[label].value = float(value)
         finally:
             self._syncing = False

@@ -1,5 +1,7 @@
 """通用子任务的状态交接和检查结果；防止独立调试与完整任务分叉。"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from gene_agent.tasks.checks import CheckResult, resolve_unknown

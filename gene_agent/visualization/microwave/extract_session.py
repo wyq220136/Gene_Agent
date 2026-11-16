@@ -8,6 +8,8 @@ Extract 建立真实规划 attachment 后运行。前序报告只提供起始状
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from datetime import datetime
 import json
 from pathlib import Path
@@ -51,7 +53,7 @@ def _commit_visual_state(case, state: VisualState) -> None:
     if "bowl" not in state.object_poses_world:
         raise ValueError("Insert 终态缺少实际 Bowl 位姿")
     model, data = case.model, case.data
-    for name, value in zip(state.joint_names, state.joint_positions_rad, strict=True):
+    for name, value in strict_zip(state.joint_names, state.joint_positions_rad):
         data.qpos[model.joint(name).qposadr[0]] = float(value)
     fingers = case.metadata["robot"]["grippers"]["right"]["joint_names"]
     for name in fingers:

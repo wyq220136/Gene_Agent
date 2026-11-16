@@ -5,6 +5,8 @@ attachment 表示纯视觉规划状态，不能作为物理夹持成功的证据
 """
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from datetime import datetime
 import json
 from pathlib import Path
@@ -141,7 +143,7 @@ class ObjectVisualSession:
     def tcp_pose(self, names, positions):
         scratch = mujoco.MjData(self.case.model)
         scratch.qpos[:] = self.case.data.qpos
-        for name, value in zip(names, positions, strict=True):
+        for name, value in strict_zip(names, positions):
             scratch.qpos[self.case.model.joint(name).qposadr[0]] = value
         mujoco.mj_forward(self.case.model, scratch)
         site = scratch.site(self.case.metadata['robot']['tcp_sites']['right'])

@@ -73,7 +73,7 @@ def _unit_axis(value: ArrayLike, field_name: str = "axis") -> NDArray[np.float64
     return result
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CuboidConcept:
     """长方体；``size_xyz_m`` 对应 part frame 的 X/Y/Z 全长。"""
 
@@ -91,7 +91,7 @@ class CuboidConcept:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CylinderConcept:
     """柱体；局部 X/Y 截面半径和高度单位为米。
 
@@ -117,7 +117,7 @@ class CylinderConcept:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RingConcept:
     """有厚度的圆环或圆弧；尺寸单位为米，弧长角单位为弧度。
 

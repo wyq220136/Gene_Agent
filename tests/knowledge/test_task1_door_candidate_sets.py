@@ -1,5 +1,7 @@
 """Task1 把手/门面候选集合与 pre-contact 的公共契约。"""
 
+from gene_agent._compat import strict_zip
+
 import hashlib
 import json
 import numpy as np
@@ -107,7 +109,7 @@ def test_task1_handle_pull_path_uses_three_equal_steps_and_local_x_compensation(
         [point.angle_rad for point in path.waypoints[3:6]],
         expected_angles,
     )
-    for point, angle in zip(path.waypoints[3:6], expected_angles, strict=True):
+    for point, angle in strict_zip(path.waypoints[3:6], expected_angles):
         world_rotation = Rotation.from_rotvec(axis.direction * angle).as_matrix()
         expected = grasp.copy()
         expected[:3, :3] = (
@@ -254,8 +256,8 @@ def test_right_close_uses_outside_normal_and_selection_preserves_candidate_ids()
     assert all(item["surface"] == "outside" for item in parameters)
     assert np.isclose(parameters[0]["standoff_m"], .0375)
     assert np.isclose(parameters[0]["top_down_distance_m"], .03125)
-    for candidate_set, waypoint, parameter in zip(
-        candidate_sets, path.waypoints, parameters, strict=True
+    for candidate_set, waypoint, parameter in strict_zip(
+        candidate_sets, path.waypoints, parameters
     ):
         selected = candidate_set.candidates[1]
         np.testing.assert_allclose(waypoint.tcp_pose_world, selected.tcp_pose_world)

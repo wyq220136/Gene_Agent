@@ -1,6 +1,8 @@
 """在线 MuJoCo 状态与同步 cuRobo 规划之间的可复用单阶段边界。"""
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from pathlib import Path
 from ..configuration import CollisionMode, resolve_collision_mode, collision_mode_metadata
@@ -132,8 +134,8 @@ class CuroboRuntimeBridge:
         if not np.allclose(steps, steps[0], atol=1e-9, rtol=1e-6):
             raise ValueError(f"{stage} 首选轨迹必须使用均匀时间采样")
 
-        current_by_name = dict(zip(
-            robot["joint_names"], robot["joint_positions_rad"], strict=True,
+        current_by_name = dict(strict_zip(
+            robot["joint_names"], robot["joint_positions_rad"],
         ))
         if any(name not in current_by_name for name in names):
             raise ValueError(f"{stage} 首选轨迹关节不属于当前机器人状态")
@@ -589,8 +591,8 @@ class CuroboRuntimeBridge:
             robot_names = tuple(robot["joint_names"])
             if not plan_names or len(set(plan_names)) != len(plan_names):
                 raise ValueError(f"{stage} 轨迹缺少唯一的具名关节")
-            start_by_name = dict(zip(
-                robot_names, robot["joint_positions_rad"], strict=True,
+            start_by_name = dict(strict_zip(
+                robot_names, robot["joint_positions_rad"],
             ))
             if any(name not in start_by_name for name in plan_names):
                 raise ValueError(f"{stage} 轨迹关节不属于当前实际机器人状态")
@@ -726,10 +728,9 @@ class CuroboRuntimeBridge:
             try:
                 stopped = self.runtime.query(robot_groups=(self.group,))
                 stopped_robot = stopped["robots"][self.group]
-                by_name = dict(zip(
+                by_name = dict(strict_zip(
                     stopped_robot["joint_names"],
                     stopped_robot["joint_positions_rad"],
-                    strict=True,
                 ))
                 stopped_positions = [by_name[name] for name in plan["joint_names"]]
                 execution["failure_visualization"] = planner.export_execution_collision(

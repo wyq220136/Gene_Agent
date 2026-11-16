@@ -1,4 +1,6 @@
 """已有任务 Knowledge 的纯几何装配；不筛 IK，不产生物理成功结论。"""
+
+from gene_agent._compat import strict_zip
 from pathlib import Path
 from dataclasses import replace
 import json
@@ -211,7 +213,7 @@ def _operation_proposals(inputs, selection, tune):
         group = 'right'
     metadata.update(candidate_count=len(candidates), candidate_rank=rank)
     rows = []
-    for index, (point, label, width) in enumerate(zip(path.waypoints, labels, widths, strict=True)):
+    for index, (point, label, width) in enumerate(strict_zip(path.waypoints, labels, widths)):
         delta = _turn(axis, point.angle_rad - current)
         rows.append(_operation_row(inputs, selection, group, axis, joint,
             point.tcp_pose_world, point.angle_rad, width, index, label, dict(params),

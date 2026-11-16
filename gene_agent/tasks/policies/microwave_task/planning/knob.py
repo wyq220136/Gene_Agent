@@ -1,6 +1,8 @@
 """标定微波炉 knob_0 的可复现规划与 MuJoCo 运动学预览记录。"""
 
 from __future__ import annotations
+
+from gene_agent._compat import strict_zip
 from gene_agent.motion.curobo.session import CuroboPlannerPool
 
 import json
@@ -160,7 +162,7 @@ def _select_legacy_grasp(proposals, settings: KnobSkillSettings, *, group: str,
         raise RuntimeError("最终 grasp batch IK 返回数量不一致")
     attempts = []
     eligible = []
-    for item, request, result in zip(proposals, requests, results, strict=True):
+    for item, request, result in strict_zip(proposals, requests, results):
         if result.request_id != request.request_id or result.operation is not MotionOperation.IK:
             raise RuntimeError("最终 grasp batch IK 返回顺序不一致")
         attempts.append({"candidate_id": item.candidate_id, "stage": "final_grasp_ik",
@@ -186,8 +188,8 @@ def _select_legacy_grasp(proposals, settings: KnobSkillSettings, *, group: str,
         if len(pre_results) != len(pre_requests):
             raise RuntimeError("pregrasp batch IK 返回数量不一致")
         selected = None
-        for (item, _index, pose), request, result in zip(
-            batch, pre_requests, pre_results, strict=True,
+        for (item, _index, pose), request, result in strict_zip(
+            batch, pre_requests, pre_results,
         ):
             if result.request_id != request.request_id or result.operation is not MotionOperation.IK:
                 raise RuntimeError("pregrasp batch IK 返回顺序不一致")
@@ -504,8 +506,8 @@ def _run_rotate_knob_0_planning(output_dir, *, task_path, case, pool) -> dict:
                 start_positions, float(stage.joint_delta_rad),
             )
             # 与旧同步 Viser 一样，这个分支直接给末关节命令，不调用 cuRobo。
-            for time_s, positions_row in zip(times, positions, strict=True):
-                for name, value in zip(names, positions_row, strict=True):
+            for time_s, positions_row in strict_zip(times, positions):
+                for name, value in strict_zip(names, positions_row):
                     data.qpos[model.joint(name).qposadr[0]] = float(value)
                 row["planned_replay_samples"].append(_planned_sample(
                     model, data, names, time_s, group=group, robot=robot,

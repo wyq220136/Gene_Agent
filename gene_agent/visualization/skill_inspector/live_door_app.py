@@ -1,6 +1,8 @@
 """门 Skill 在线纯视觉编辑器；业务状态全部来自 DoorDebugSession。"""
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import json
 from threading import RLock
 import time
@@ -344,7 +346,7 @@ class LiveDoorApp:
                 result = self.ik_cache[key]
                 if result.joint_positions is not None:
                     names = self.session.case.metadata["robot"]["joint_groups"][self.session.group]
-                    for name, value in zip(names, result.joint_positions, strict=True):
+                    for name, value in strict_zip(names, result.joint_positions):
                         self.preview_data.qpos[self.session.case.model.joint(name).qposadr[0]] = value
                 budget = self.session.budget_for(phase.phase_id)
                 quality = (assess_pose_ik(result,

@@ -16,7 +16,7 @@ from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.knowledge.geometry import CylinderConcept
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AxisSpec:
     point: ArrayLike
     direction: ArrayLike
@@ -41,13 +41,13 @@ class AxisSpec:
         object.__setattr__(self, "direction", direction)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class OperationWaypoint:
     angle_rad: float
     tcp_pose_world: NDArray[np.float64]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class OperationPath:
     kind: str
     axis_point_world: NDArray[np.float64]

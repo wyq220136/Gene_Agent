@@ -1,6 +1,8 @@
 """把已确认的微波炉 Knowledge 路径编排为可检查的 Skill 阶段。"""
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 from dataclasses import dataclass
 import math
 from typing import Mapping
@@ -122,7 +124,7 @@ def door_phases(handle=None, push_open=None, push_close=None) -> tuple[DoorPhase
                 np.asarray(first.tcp_pose_world, dtype=float).copy(),
                 float(first.angle_rad), 0., "gripper", "avoid_door",
             ))
-        for index, (point, name, width) in enumerate(zip(path.waypoints, labels, widths, strict=True)):
+        for index, (point, name, width) in enumerate(strict_zip(path.waypoints, labels, widths)):
             # pre-contact 和把手预抓取允许自由避障；操作接触路径维持 TCP 直线。
             motion = ("gripper" if name in {"close", "release"} else
                       "plan" if name in {"pregrasp", "pre_contact"} else "linear_tcp")

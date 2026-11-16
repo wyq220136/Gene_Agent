@@ -5,6 +5,11 @@
     "left": "",
     "right": ""
   },
+  "robot_ports": {
+    "left": 8080,
+    "right": 8080
+  },
+  "gripper_config": "config/robots/standard_gripper.json",
   "camera": {
     "endpoint": "tcp://127.0.0.1:18082",
     "serial": "",

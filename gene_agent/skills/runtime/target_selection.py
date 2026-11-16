@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent._compat import strict_zip
+
 import inspect
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -93,7 +95,7 @@ def plan_with_local_rotation_search(
     }
     first_planning_failure = None
     for index, ((x_deg, y_deg, candidate), ik_result) in enumerate(
-        zip(batch_rows, ik_results, strict=True)
+        strict_zip(batch_rows, ik_results)
     ):
         if not ik_result.get("success"):
             continue

@@ -1,4 +1,6 @@
 """人工确认与共享检查类型的兼容入口。"""
+
+from __future__ import annotations
 from typing import Callable
 from gene_agent.skills.contracts import CheckResult
 

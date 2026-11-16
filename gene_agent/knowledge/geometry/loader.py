@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import TypeAlias
+from typing import Union
 
 import numpy as np
 
@@ -15,16 +15,14 @@ from .transforms import validate_pose
 from .trifold import TrifoldConcept
 
 
-Concept: TypeAlias = (
-    CuboidConcept | CylinderConcept | RingConcept | TrifoldConcept | ContainerConcept
-)
+Concept = Union[CuboidConcept, CylinderConcept, RingConcept, TrifoldConcept, ContainerConcept]
 
 
 class ConceptLoadError(ValueError):
     """携带来源文件与 JSON 字段路径的 Concept 加载错误。"""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ConceptPart:
     """一个具名物体 part；``concept.pose_in_object`` 是 ``T_object_part``。"""
 
