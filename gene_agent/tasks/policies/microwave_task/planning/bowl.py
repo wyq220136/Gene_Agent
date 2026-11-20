@@ -13,6 +13,7 @@ import mujoco
 import numpy as np
 
 from gene_agent.knowledge import bowl_grasp_candidates
+from .bowl_candidates import auto_bowl_grasp_parameters
 from gene_agent.motion import (
     CollisionPolicy, CuroboPlannerAdapter, JointState, MotionOperation,
     MotionRequest, PlannerMode, PlanningSceneRef, PoseTarget,
@@ -100,9 +101,13 @@ def prepare_pick_bowl_scene(
         model, data, metadata["robot"], "right", output / "collision"
     )
     bowl_pose = _body_pose(data, "bowl")
-    candidates = bowl_grasp_candidates(bowl_pose, pose_source="mujoco_gt")
+    candidate_parameters = auto_bowl_grasp_parameters(model, data, metadata["robot"])
+    candidates = bowl_grasp_candidates(
+        bowl_pose, pose_source="mujoco_gt", parameters=candidate_parameters,
+    )
     (output / "case_meta.json").write_text(
-        json.dumps({"revision": revision, "seed": seed, "joint_overrides": joints}, ensure_ascii=False) + "\n",
+        json.dumps({"revision": revision, "seed": seed, "joint_overrides": joints,
+                    "candidate_parameters": candidate_parameters}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     return PickBowlCase(
@@ -167,7 +172,10 @@ def load_pick_bowl_case(output_dir: Path) -> PickBowlCase:
             raise ValueError("规划报告与碰撞快照哈希不一致")
         snapshot["active_robot_spheres"] = report.get("active_robot_spheres", [])
     bowl_pose = _body_pose(data, "bowl")
-    candidates = bowl_grasp_candidates(bowl_pose, pose_source="mujoco_gt")
+    candidates = bowl_grasp_candidates(
+        bowl_pose, pose_source="mujoco_gt",
+        parameters=info.get("candidate_parameters"),
+    )
     return PickBowlCase(
         output, int(info["revision"]), model, data, metadata, snapshot,
         bowl_pose, candidates, report,

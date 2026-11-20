@@ -25,6 +25,11 @@ from gene_agent.tasks.policies.microwave_task.planning.attachment import build_b
 from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase, prepare_grasp_stage_snapshots, tcp_path_for_positions
 
 
+from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
+    BOWL_GRASP_TABLE_ANGLE_RANGE_DEG, BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+)
+
+
 ROOT = Path(__file__).resolve().parents[5]
 
 
@@ -119,9 +124,9 @@ def base_side_bowl_proposals(
     candidates: Sequence[dict[str, Any]], *, object_pose_world: np.ndarray,
     base_position_world: np.ndarray, table_normal_world: np.ndarray | None = None,
     min_base_alignment: float = 0.0,
-    min_table_angle_deg: float = 45.0,
-    max_table_angle_deg: float = 70.0,
-    preferred_table_angle_deg: float = 55.0,
+    min_table_angle_deg: float = BOWL_GRASP_TABLE_ANGLE_RANGE_DEG[0],
+    max_table_angle_deg: float = BOWL_GRASP_TABLE_ANGLE_RANGE_DEG[1],
+    preferred_table_angle_deg: float = BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
     min_external_approach_alignment: float = 0.3,
     rim_radial_tolerance_m: float = 0.001,
     rim_height_tolerance_m: float = 0.002,
@@ -498,7 +503,8 @@ def run_pick_bowl_skill_planning(case: PickBowlCase, *, seed: int = 123) -> dict
         "scene_revision": case.revision,
         "snapshot_sha256": snapshot["snapshot_sha256"],
         "seed": seed,
-        "candidate_source": "legacy_task_1_bowl_40",
+        "candidate_source": "task_1_bowl_auto_48",
+        "generated_candidate_count": len(case.candidates),
         "candidate_order": [item.candidate_id for item in proposals],
         "skill_profile": str(profile_path),
         "skill_settings": asdict(profile),

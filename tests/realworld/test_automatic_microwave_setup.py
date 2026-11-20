@@ -340,7 +340,9 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     _, record = prepared
     calibration = record["camera"]
     registered = []
+    service_calls = []
     def capture(**kwargs):
+        service_calls.append("capture")
         directory = kwargs["output_dir"]
         directory.mkdir(parents=True)
         Image.fromarray(np.zeros((100, 100, 3), np.uint8)).save(directory / "rgb.png")
@@ -349,6 +351,7 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
                     "frame_number": 1, "timestamp_ms": 12., "captured_at_unix_ms": 1000.})
         return directory
     def segment(server, image_path, items):
+        service_calls.append("segment")
         expected = {"bowl", "handle"} | ({"knob"} if include_knob else set())
         assert {Path(item["mask_path"]).stem for item in items} == expected
         for item in items:
@@ -357,9 +360,13 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     class Pose:
         def __init__(self, server): pass
         def register(self, **kwargs):
+            service_calls.append("register")
             registered.append(kwargs)
             name = kwargs["session_id"].rsplit("-", 1)[0]
             return {"ok": True, "session_id": kwargs["session_id"], "T_camera_object": record["closed_reference_poses_sdk"][name]}
+    # 已有资产路线禁止额外重建；桌面和旋钮不能混入默认分割请求。
+    monkeypatch.setattr("gene_agent.perception_modules.interactive_realworld_perception.post_reconstruction",
+                        lambda *a, **k: pytest.fail("known task assets triggered SAM3D"))
     monkeypatch.setattr(setup, "capture_frozen_scene_frame", capture)
     monkeypatch.setattr("gene_agent.perception_modules.segmentation.seg_client.segment_image", segment)
     monkeypatch.setattr("gene_agent.perception_modules.segmentation.seg_client.unload_model", lambda *a: {})
@@ -370,7 +377,11 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     flags = {"include_knob": True} if include_knob else {}
     path = setup.prepare_perception(camera_params=calibration["path"], output=tmp_path / "generated", ask=lambda _: next(answers), **flags)
     _, result = setup.load_perception_setup(path.parent)
+    assert service_calls == ["capture", "segment"] + ["register"] * (3 if include_knob else 2)
     assert len(registered) == (3 if include_knob else 2)
+    from gene_agent.perception_modules.pose_est.task_pose_est import pose_mesh_path
+    for name in (setup.BOWL, setup.MICROWAVE):
+        assert result["meshes"][name] == str(pose_mesh_path(name.split("/")[0], setup.ROOT / "data/task_1/objs" / name))
     assert result["include_knob"] is include_knob
     assert (setup.KNOB in result["sessions"]) is include_knob
     assert len({str(row["rgb_path"]) for row in registered}) == 1

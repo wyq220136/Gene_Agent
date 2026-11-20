@@ -16,6 +16,7 @@ from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.realworld.pose_tracking import capture_frozen_scene_frame
 from gene_agent.perception_modules.camera.calibration.inspection.geometry import backproject_base
 from gene_agent.perception_modules.table_geometry import fit_horizontal_table_plane
+from gene_agent.perception_modules.pose_est.task_pose_est import pose_mesh_path
 
 ROOT = Path(__file__).resolve().parents[3]
 BOWL = "Bowl/Bowl_0"
@@ -248,8 +249,10 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     if ask(f"确认 {len(masks)} 个物体 mask、标定及计算桌面与现场相符后输入 ACCEPT（不分割桌面）: ").strip() != "ACCEPT":
         raise ValueError("感知/桌面结果未确认；没有生成可运行的感知记录")
     unload_model(seg_server)
-    meshes = {BOWL: ROOT / "data/task_1/objs/Bowl/Bowl_0/meshes/obj_mesh.obj",
-              MICROWAVE: ROOT / "data/task_1/objs/Microwave/Microwave_0/meshes/handle_mesh.obj"}
+    # 与 AffordToolAct 的批量位姿入口共用 mesh 选择：把手 mask 只配把手 mesh。
+    # 已有任务资产直接注册，不进入 SAM3D、Concept 或额外桌面感知。
+    meshes = {name: pose_mesh_path(name.split("/")[0], ROOT / "data/task_1/objs" / name)
+              for name in (BOWL, MICROWAVE)}
     if include_knob:
         meshes[KNOB] = export_knob_mesh(folder)
     mask_keys = {BOWL: "bowl", MICROWAVE: "handle", KNOB: "knob"}

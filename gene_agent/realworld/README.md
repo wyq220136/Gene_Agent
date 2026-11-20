@@ -24,3 +24,18 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 `microwave/perception_setup.py` 采集、分割、注册并保存，`microwave/configuration.py` 读取标定和设备参数，
 `microwave/live_perception.py` 默认从同一新帧的碗、把手跟踪结果测门角并核对固定柜体参考，不感知或操作旋钮；显式 `--with-knob` 才启用旋钮。准备阶段只分割碗和把手；桌面复用已迁移的 AffordToolAct Task1 固定 XY 和厚度，从标定后的场景点云计算高度，不做桌面分割或 pose estimation，不要求手填站点或角度 JSON。
 目录合并尚未统一三种后端的完整任务循环，实机效果仍需现场验收。
+
+自动抓碗与仿真使用同一个 `tasks/policies/microwave_task/planning/bowl_candidates.py` 参数入口，
+场景查看器的新建/重载和任务可视化接线也复用这一入口，
+经 `knowledge.bowl_grasp_candidates` 生成 48 个候选，再由共享 `planning/grasp.py` 筛选和规划。
+参数保持 Gene_Agent_new 的 auto 路线：15 mm 深度、六个外侧倾角、实际 FK 指垫支点、
+世界 Z 偏移 -12 mm；按实际肩部位置及桌面法向筛选，桌面接近角 45–70°、优先 55°。
+自动模式仅使用 `pick_bowl_legacy_visual`；手动候选探针仍保留其独立的 12 mm 默认。
+真机只适配同帧物体观测和实测机器人状态，候选生成不推进物理、不执行设备。
+感知 mesh 选择复用 AffordToolAct 迁移的 `pose_est.task_pose_est.pose_mesh_path`，
+已知任务资产直接注册，不触发 SAM3D；默认只分割并跟踪碗和门把手。
+候选一致性与感知调用范围可离线检查：
+`python -m pytest -q tests/realworld/test_bowl_candidate_parity.py tests/realworld/test_automatic_microwave_setup.py`。
+候选一致不代表相机标定、夹持物理或真机成功率已经验收。
+
+新场景保存实际候选参数，重载时按记录复现；没有候选参数的历史场景沿用原有候选几何，避免同名候选被重新解释。

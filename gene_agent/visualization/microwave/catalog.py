@@ -314,6 +314,7 @@ def run_bowl_insert_partition(case: PickBowlCase, incoming: TaskState,
                               *, seed: int) -> TaskStepResult:
     """在开门终态场景规划 Pick→Insert，并只从 release 后实轨迹交接。"""
     from gene_agent.knowledge import bowl_grasp_candidates
+    from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import auto_bowl_grasp_parameters
     from gene_agent.motion.curobo.scene import export_collision_scene
     from gene_agent.tasks.policies.microwave_task.planning.grasp import run_pick_bowl_skill_planning
     from gene_agent.tasks.policies.microwave_task.planning.insert import run_insert_bowl_skill_planning
@@ -327,7 +328,10 @@ def run_bowl_insert_partition(case: PickBowlCase, incoming: TaskState,
     bowl_pose = _pose(case.data, "bowl")
     active = replace(
         case, revision=case.revision + 1, snapshot=snapshot, bowl_pose=bowl_pose,
-        candidates=bowl_grasp_candidates(bowl_pose, pose_source="mujoco_gt"),
+        candidates=bowl_grasp_candidates(
+            bowl_pose, pose_source="mujoco_gt",
+            parameters=auto_bowl_grasp_parameters(case.model, case.data, case.metadata["robot"]),
+        ),
     )
     pick = run_pick_bowl_skill_planning(active, seed=seed)
     rows = tuple({"skill": "pick_bowl", **row} for row in pick.get("stages", ()))

@@ -16,7 +16,14 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase, prepare_grasp_stage_snapshots
-from gene_agent.tasks.policies.microwave_task.planning.grasp import legacy_bowl_proposals, plan_bowl_grasp_stages
+from gene_agent.tasks.policies.microwave_task.planning.grasp import (
+    active_arm_base_reference, base_side_bowl_proposals, bowl_grasp_geometry_metrics,
+    plan_bowl_grasp_stages,
+)
+from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
+    BOWL_AUTO_GRASP_PROFILE, BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+    BOWL_GRASP_TABLE_ANGLE_RANGE_DEG, auto_bowl_grasp_parameters,
+)
 from gene_agent.knowledge import bowl_grasp_candidates
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.motion.model import (
@@ -37,13 +44,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _PROFILE_PATH = _ROOT / "data/task_1/skills/skill_profiles.json"
 
 
-def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
-    """用同帧、已对齐资产的现场 pose 生成旧 task_1 的 40 个候选。
-
-    候选数值来自原 Knowledge，世界方位优先级直接复用视觉 Skill
-    使用的排序函数。这里不拿名义 MuJoCo pose 代替现场 pose，也不
-    把候选可视化当作可达或已抓住的证据。
-    """
+def _bowl_target(collision_scene: Mapping) -> dict:
     snapshot = collision_scene["snapshot"]
     provenance = collision_scene["provenance"]
     if (provenance.get("physics_stepped") is not False
@@ -54,10 +55,6 @@ def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
     if not isinstance(aligned, Mapping) or _BOWL_INSTANCE not in aligned:
         raise ValueError("现场碰撞来源缺少已对齐资产的 Bowl/Bowl_0 pose")
     bowl_pose = validate_pose(aligned[_BOWL_INSTANCE], field_name="T_world_bowl")
-    candidates = bowl_grasp_candidates(
-        bowl_pose, pose_source="observed_scene_asset_aligned",
-    )
-    proposals = legacy_bowl_proposals(candidates, object_pose_world=bowl_pose)
     return {
         "object_id": _BOWL_INSTANCE,
         "pose_source": "observed_scene_asset_aligned",
@@ -65,16 +62,14 @@ def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
         "source_timestamp_ms": provenance["source_timestamp_ms"],
         "collision_snapshot_sha256": snapshot["snapshot_sha256"],
         "bowl_pose_world": bowl_pose,
-        "proposals": proposals,
-        "candidates": candidates,
     }
 
 
 def _observed_case(
-    collision_scene: Mapping, output_dir: str | Path,
+    collision_scene: Mapping, output_dir: str | Path, *, generate_candidates: bool = True,
 ) -> tuple[PickBowlCase, dict]:
     """把现场已测 qpos 放进仅用于 FK/碰撞的私有 MuJoCo 数据。"""
-    target = build_observed_bowl_grasp_proposals(collision_scene)
+    target = _bowl_target(collision_scene)
     snapshot = collision_scene["snapshot"]
     model = mujoco.MjModel.from_xml_path(str(collision_scene["scene_xml_path"]))
     qpos = np.asarray(snapshot["qpos_snapshot"], dtype=float)
@@ -87,11 +82,35 @@ def _observed_case(
     metadata = collision_scene["scene_metadata"]
     if group not in metadata["robot"]["joint_groups"]:
         raise ValueError("Bowl 抓取活动臂与场景机器人元数据不一致")
+    candidates = ()
+    if generate_candidates:
+        parameters = auto_bowl_grasp_parameters(model, data, metadata["robot"], group=group)
+        candidates = bowl_grasp_candidates(
+            target["bowl_pose_world"], parameters=parameters, pose_source=target["pose_source"],
+        )
+        target.update(candidates=candidates, candidate_parameters=parameters)
     case = PickBowlCase(
         Path(output_dir).resolve(), 0, model, data, metadata, snapshot,
-        target["bowl_pose_world"], target["candidates"],
+        target["bowl_pose_world"], candidates,
     )
     return case, target
+
+
+def _selection_geometry(case):
+    body, position = active_arm_base_reference(case)
+    normal = case.data.geom("scene_table").xmat.reshape(3, 3)[:, 2]
+    return body, position, normal
+
+
+def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
+    """复用仿真 auto 候选输入和按实际桌面/肩部位置定义的筛选顺序。"""
+    case, target = _observed_case(collision_scene, ".")
+    _, position, normal = _selection_geometry(case)
+    target["proposals"] = base_side_bowl_proposals(
+        case.candidates, object_pose_world=case.bowl_pose,
+        base_position_world=position, table_normal_world=normal,
+    )
+    return target
 
 
 def build_observed_bowl_grasp_stage_snapshots(
@@ -103,7 +122,7 @@ def build_observed_bowl_grasp_stage_snapshots(
     开口，不推进动力学，也不改变现场场景的实测快照。接触层只移除
     碗作为规划障碍，绝不等于实机可以与其他部位任意接触。
     """
-    case, _ = _observed_case(collision_scene, output_dir)
+    case, _ = _observed_case(collision_scene, output_dir, generate_candidates=False)
     return prepare_grasp_stage_snapshots(
         case, open_width_m, group=case.snapshot["active_group"],
     )
@@ -124,17 +143,61 @@ def plan_observed_bowl_grasp_stages(
     case, target = _observed_case(collision_scene, output)
     if case.snapshot["active_group"] != "right":
         raise NotImplementedError("原 task_1 抓碗 Skill 规划目前只支持右臂")
-    if profile_name not in {"pick_bowl", "pick_bowl_legacy_visual"}:
-        raise ValueError(f"未知抓碗 Skill profile: {profile_name}")
+    if profile_name != BOWL_AUTO_GRASP_PROFILE:
+        raise ValueError("自动候选筛选目前只支持已验证的 pick_bowl_legacy_visual profile")
     profile_bytes = _PROFILE_PATH.read_bytes()
     settings = load_grasp_settings(_PROFILE_PATH, profile_name)
     output.mkdir(parents=True, exist_ok=True)
-    selected = plan_bowl_grasp_stages(case, settings, seed=seed)
+    body, position, normal = _selection_geometry(case)
+    evidence = {
+        "input_state_id": target["collision_snapshot_sha256"],
+        "bowl_pose_world": case.bowl_pose.tolist(),
+        "candidate_order_policy": "right_arm_base_side_external_rim_then_45_to_70_deg_table_angle",
+        "right_arm_base_reference_body": body,
+        "right_arm_base_position_world": position.tolist(),
+        "grasp_table_angle_definition": "acute angle(TCP +Z, actual scene_table plane)",
+        "grasp_table_angle_allowed_deg": list(BOWL_GRASP_TABLE_ANGLE_RANGE_DEG),
+        "grasp_table_angle_preferred_deg": BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+        "candidate_parameters": target["candidate_parameters"],
+        "generated_candidate_count": len(case.candidates),
+    }
+    evidence_path = output / "candidate_selection.json"
+    try:
+        selected = plan_bowl_grasp_stages(case, settings, seed=seed)
+    except Exception as error:
+        evidence["failure"] = {"type": type(error).__name__, "message": str(error)}
+        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2,
+                                             allow_nan=False) + "\n",
+                                 encoding="utf-8")
+        raise
+    selected_proposal = next((proposal for proposal in selected.proposals
+                              if proposal.candidate_id == selected.plan.selected_candidate_id), None)
+    selected_geometry = None
+    if selected_proposal is not None:
+        selected_geometry = bowl_grasp_geometry_metrics(
+            selected_proposal, object_pose_world=case.bowl_pose,
+            base_position_world=position, table_normal_world=normal,
+        )
+    evidence.update(
+        selected_grasp_geometry=selected_geometry,
+        pregrasp_joint_travel_limit_rad=settings.max_pregrasp_joint_travel_rad,
+        approach_joint_travel_limit_rad=settings.max_approach_joint_travel_rad,
+        candidate_order=[item.candidate_id for item in selected.proposals],
+        selected_candidate_id=selected.plan.selected_candidate_id,
+        stage_collision_snapshots={
+            "pregrasp": selected.strict_snapshot["snapshot_sha256"],
+            "approach": selected.contact_snapshot["snapshot_sha256"],
+        },
+        plan=selected.plan.to_dict(),
+    )
+    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                             encoding="utf-8")
     planned_prefix = all(
         selected.plan.stage(name).status == "planned"
         for name in ("open", "pregrasp", "approach", "close")
     )
     report = {
+        **evidence,
         "schema_version": 1,
         "kind": "observed_bowl_pick_plan_only",
         "object_id": _BOWL_INSTANCE,
@@ -151,12 +214,7 @@ def plan_observed_bowl_grasp_stages(
         },
         "skill_profile": profile_name,
         "skill_profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
-        "candidate_order_policy": "right_arm_base_side_first",
-        "right_arm_base_position_world": case.data.body("right_base_link").xpos.tolist(),
-        "pregrasp_joint_travel_limit_rad": settings.max_pregrasp_joint_travel_rad,
-        "approach_joint_travel_limit_rad": settings.max_approach_joint_travel_rad,
-        "candidate_order": [item.candidate_id for item in selected.proposals],
-        "selected_candidate_id": selected.plan.selected_candidate_id,
+        "candidate_selection_ref": str(evidence_path),
         "grasp_prefix_planned": planned_prefix,
         "physical_pick_success": False,
         "claim": "只规划抓碗前缀；未执行夹爪、物理夹持或抬升",

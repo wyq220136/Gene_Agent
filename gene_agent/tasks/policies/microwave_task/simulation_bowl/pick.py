@@ -42,8 +42,10 @@ PICK_EXECUTION_POSITION_KP_SCALE_BY_STAGE = {
     "lift": 1.0,
 }
 PICK_CLOSE_POSITION_KP_SCALE = 1.0
-BOWL_GRASP_TABLE_ANGLE_RANGE_DEG = (45.0, 70.0)
-BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG = 55.0
+from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
+    BOWL_AUTO_GRASP_PROFILE, BOWL_AUTO_GRASP_DEPTH_M, BOWL_GRASP_TABLE_ANGLE_RANGE_DEG,
+    BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG, auto_bowl_grasp_parameters,
+)
 
 
 def close_bowl_on_contact(runtime, **command) -> dict:
@@ -182,7 +184,7 @@ def run_experiment(
     # 手动探针保留既有 12 mm 默认；自动模式必须与 Viser 的 Bowl
     # Knowledge 默认 15 mm 一致。显式 --depth-m 始终优先。
     effective_depth_m = float(depth_m) if depth_m is not None else (
-        .015 if candidate_id == "auto" else .012
+        BOWL_AUTO_GRASP_DEPTH_M if candidate_id == "auto" else .012
     )
     profile_path = Path(__file__).resolve().parents[5] / "data/task_1/skills/skill_profiles.json"
     if skill_profile not in {"pick_bowl", "pick_bowl_legacy_visual"}:
@@ -269,33 +271,15 @@ def run_experiment(
     bowl = selection_input["objects"]["bowl"]["T_world_object"]
     candidate_parameters = {"depth_m": effective_depth_m}
     if candidate_id == "auto":
-        # 从碗沿外侧斜向接近，让掌部留在碗外；近竖直抓取虽能抬碗，
-        # 却会在碗保持直立入炉时把腕部送到炉顶。负倾角使掌部远离碗心。
-        candidate_parameters.update({
-            # 指垫中点落在碗沿厚度中心。结合 7 mm 闭爪宽度，两侧
-            # 接触面分别越过内外壁，避免两根指爪同时伸入碗腔。
-            "radial_offset_m": 0.0,
-            # TCP +Z 与桌面平面保持约 45..70 度。候选留出 1 度余量，
-            # 避免碗落稳后的微小倾斜把端点数值推到范围之外。
-            "tip_y_rad": np.deg2rad([-35.0, -40.0, -30.0, -45.0, -25.0, -21.0]).tolist(),
-            "max_abs_tip_y_rad": np.deg2rad(50.0),
-            # 斜抓时内侧指杆比指垫更靠近碗沿；上移3mm为抬升留出净空。
-            "tcp_world_offset_m": [0., 0., -.012],
-        })
-        # TCP 在指尖，实际接触代理中心在其后方；倾斜必须绕接触区旋转，
-        # 否则同一个 TCP 位置会让内侧指垫提前压碗、闭爪时将碗掀斜。
-        current_tcp = np.asarray(selection_input['robots']['right']['T_world_tcp'])
-        pad_ids = [model.geom(name).id for name in
-                   runtime.robot_metadata['grippers']['right']['pad_geom_names']]
-        pad_center = runtime.copy_data().geom_xpos[pad_ids].mean(axis=0)
-        candidate_parameters['tilt_pivot_tcp_m'] = (
-            current_tcp[:3, :3].T @ (pad_center - current_tcp[:3, 3])).tolist()
+        candidate_parameters = auto_bowl_grasp_parameters(
+            model, data, runtime.robot_metadata, depth_m=effective_depth_m,
+        )
     candidates = bowl_grasp_candidates(np.asarray(bowl), parameters=candidate_parameters)
     selected_pregrasp_pose = None
     selected_pregrasp_trajectory = None
     selected_approach_trajectory = None
     if candidate_id == "auto":
-        if skill_profile != "pick_bowl_legacy_visual":
+        if skill_profile != BOWL_AUTO_GRASP_PROFILE:
             raise ValueError("自动候选筛选目前只支持已验证的 pick_bowl_legacy_visual profile")
         from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase
         from gene_agent.tasks.policies.microwave_task.planning.grasp import (

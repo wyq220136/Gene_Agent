@@ -293,8 +293,11 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
         seen["seed"] = seed
         seen["settings"] = settings
         seen["case"] = case
-        assert len(case.candidates) == 40
+        assert len(case.candidates) == 48
         assert case.candidates[0]["candidate_id"] == "bowl_ring_00_00"
+        assert case.candidates[0]["parameters"]["depth_m"] == pytest.approx(0.015)
+        assert case.candidates[0]["parameters"]["radial_offset_m"] == pytest.approx(0.)
+        assert len(case.candidates[0]["parameters"]["tip_y_rad"]) == 6
         assert case.snapshot["snapshot_sha256"] == scene["snapshot"]["snapshot_sha256"]
         np.testing.assert_allclose(case.data.qpos, scene["snapshot"]["qpos_snapshot"])
         np.testing.assert_allclose(case.bowl_pose, observed.object_poses_sdk["Bowl/Bowl_0"])
