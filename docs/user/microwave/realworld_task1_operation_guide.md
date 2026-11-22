@@ -11,7 +11,7 @@
 ## 1. 使用前提
 
 - 操作 Skill、Knowledge、阶段顺序及操作 profile 沿用原实现，本流程只调整配置与感知接线。
-- 默认只预检；实际运动需要显式 `--execute --yes`。离线检查通过不等于真机已跑通。
+- 默认只预检首段；完整任务预览需显式 `--subtask all --plan-only`，可加 `--video`。实际运动需要显式 `--execute --yes`；预测规划通过不等于真机已跑通。
 - 当前使用右臂 SDK base 作为场景参考，柜体和相机在本次运行期间必须固定。
 - 使用任务对应的微波炉、碗和标准夹爪资产；标准夹爪 TCP、开口范围必须与规划模型一致。
 - 正式使用 `--collision-mode full`，不能用 `robot_only` 掩盖场景碰撞问题。当前没有任意阶段停止的 `--stop-after-stage` 参数。
@@ -176,29 +176,112 @@ plan-only 时核对碰撞模型与现场一致，更换支撑尺寸时不能直�
 但采集、tracking 或场景导出超过 `--max-age-s`（默认 5 秒）时，仍会拒绝过期观测；
 应检查服务延迟或相机状态，不能伪造新时间戳。默认 `no_knob` 只关闭旋钮感知，门角和碗、把手 pose 仍实时测量并检查时效。
 
-## 7. 配置检查与 plan-only
+## 7. 配置检查、首段预检与完整规划预览
 
-在运行终端设置以上变量，再使用统一参数：
+先在本终端设置前文的 `PY`、`PERCEPTION`、`LEFT_IP`、`RIGHT_IP`，并确认位于工程根目录：
 
 ```bash
 COMMON=(--perception "$PERCEPTION" --left-ip "$LEFT_IP" --right-ip "$RIGHT_IP")
-"$PY" tools/run/run_microwave_task1_realworld.py \
-  "${COMMON[@]}" --subtask pick_bowl --collision-mode full --check-config
+"$PY" "$PWD/tools/run/run_microwave_task1_realworld.py" \
+  "${COMMON[@]}" --subtask all --collision-mode full --check-config
 ```
 
-`--check-config` 只检查本地输入和配置，不连接机械臂，也不证明远端 session 存活。
+`--check-config` 只检查本地输入和配置，不连接设备，也不验证远端 session 存活。
 正式 CLI 已不接收 `--config realworld_site.json`。
 
+### 7.1 单个子任务首段预检
+
+不加 `--execute` 或 `--plan-only` 时，只预检首个状态改变阶段：
+
 ```bash
-OUT=runs/realworld/pick_bowl_plan_$(date +%Y%m%d-%H%M%S)
-"$PY" tools/run/run_microwave_task1_realworld.py \
+OUT="runs/realworld/pick_bowl_precheck_$(date +%Y%m%d_%H%M%S)"
+"$PY" "$PWD/tools/run/run_microwave_task1_realworld.py" \
   "${COMMON[@]}" --subtask pick_bowl --collision-mode full --output "$OUT"
-"$PY" tools/viewers/view_skill.py --skill pick_bowl --run "$OUT"
 ```
 
-plan-only 会连接并读取两臂和夹爪状态，取得新感知后检查首段规划，不发送运动命令。
-它不能证明后续真实接触或整条 Task 成功。检查桌面、支撑、门轴、尺度、机械臂和 TCP，
-两臂停在已知净空位置后再开始。
+首段通过后返回 `validated_prefix`，不发送运动命令。
+仅使用 `--subtask all` 而不加执行或完整预览参数时，也只预检完整任务的首段，
+不表示已规划整个抓碗子任务或整条 Task。
+
+### 7.2 完整 Task1 plan_only 与预览视频
+
+实际执行之前，使用以下命令连续规划整个任务并导出视频：
+
+```bash
+OUT="runs/realworld/task1_plan_$(date +%Y%m%d_%H%M%S)"
+
+MUJOCO_GL=egl "$PY" "$PWD/tools/run/run_microwave_task1_realworld.py" \
+  --perception "$PERCEPTION" \
+  --left-ip "$LEFT_IP" --right-ip "$RIGHT_IP" \
+  --subtask all --plan-only --video \
+  --output "$OUT"
+```
+
+`--plan-only` 兼容写法 `--plan_only`，当前只用于 `--subtask all`，
+与 `--execute`、`--prepare-held-bowl` 互斥。
+碰撞模式默认 `full`，可显式追加 `--collision-mode full`；
+两臂端口默认 8080，非默认端口追加 `--left-port`、`--right-port`。
+输出目录须为空，每次重跑使用新目录。
+
+该模式开始时取得一次新的现场感知及双臂、夹爪状态，
+不设置夹爪行程，不发送机械臂或夹爪命令。
+后续在私有运动学影子中，按 cuRobo 返回的真实规划轨迹末帧衔接下一段，
+更新预测门角、夹爪开口、碗位姿和规划附着，并重新导出阶段碰撞场景；
+不再采集新相机帧或将预测状态写成 SDK 实测。
+
+预览包含两轮开关门、抓碗、放入并释放撤离、取碗、放回桌面并释放撤离，
+以及全部默认 TCP 过渡；默认跳过旋钮。
+沿用真机各阶段的目标、候选和碰撞策略，原有接触规划层的停用障碍保留在记录中。
+
+`--video` 可选，生成 `"$OUT/plan_preview.mp4"`；省略时仍保存规划及回放数据。
+视频导出需要规划环境具备可用的 MuJoCo EGL 和 FFmpeg。
+查看预览时核对桌面、支撑、门轴、尺度、机械臂、TCP 和接近/撤离路径与现场是否一致。
+
+| 输出或字段 | 含义 |
+|---|---|
+| `task_result.json` | 全部步骤的状态、完成数量及首个失败原因 |
+| `status=planned` 且 `planning_success=true` | 所有选中步骤完成预测规划 |
+| `status=planning_failed`、`first_failure` | 规划在该处停止；保留成功前缀和原规划器证据，后续步骤未规划 |
+| `plan_preview.json` | 真实规划轨迹及预测状态采样，用于三维回放和重新导出视频 |
+| `plan_preview.mp4` | 添加 `--video` 后导出的规划预览；失败时可能只有前缀 |
+| `assumptions` | 连续预览所采用的夹持、门/旋钮随动、释放后保持位姿等假设 |
+
+完整预览始终记录 `execute=false`、`task_success=null`。
+规划成功不证明真实夹持、接触、释放落稳或真机任务成功；
+实际执行仍须逐段重观测、规划和检查后置条件。
+失败后根据 `first_failure` 及对应碰撞/轨迹记录处理问题，再以新目录重跑。
+首阶段前失败时可能尚无可回放的轨迹；先查看报告，视频导出失败另存 `video_result.json`。
+
+若以后启用旋钮，准备感知与运行时均须加 `--with-knob`；
+若 profile 含未经过轨迹规划的直接末关节命令，
+预览会报告 `unplanned_direct_joint_command` 并停止，不能算完整规划通过。
+
+### 7.3 浏览器三维回放
+
+保留上一步的 `OUT`，运行：
+
+```bash
+"$PY" "$PWD/tools/viewers/view_skill_run.py" \
+  --run "$OUT" --mode planned \
+  --host 0.0.0.0 --port 8092
+```
+
+浏览器打开 `http://<运行机器IP>:8092`，可选择阶段、拖动时间轴、播放/暂停和显示规划碰撞层。
+若使用另一终端，先把 `OUT` 设置为本次规划输出目录。
+回放只读取已有记录，不重新规划或控制真机。
+
+### 7.4 从已有规划记录重新导出视频
+
+无需重新采集、规划或连接机器人：
+
+```bash
+MUJOCO_GL=egl "$PY" "$PWD/tools/viewers/recording/record_skill_run_video.py" \
+  --run "$OUT" --mode planned \
+  --output "$OUT/plan_preview.mp4" \
+  --camera task --camera gripper_side --profile microwave_task1
+```
+
+`--mode planned` 表示规划运动学预览。失败前缀也可导出，不能据此认为整条任务已通过。
 
 ## 8. 真机执行
 
@@ -223,7 +306,7 @@ OUT=runs/realworld/insert_bowl_$(date +%Y%m%d-%H%M%S)
 
 独立桌面放碗用 `--subtask place_bowl_on_table --prepare-held-bowl`。
 `load_bowl`、`unload_bowl` 组合从上一阶段传递持物状态，不需要另填记录。
-各子任务通过现场验收后，再测试完整任务：
+先按第 7 节检查完整任务的规划效果，各子任务通过现场验收后，再测试完整任务：
 
 ```bash
 OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
@@ -255,6 +338,7 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 - 感知目录：原始 RGB-D、两个物体 mask、桌面高度计算及固定几何来源、关门参考、两个 session 和来源哈希。
 - `runtime_input.json`：自动装配的有效配置、输入来源、profile 和运行参数。
 - `observations/`：碗与把手的新帧 tracking、门角、场景与碰撞导出。旋钮仅记录静态碰撞代理及未观测标记，没有实测角或观测时间戳。
+- 完整 `plan_only` 目录：`task_result.json`、`plan_preview.json`、各阶段规划与碰撞快照，以及可选的 `plan_preview.mp4`；视频导出失败时另存 `video_result.json`。预测状态及其假设与真机执行证据分别记录。
 - 各阶段计划、SDK 执行结果、人工确认和异常 traceback。
 
 反馈问题时提供实际命令、解释器和上述输出目录，不要只提交最后一行异常。
