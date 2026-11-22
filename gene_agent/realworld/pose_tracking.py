@@ -21,6 +21,7 @@ from gene_agent.perception_modules.camera.camera_client import CameraClient
 from gene_agent.perception_modules.interactive_realworld_perception import save_capture
 
 from .perception import _object_pose_path, load_observed_scene, ObservedScene
+from gene_agent.perception_modules.pose_est.pose_client import PoseSessionMissing
 
 
 def _sha256(path: Path) -> str:
@@ -75,6 +76,7 @@ def track_observed_scene_from_capture(
     sessions: Mapping[str, str], side: str, camera_id: str,
     T_sdk_camera, expected_serial: str, max_age_s: float,
     output_dir: str | Path, now_ms: float | None = None,
+    recover_session=None,
 ) -> ObservedScene:
     """同步跟踪同一 RGB-D 帧，并保存兼容现有 ``pose.json`` 的证据。
 
@@ -126,11 +128,21 @@ def track_observed_scene_from_capture(
             raise ValueError(f"{object_id} 缺少有效 FoundationPose session")
     before = {name: _sha256(path) for name, path in paths.items()}
     responses: dict[str, np.ndarray] = {}
+    recovered = []
     for object_id, session_id in sessions.items():
-        response = pose_client.track_frame(
-            session_id, rgb_path=paths["rgb.png"],
-            depth_path=paths["depth.png"], camera_path=paths["camera.json"],
-        )
+        try:
+            response = pose_client.track_frame(
+                session_id, rgb_path=paths["rgb.png"],
+                depth_path=paths["depth.png"], camera_path=paths["camera.json"],
+            )
+        except PoseSessionMissing:
+            if recover_session is None:
+                raise
+            response = recover_session(
+                object_id, session_id, capture_dir=capture,
+                pose_client=pose_client, camera_id=str(camera_id),
+            )
+            recovered.append(object_id)
         if (not isinstance(response, dict) or response.get("ok") is not True
                 or response.get("session_id") != session_id
                 or str(response.get("camera_id")) != str(camera_id)):
@@ -174,6 +186,7 @@ def track_observed_scene_from_capture(
         "frame_number": frame, "captured_at_unix_ms": timestamp,
         "sensor_timestamp_ms": sensor_timestamp,
         "object_ids": list(responses),
+        "recovered_session_objects": recovered,
         "claim": "多个 tracking session 使用同一冻结 RGB-D；不证明位姿精度或资产标定",
     }, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return load_observed_scene(

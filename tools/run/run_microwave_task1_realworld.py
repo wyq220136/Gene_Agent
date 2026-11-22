@@ -561,7 +561,9 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         reader = scoped_perception.reader
         read_angles = reader
         read_anchor = reader.anchor
-        observer_options = {"operation_perception": scoped_perception,
+        from gene_agent.realworld.microwave.session_recovery import make_session_recovery
+        observer_options = {"recover_session": make_session_recovery(setup),
+                            "operation_perception": scoped_perception,
                             "observation_filter": collision_objects, "camera_calibration": setup["camera"],
                             "include_knob": config.get("include_knob", False)}
 

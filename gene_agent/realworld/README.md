@@ -52,3 +52,11 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 阶段回调不将规划角度写成实测值；门被实际操作后仍须测量并通过原门角和圆轨道检查。
 
 抓把手 Skill 到推门 Skill 的 post-contact 交接，与 AffordToolAct Task1 一样先等待 2 秒让门稳定，再采集测角帧；等待记录在感知来源中，不复用等待前的图像。
+
+Pose tracking session 是服务进程内存状态，perception_setup.json 中的 ID 只是名称，
+服务重启或 stop 后名称不代表状态仍存在。新准备记录保存各对象的分割服务、类别和 prompt。
+仅在明确的 session 不存在错误时，当前操作对象使用本次冻结 RGB-D 重新分割并以已确认 mesh 注册；
+不使用旧准备图像或旧 mask 冒充当前观测，其他网络/模型错误原样停止。
+旧记录缺少恢复参数时必须重新运行感知准备并使用新 --perception 目录，不手工修改随机 ID。
+重新注册也受原帧龄检查；冷启动过慢导致帧过期时本轮停止，待会话建立后重新预检，
+不延长帧龄、不自动执行动作。

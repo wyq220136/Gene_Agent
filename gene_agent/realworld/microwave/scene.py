@@ -471,6 +471,7 @@ def make_live_microwave_observer(
     camera_calibration: Mapping | None = None,
     include_knob: bool = True,
     operation_perception=None,
+    recover_session=None,
 ) -> Callable[[], dict]:
     """生成子任务与完整 Task 共用的同步现场观测回调。
 
@@ -506,6 +507,7 @@ def make_live_microwave_observer(
                 side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
                 expected_serial=expected_serial, max_age_s=max_age_s,
                 output_dir=folder / "tracked",
+                **({"recover_session": recover_session} if recover_session is not None else {}),
             )
         else:
             record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))

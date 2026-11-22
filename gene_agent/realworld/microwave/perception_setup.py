@@ -284,6 +284,9 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
                    capture / "rgb.png", capture / "depth.png", capture / "camera.json"]})
     record = {"format": FORMAT, "accepted": True, "camera": calibration, "include_knob": bool(include_knob),
               "camera_endpoint": camera_endpoint, "pose_server": pose_server,
+              "session_recovery": {name: {"seg_server": seg_server,
+                  "prompt": prompts[mask_keys[name]], "category": mask_keys[name]}
+                  for name in sessions},
               "sessions": sessions, "meshes": {key: str(path) for key, path in meshes.items()},
               "closed_reference_poses_sdk": poses, "reference_frame": camera,
               "assets": assets, "table": table, "input_sha256": sources,

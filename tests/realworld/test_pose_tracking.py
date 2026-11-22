@@ -259,3 +259,94 @@ def test_tracked_scene_enters_existing_collision_export_without_simulation_step(
     assert collision["provenance"]["source_frame_number"] == 42
     assert collision["provenance"]["physics_stepped"] is False
     assert collision["snapshot"]["active_group"] == "right"
+
+def test_missing_session_recovers_only_that_object_from_same_capture(tmp_path):
+    from gene_agent.perception_modules.pose_est.pose_client import PoseSessionMissing
+    calls=[]
+    class Client:
+        def track_frame(self, sid, **kw):
+            calls.append(("track",sid))
+            if sid=="bowl-session":raise PoseSessionMissing("missing")
+            return {"ok":True,"session_id":sid,"camera_id":"0","T_camera_object":_pose(.4)}
+    settings=_settings(tmp_path,Client())
+    def recover(object_id,session_id,**kw):
+        calls.append(("recover",object_id))
+        assert kw["capture_dir"] == settings["capture_dir"]
+        return {"ok":True,"session_id":session_id,"camera_id":"0","T_camera_object":_pose(.2)}
+    value=track_observed_scene_from_capture(**settings,recover_session=recover)
+    assert value.frame_number == 42
+    assert calls==[("track","bowl-session"),("recover","Bowl/Bowl_0"),("track","microwave-session")]
+    record=json.loads((settings["output_dir"]/"capture_provenance.json").read_text())
+    assert record["recovered_session_objects"]==["Bowl/Bowl_0"]
+
+
+def test_network_or_other_runtime_error_never_recreates_session(tmp_path):
+    class Client:
+        def track_frame(self,*a,**k):raise RuntimeError("connection timeout")
+    with pytest.raises(RuntimeError,match="timeout"):
+        track_observed_scene_from_capture(**_settings(tmp_path,Client()),
+            recover_session=lambda *a,**k:pytest.fail("network failure triggered recovery"))
+
+
+def test_recovered_response_still_checks_session_identity(tmp_path):
+    from gene_agent.perception_modules.pose_est.pose_client import PoseSessionMissing
+    class Client:
+        def track_frame(self,*a,**k):raise PoseSessionMissing("missing")
+    with pytest.raises(ValueError,match="session"):
+        track_observed_scene_from_capture(**_settings(tmp_path,Client()),recover_session=lambda *a,**k:
+            {"ok":True,"session_id":"another-session","camera_id":"0","T_camera_object":_pose(.2)})
+
+
+@pytest.mark.parametrize("status,message,missing",[
+    (400,"'tracking session 不存在: Bowl/Bowl_0-42afd6f84627'",True),
+    (400,"tracking RGB-D 尺寸与 register 不一致",False),
+    (500,"tracking session 不存在: x",False),
+])
+def test_pose_client_distinguishes_missing_session_http_error(monkeypatch,status,message,missing):
+    import io,urllib.error,urllib.request
+    from gene_agent.perception_modules.pose_est.pose_client import PoseClient,PoseSessionMissing
+    def fail(*a,**k):
+        raise urllib.error.HTTPError("http://pose",status,"error",{},
+            io.BytesIO(json.dumps({"ok":False,"error":message}).encode()))
+    monkeypatch.setattr(urllib.request,"urlopen",fail)
+    with pytest.raises(PoseSessionMissing if missing else RuntimeError) as error:
+        PoseClient("http://pose").track_frame("x",rgb_path="r",depth_path="d",camera_path="c")
+    if not missing:assert not isinstance(error.value,PoseSessionMissing)
+
+
+def test_legacy_setup_missing_recovery_parameters_has_actionable_error(tmp_path):
+    from gene_agent.realworld.microwave.session_recovery import make_session_recovery
+    with pytest.raises(RuntimeError,match="重新运行 prepare_microwave_realworld"):
+        make_session_recovery({})("Bowl/Bowl_0","old-session",capture_dir=tmp_path,
+                                 pose_client=object(),camera_id="0")
+
+
+def test_session_registration_uses_current_mask_and_existing_mesh(tmp_path,monkeypatch):
+    from PIL import Image
+    from gene_agent.realworld.microwave import session_recovery as module
+    capture=tmp_path/"current";capture.mkdir()
+    Image.fromarray(np.zeros((4,5,3),dtype=np.uint8)).save(capture/"rgb.png")
+    Image.fromarray(np.full((4,5),1000,dtype=np.uint16)).save(capture/"depth.png")
+    (capture/"camera.json").write_text("{}")
+    mesh=tmp_path/"known.obj";mesh.write_text("v 0 0 0")
+    setup={"sessions":{"Bowl/Bowl_0":"session"},"meshes":{"Bowl/Bowl_0":str(mesh)},
+           "session_recovery":{"Bowl/Bowl_0":{"seg_server":"http://sam","prompt":"red bowl","category":"bowl"}}}
+    calls=[]
+    def segment(server,image,items):
+        assert image==capture/"rgb.png" and items[0]["prompt"]=="red bowl"
+        Image.fromarray(np.full((4,5),255,dtype=np.uint8)).save(items[0]["mask_path"])
+        calls.append("segment")
+        return 200,{"ok":True}
+    monkeypatch.setattr(module,"segment_image",segment)
+    monkeypatch.setattr(module,"unload_model",lambda _:calls.append("unload"))
+    class Client:
+        def register(self,**kw):
+            calls.append("register")
+            assert kw["rgb_path"]==capture/"rgb.png"
+            assert kw["mesh_path"]==mesh
+            assert kw["mask_path"].is_relative_to(capture)
+            return {"ok":True,"session_id":kw["session_id"],"camera_id":"0","T_camera_object":_pose(.2)}
+    result=module.make_session_recovery(setup)("Bowl/Bowl_0","session",capture_dir=capture,
+                                              pose_client=Client(),camera_id="0")
+    assert result["ok"] is True and calls==["segment","unload","register"]
+    assert (capture/"session_recovery/Bowl/Bowl_0/registration.json").is_file()

@@ -8,6 +8,10 @@ import urllib.error
 import urllib.request
 
 
+class PoseSessionMissing(RuntimeError):
+    """服务明确返回 tracking session 不存在；不包含一般 HTTP/网络错误。"""
+
+
 class PoseClient:
     """封装 register、track 和 stop 三个同步接口。"""
 
@@ -32,6 +36,10 @@ class PoseClient:
                 message = json.loads(detail).get("error", detail)
             except json.JSONDecodeError:
                 message = detail
+            if (exc.code in (400, 404) and path in {"/pose/track", "/pose/track_frame"}
+                    and isinstance(message, str)
+                    and message.strip(chr(39) + chr(34)).startswith("tracking session 不存在:")):
+                raise PoseSessionMissing(f"pose server HTTP {exc.code}: {message}") from exc
             raise RuntimeError(f"pose server HTTP {exc.code}: {message}") from exc
         if not result.get("ok"):
             raise RuntimeError(result.get("error", "pose server 请求失败"))
