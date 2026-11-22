@@ -32,6 +32,7 @@ from gene_agent.realworld.microwave.knob import run_observed_knob_skill
 from gene_agent.realworld.microwave.pick import run_observed_bowl_pick
 from gene_agent.realworld.microwave.place import run_observed_table_place
 from gene_agent.realworld.scene_drift import SceneDriftLimits, bind_live_scene_guard
+from .operation_perception import begin_observation_operation
 from gene_agent.tasks.policies.microwave_task.operations.bowl import check_bowl_access
 from gene_agent.tasks.policies.microwave_task.policy import (
     default_tcp_transition, MicrowaveTaskPolicy, microwave_task_steps,
@@ -262,6 +263,7 @@ def run_observed_microwave_subtask(
             observe_collision_scene=observe_collision_scene, make_runtime=make_runtime,
             planner_pool=planner_pool, output_dir=output_dir, subtask_options=options,
             execute=execute, scene_drift_limits=scene_drift_limits, selection=name)
+    begin_observation_operation(observe_collision_scene, name)
     if scene_drift_limits is not None:
         # 同一个子任务函数仍负责目标和阶段；这里只在输入边界绑定
         # 发令前的现场重观测，不改变已有 Skill 或规划逻辑。
@@ -426,6 +428,10 @@ def run_observed_microwave_task1(
         rows.append(row)
         save()
         try:
+            begin_observation_operation(
+                observe_collision_scene,
+                (door_part + "_door") if kind == "door" else kind,
+            )
             if selection != 'all' and kind in {'pick', 'insert', 'extract'}:
                 # 使用实际现场观测；不要求真机提供 MuJoCo 内部证据。
                 actual = observe_collision_scene()

@@ -22,7 +22,7 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 
 命令和前置条件见 [真机入口说明](../../docs/user/microwave/realworld_microwave_entry.md)。微波炉自动输入由
 `microwave/perception_setup.py` 采集、分割、注册并保存，`microwave/configuration.py` 读取标定和设备参数，
-`microwave/live_perception.py` 默认从同一新帧的碗、把手跟踪结果测门角并核对固定柜体参考，不感知或操作旋钮；显式 `--with-knob` 才启用旋钮。准备阶段只分割碗和把手；桌面复用已迁移的 AffordToolAct Task1 固定 XY 和厚度，从标定后的场景点云计算高度，不做桌面分割或 pose estimation，不要求手填站点或角度 JSON。
+`microwave/operation_perception.py` 按当前操作选择刷新对象，`microwave/live_perception.py` 在需要刷新门/旋钮时测角并核对固定柜体参考；默认不感知或操作旋钮，显式 `--with-knob` 才启用旋钮。准备阶段只分割碗和把手；桌面复用已迁移的 AffordToolAct Task1 固定 XY 和厚度，从标定后的场景点云计算高度，不做桌面分割或 pose estimation，不要求手填站点或角度 JSON。
 目录合并尚未统一三种后端的完整任务循环，实机效果仍需现场验收。
 
 自动抓碗与仿真使用同一个 `tasks/policies/microwave_task/planning/bowl_candidates.py` 参数入口，
@@ -39,3 +39,16 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 候选一致不代表相机标定、夹持物理或真机成功率已经验收。
 
 新场景保存实际候选参数，重载时按记录复现；没有候选参数的历史场景沿用原有候选几何，避免同名候选被重新解释。
+
+按操作感知由 `microwave/operation_perception.py` 管理，自动感知入口默认启用。
+对应 AffordToolAct `scripts/run_microwave_task1.py:_estimate_task_poses` 与
+`refresh_open_angle_after_post_contact` 的对象刷新边界：碗操作只更新碗，门操作进入及
+实际门运动/post-contact 后更新把手，默认 TCP 过渡不触发物体估计；旋钮仅在显式启用的旋钮操作更新。
+每段 SDK 关节/夹爪继续实测，发令前场景复核保留相同操作范围。
+固定柜体、非操作对象及未刷新的门角沿用操作边界状态，保留原观测时间和来源，
+通过 `perception_refresh`、`pose_source_modes`、`all_objects_same_frame` 明示；
+它们不是新测量，也不构成独立的柜体移动检测。与参考路线一致，期间必须保持相机、
+柜体及非操作对象固定；场景被外力改变时应停止并重新准备，不复用旧参考。
+阶段回调不将规划角度写成实测值；门被实际操作后仍须测量并通过原门角和圆轨道检查。
+
+抓把手 Skill 到推门 Skill 的 post-contact 交接，与 AffordToolAct Task1 一样先等待 2 秒让门稳定，再采集测角帧；等待记录在感知来源中，不复用等待前的图像。

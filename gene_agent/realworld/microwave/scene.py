@@ -262,6 +262,8 @@ def build_observed_collision_scene(
             for name in aligned
         },
         "microwave_root_anchor": anchor_record,
+        "perception_refresh": observed.perception_refresh,
+        "all_objects_same_frame": not bool(observed.perception_refresh),
         "aligned_object_poses_world": {name: pose.tolist() for name, pose in aligned.items()},
         "table_pose_world": table_pose.tolist(),
         "table_size_xy_m": table_size.tolist(),
@@ -308,7 +310,7 @@ def build_live_microwave_collision_scene(
 
     ``angles`` 的 door/knob 各含 ``angle_rad``、
     ``observed_at_unix_ms`` 和 ``source``。可以由传感器或现场人工
-    检查提供，但不能使用上轮缓存。``scene_parameters`` 仅包含
+    检查提供。仅显式操作感知策略允许复用未操作状态，保留原时间及来源。``scene_parameters`` 仅包含
     标定、桌面/支撑代理、活动臂和输出目录等静态参数。
     ``microwave_pose_mesh_path`` 应与本次 FoundationPose session 的注册
     mesh 一致。旧项目的把手 mesh 在门打开后只表示门的运动，不能继续
@@ -318,6 +320,11 @@ def build_live_microwave_collision_scene(
     ``include_knob=False`` 时只消费门角；旋钮保留资产零角静态代理，
     来源明确标为未观测，不提供虚假的实测角或新时间戳。
     """
+    refresh = observed.perception_refresh or {}
+    if refresh and refresh.get("policy") != "affordtoolact_operation_scoped":
+        raise ValueError("未知的感知状态复用策略")
+    retained_angles = set(refresh.get("retained_angle_keys", ()))
+    retained_anchor = refresh.get("retained_cabinet_anchor", False)
     age_limit = float(max_age_s)
     if not math.isfinite(age_limit) or age_limit <= 0:
         raise ValueError("现场状态有效期必须是正有限秒数")
@@ -338,10 +345,12 @@ def build_live_microwave_collision_scene(
 
     now_ms = time.time() * 1000.
 
-    def check_age(timestamp_ms: float, name: str) -> None:
+    def check_age(timestamp_ms: float, name: str, *, retained=False) -> None:
         value = float(timestamp_ms)
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"{name} 时间无效")
+        if retained:
+            return
         age_ms = now_ms - value
         if age_ms < -1000. or age_ms > age_limit * 1000.:
             raise ValueError(f"{name}过期或时间异常：{age_ms / 1000.:.3f} s")
@@ -358,12 +367,14 @@ def build_live_microwave_collision_scene(
         lower, upper = joint_limits[key]
         if not lower - 1e-6 <= angle <= upper + 1e-6:
             raise ValueError(f"{title}规划角超出当前微波炉资产关节限位 [{lower}, {upper}] rad")
-        check_age(reading["observed_at_unix_ms"], title)
+        check_age(reading["observed_at_unix_ms"], title, retained=key in retained_angles)
         checked_angles[key] = {
             "angle_rad": angle,
             "observed_at_unix_ms": float(reading["observed_at_unix_ms"]),
             "source": source,
         }
+        if key in retained_angles:
+            checked_angles[key].update(observed=False, retained=True)
         if "measured_angle_rad" in reading:
             measured = float(reading["measured_angle_rad"])
             if (not math.isfinite(measured)
@@ -382,7 +393,7 @@ def build_live_microwave_collision_scene(
     if microwave_root_anchor is not None:
         # 几何和来源字段由下层碰撞场景再次校验。这里先检查本次人工或
         # 传感器对机身静止的核对时间，拒绝把旧确认无限期沿用。
-        check_age(microwave_root_anchor["verified_at_unix_ms"], "微波炉本体锚点")
+        check_age(microwave_root_anchor["verified_at_unix_ms"], "微波炉本体锚点", retained=retained_anchor)
         anchor = dict(microwave_root_anchor)
     if abs(checked_angles["door"]["angle_rad"]) > math.radians(1.) and (
         "handle" in mesh_name or "door" in mesh_name
@@ -420,9 +431,9 @@ def build_live_microwave_collision_scene(
     if completed_at_ms - observed.timestamp_ms > age_limit * 1000.:
         raise ValueError("碰撞场景导出完成时物体观测已过期，必须重新采集")
     for key, title in required_angles:
-        if completed_at_ms - checked_angles[key]["observed_at_unix_ms"] > age_limit * 1000.:
+        if key not in retained_angles and completed_at_ms - checked_angles[key]["observed_at_unix_ms"] > age_limit * 1000.:
             raise ValueError(f"碰撞场景导出完成时{title}已过期，必须重新测量")
-    if anchor is not None and completed_at_ms - float(anchor["verified_at_unix_ms"]) > age_limit * 1000.:
+    if anchor is not None and not retained_anchor and completed_at_ms - float(anchor["verified_at_unix_ms"]) > age_limit * 1000.:
         raise ValueError("碰撞场景导出完成时微波炉本体锚点已过期")
     result["provenance"]["live_state"] = {
         "robot_sampled_at_unix_ms": sampled_at_ms,
@@ -431,6 +442,14 @@ def build_live_microwave_collision_scene(
         "include_knob": bool(include_knob),
         "claim": "启用物体同帧；机器人与已测关节分别在有效期内读取，未观测部件不代表实测状态",
     }
+    if refresh:
+        source = result["provenance"]
+        source["claim"] = "当前机器人实测状态、当前操作对象与明确来源的静态复用状态；非全部对象同帧"
+        source["perception_refresh"] = refresh
+        for name in refresh["retained_object_ids"]:
+            if name in source["pose_source_modes"]:
+                source["pose_source_modes"][name] = "retained_operation_state"
+        source["live_state"]["claim"] = "未刷新的对象、关节和固定柜体沿用原来源及时间；不代表当前帧测量"
     output = Path(scene_parameters["output_dir"]).resolve()
     (output / "observed_scene_provenance.json").write_text(
         json.dumps(result["provenance"], ensure_ascii=False, indent=2,
@@ -451,11 +470,12 @@ def make_live_microwave_observer(
     observation_filter: Callable[[ObservedScene], ObservedScene] | None = None,
     camera_calibration: Mapping | None = None,
     include_knob: bool = True,
+    operation_perception=None,
 ) -> Callable[[], dict]:
     """生成子任务与完整 Task 共用的同步现场观测回调。
 
     构造回调时不拍照、不连接机器人、不规划。每次调用都另建目录，
-    冻结新 RGB-D，再跟踪、读取关节物体和两臂状态、导出碰撞；上段
+    冻结新 RGB-D，按操作范围刷新物体、读取两臂状态并导出碰撞；上段
     结束后重新调用即可消费实际终态，而不是预测的终点。
     """
     static = dict(scene_parameters)
@@ -466,6 +486,8 @@ def make_live_microwave_observer(
 
     def observe() -> dict:
         folder = base / f"{next(sequence):04d}"
+        if operation_perception is not None:
+            operation_perception.prepare_capture()
         capture = capture_frozen_scene_frame(
             output_dir=folder / "capture", endpoint=camera_endpoint,
             expected_serial=expected_serial,
@@ -476,16 +498,30 @@ def make_live_microwave_observer(
             camera_record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
             with Image.open(capture / "depth.png") as depth:
                 check_capture_camera(camera_record, camera_calibration, (depth.height, depth.width))
-        observed = track_observed_scene_from_capture(
-            capture_dir=capture, pose_client=pose_client, sessions=sessions,
-            side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
-            expected_serial=expected_serial, max_age_s=max_age_s,
-            output_dir=folder / "tracked",
-        )
+        selected_sessions = (sessions if operation_perception is None else
+                             operation_perception.selected_sessions(sessions))
+        if selected_sessions:
+            observed = track_observed_scene_from_capture(
+                capture_dir=capture, pose_client=pose_client, sessions=selected_sessions,
+                side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
+                expected_serial=expected_serial, max_age_s=max_age_s,
+                output_dir=folder / "tracked",
+            )
+        else:
+            record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
+            observed = ObservedScene(
+                side, camera_id, int(record["frame_number"]),
+                float(record["captured_at_unix_ms"]), np.asarray(T_sdk_camera),
+                {}, {"camera": str(capture / "camera.json")}, True,
+            )
+        scoped_anchor = None
         from .live_perception import HandleOrbitError
         diagnostics_path = folder / "door_handle_diagnostics.json"
         try:
-            angles = angle_reader(observed)
+            if operation_perception is None:
+                angles = angle_reader(observed)
+            else:
+                observed, angles, scoped_anchor = operation_perception.consume(observed)
         except HandleOrbitError as error:
             try:
                 diagnostics_path.write_text(
@@ -503,7 +539,8 @@ def make_live_microwave_observer(
                 json.dumps(diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
                 encoding="utf-8",
             )
-        anchor = (None if microwave_root_anchor_reader is None else
+        anchor = (scoped_anchor if operation_perception is not None else
+                  None if microwave_root_anchor_reader is None else
                   microwave_root_anchor_reader(observed))
         if observation_filter is not None:
             observed = observation_filter(observed)
@@ -515,6 +552,9 @@ def make_live_microwave_observer(
             include_knob=include_knob,
         )
 
+    if operation_perception is not None:
+        observe.begin_operation = operation_perception.begin_operation
+        observe.after_door_phase = operation_perception.after_door_phase
     return observe
 
 

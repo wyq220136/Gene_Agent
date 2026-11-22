@@ -21,7 +21,11 @@ from gene_agent.knowledge.geometry import validate_pose
 
 @dataclass(frozen=True)
 class ObservedScene:
-    """同一采集帧下的具名物体位姿，坐标系为对应机械臂 SDK base。"""
+    """SDK base 下的具名物体位姿与来源。
+
+    默认全部同帧；操作范围复用必须在 perception_refresh 中逐对象保存原观测，
+    pose_frame_verified 只表示来源/变换已核对，不把复用状态解释为当前帧测量。
+    """
 
     side: str
     camera_id: str
@@ -31,6 +35,8 @@ class ObservedScene:
     object_poses_sdk: Mapping[str, np.ndarray]
     sources: Mapping[str, str]
     pose_frame_verified: bool
+    # 非同帧的静态复用必须逐对象保留原始来源，不能冒充新测量。
+    perception_refresh: Mapping | None = None
 
 
 def _object_pose_path(task_dir: Path, object_id: str) -> Path:

@@ -232,6 +232,11 @@ def bind_live_scene_guard(
         runtime.pre_execute_scene_check = recheck
         return runtime
 
+    # 包装后仍传递操作感知事件，避免发令前复核退回全对象感知。
+    for name in ("begin_operation", "after_door_phase"):
+        callback = getattr(observe_collision_scene, name, None)
+        if callback is not None:
+            setattr(observe, name, callback)
     return observe, make_guarded_runtime
 
 

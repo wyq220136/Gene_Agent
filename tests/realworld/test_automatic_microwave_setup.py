@@ -576,3 +576,255 @@ def test_existing_manual_calibration_output_is_accepted_only_for_right_arm(prepa
     setup.save_json(path, data)
     with pytest.raises(ValueError, match="右臂"):
         setup.load_camera_calibration(path)
+
+# 按操作刷新感知；设备、模型服务使用替身，实际碰撞导出仍走生产代码。
+def _partial_observation(record, keys, *, frame=1, door=0., knob=0.):
+    from dataclasses import replace
+    value = observed(record, frame=frame, stamp=1000. + frame, door=door, knob=knob)
+    return replace(value, object_poses_sdk={k:v for k,v in value.object_poses_sdk.items() if k in keys},
+                   sources={k:v for k,v in value.sources.items() if k in keys})
+
+
+def test_pick_refreshes_bowl_without_handle_orbit_and_keeps_original_times(prepared_no_knob, monkeypatch):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    scope.begin_operation("pick_bowl")
+    assert set(scope.selected_sessions(record["sessions"])) == {setup.BOWL}
+    monkeypatch.setattr(LiveArticulationReader, "__call__",
+                        lambda *a: pytest.fail("bowl observation invoked handle orbit"))
+    for frame in (1, 2):
+        value, angles, anchor = scope.consume(_partial_observation(record, {setup.BOWL}, frame=frame))
+        refresh = value.perception_refresh
+        assert refresh["refreshed_object_ids"] == [setup.BOWL]
+        assert refresh["retained_object_ids"] == [setup.MICROWAVE]
+        assert refresh["object_observations"][setup.MICROWAVE]["observed_at_unix_ms"] == 0.
+        assert angles["door"]["observed_at_unix_ms"] == 0.
+        assert anchor["verified_at_unix_ms"] == 0.
+        assert refresh["retained_cabinet_anchor"] is True
+
+
+def test_door_only_refreshes_at_entry_contact_motion_and_post_contact(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    scope.begin_operation("open_door")
+    assert set(scope.selected_sessions(record["sessions"])) == {setup.MICROWAVE}
+    _, angles, _ = scope.consume(_partial_observation(record, {setup.MICROWAVE}, door=.2))
+    assert angles["door"]["angle_rad"] == pytest.approx(.2)
+    assert scope.selected_sessions(record["sessions"]) == {}
+    scope.after_door_phase("pregrasp")
+    assert scope.selected_sessions(record["sessions"]) == {}
+    for frame, phase in enumerate(("pull_0", "post_contact", "push_1", "door_complete", "failure"), 2):
+        scope.after_door_phase(phase)
+        assert set(scope.selected_sessions(record["sessions"])) == {setup.MICROWAVE}
+        value, angles, _ = scope.consume(_partial_observation(record, {setup.MICROWAVE}, frame=frame, door=.3))
+        assert angles["door"]["observed_at_unix_ms"] == 1000. + frame
+        assert value.perception_refresh["retained_angle_keys"] == []
+        assert scope.selected_sessions(record["sessions"]) == {}
+    scope.begin_operation("pick_bowl")
+    _, held_angles, anchor = scope.consume(_partial_observation(record, {setup.BOWL}, frame=9))
+    assert held_angles["door"]["observed_at_unix_ms"] == 1000. + frame
+    assert anchor["verified_at_unix_ms"] == 1000. + frame
+
+
+def test_scope_preserves_real_bad_door_rejection_in_door_phase(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    scope.begin_operation("open_door")
+    value = _partial_observation(record, {setup.MICROWAVE}, door=math.radians(.63))
+    point, axis, _ = scope.reader._joint("door")
+    center = (value.object_poses_sdk[setup.MICROWAVE] @ scope.reader.handle_local)[:3,3]
+    radial = center - point
+    radial -= axis * (axis @ radial)
+    value.object_poses_sdk[setup.MICROWAVE][:3,3] -= .02718 * radial / np.linalg.norm(radial)
+    with pytest.raises(HandleOrbitError, match="27.18 mm"):
+        scope.consume(value)
+    assert set(scope.selected_sessions(record["sessions"])) == {setup.MICROWAVE}
+
+
+def test_knob_scope_does_not_refresh_handle_or_bowl(prepared):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared
+    scope = OperationPerception(record, include_knob=True)
+    scope.begin_operation("rotate_knob")
+    assert set(scope.selected_sessions(record["sessions"])) == {setup.KNOB}
+    _, angles, anchor = scope.consume(_partial_observation(record, {setup.KNOB}, knob=.4))
+    assert angles["knob"]["angle_rad"] == pytest.approx(.4)
+    assert angles["door"]["observed_at_unix_ms"] == anchor["verified_at_unix_ms"] == 0.
+
+
+def test_transition_runs_no_object_estimation_and_rejects_unknown_scope(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    with pytest.raises(ValueError, match="设置当前操作"):
+        scope.selected_sessions(record["sessions"])
+    scope.begin_operation("transition")
+    assert scope.selected_sessions(record["sessions"]) == {}
+    value, _, _ = scope.consume(_partial_observation(record, set()))
+    assert value.perception_refresh["refreshed_object_ids"] == []
+    with pytest.raises(ValueError, match="未定义"):
+        scope.begin_operation("unknown")
+
+
+def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_knob, tmp_path, monkeypatch):
+    import time
+    from gene_agent.motion.model import JointState
+    from gene_agent.realworld.microwave import scene
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    ticks = []
+    def capture(**kw):
+        folder = kw["output_dir"]
+        folder.mkdir(parents=True)
+        ticks.append(len(ticks)+1)
+        setup.save_json(folder/"camera.json", {"frame_number":ticks[-1],
+                        "captured_at_unix_ms":time.time()*1000.})
+        return folder
+    def track(**kw):
+        assert set(kw["sessions"]) == {setup.BOWL}
+        from dataclasses import replace
+        return replace(_partial_observation(record,{setup.BOWL},frame=ticks[-1]),
+                       timestamp_ms=time.time()*1000.)
+    class Robot:
+        def __init__(self, side): self.side=side
+        def read_joint_state(self):
+            path=setup.ROOT/f"config/robots/realman_{self.side}_default_pose.json"
+            return JointState(tuple(f"{self.side}_joint_{i}" for i in range(1,8)),
+                              tuple(json.loads(path.read_text())["joints_rad"]))
+    class Gripper:
+        def read_width_m(self): return .04
+    assets=record["assets"]
+    monkeypatch.setattr(scene,"capture_frozen_scene_frame",capture)
+    monkeypatch.setattr(scene,"track_observed_scene_from_capture",track)
+    observer=scene.make_live_microwave_observer(
+        output_dir=tmp_path/"scoped",camera_endpoint="tcp://camera",expected_serial="camera-1",
+        pose_client=object(),sessions=record["sessions"],side="right",camera_id="0",
+        T_sdk_camera=np.eye(4),robots={s:Robot(s) for s in ("left","right")},
+        grippers={s:Gripper() for s in ("left","right")},angle_reader=lambda *a:pytest.fail("global angles"),
+        observation_filter=collision_objects,microwave_pose_mesh_path=record["meshes"][setup.MICROWAVE],
+        include_knob=False,max_age_s=5.,operation_perception=scope,
+        scene_parameters={"T_world_sdk":np.eye(4),"T_perception_object_scene_asset":{
+            setup.BOWL:np.eye(4),setup.MICROWAVE:np.array(assets["alignment"])},
+            "table_pose_world":np.eye(4),"table_size_xy_m":[.9,.6],
+            "accepted_support_size_xyz_m":[*assets["support"]["size_xy_m"],assets["support"]["height_m"]],
+            "accepted_support_center_xy_local_m":assets["support"]["center_xy_local_m"],
+            "accepted_table_thickness_m":assets["table_thickness_m"],"active_group":"right"})
+    observer.begin_operation("pick_bowl")
+    first,second=observer(),observer()
+    for value in (first,second):
+        provenance=value["provenance"]
+        assert provenance["all_objects_same_frame"] is False
+        assert provenance["live_state"]["door"]["observed_at_unix_ms"] == 0.
+        assert provenance["live_state"]["door"]["observed"] is False
+        assert provenance["pose_source_modes"][setup.MICROWAVE] == "retained_operation_state"
+        assert any(row["body_name"].startswith("microwave") for row in value["snapshot"]["records"])
+        assert any(row["body_name"]=="bowl" for row in value["snapshot"]["records"])
+    assert second["provenance"]["source_frame_number"] > first["provenance"]["source_frame_number"]
+
+
+def test_guard_forwards_operation_and_door_phase_hooks():
+    from gene_agent.realworld.scene_drift import bind_live_scene_guard,SceneDriftLimits
+    events=[]
+    def observe(): return {}
+    observe.begin_operation=lambda name:events.append(("operation",name))
+    observe.after_door_phase=lambda name:events.append(("phase",name))
+    wrapped,_=bind_live_scene_guard(observe,lambda _:None,limits=SceneDriftLimits(.005,.15,.02,.005,.05))
+    wrapped.begin_operation("pick_bowl")
+    wrapped.after_door_phase("post_contact")
+    assert events == [("operation","pick_bowl"),("phase","post_contact")]
+
+
+@pytest.mark.parametrize("name", ["pick_bowl", "open_door", "close_door", "rotate_knob", "extract_bowl"])
+def test_subtask_entry_routes_operation_before_runner(tmp_path, monkeypatch, name):
+    from gene_agent.realworld.microwave import task
+    events=[]
+    def observer(): pytest.fail("entry should not add extra perception")
+    observer.begin_operation=lambda operation:events.append(operation)
+    def run(**kwargs):
+        assert events == [name]
+        return {"status":"validated_prefix"}
+    attribute={"pick_bowl":"run_observed_bowl_pick", "open_door":"run_observed_door_subtask",
+               "close_door":"run_observed_door_subtask", "rotate_knob":"run_observed_knob_skill",
+               "extract_bowl":"run_observed_bowl_extract"}[name]
+    monkeypatch.setattr(task,attribute,run)
+    result=task.run_observed_microwave_subtask(
+        name=name,observe_collision_scene=observer,make_runtime=lambda _:None,
+        planner_pool=object(),output_dir=tmp_path,options={})
+    assert result["status"] == "validated_prefix"
+
+
+def test_full_task_routes_first_operation_through_guard(tmp_path, monkeypatch):
+    from gene_agent.realworld.microwave import task
+    from gene_agent.realworld.scene_drift import SceneDriftLimits
+    events=[]
+    def observer(): pytest.fail("task wrapper must not add perception")
+    observer.begin_operation=lambda operation:events.append(operation)
+    def door(**kwargs):
+        assert events == ["open_door"]
+        assert hasattr(kwargs["observe_collision_scene"],"begin_operation")
+        return {"status":"validated_prefix","success":False}
+    monkeypatch.setattr(task,"run_observed_door_subtask",door)
+    result=task.run_observed_microwave_task1(
+        observe_collision_scene=observer,make_runtime=lambda _:None,planner_pool=object(),
+        output_dir=tmp_path/"task",subtask_options={"door":{}},execute=False,
+        scene_drift_limits=SceneDriftLimits(.005,.15,.02,.005,.05))
+    assert result["status"] == "validated_prefix"
+
+
+@pytest.mark.parametrize("bad", ["duplicate", "unverified", "extrinsic", "old_time"])
+def test_bowl_only_scope_preserves_new_frame_and_calibration_checks(prepared_no_knob, bad):
+    from dataclasses import replace
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record=prepared_no_knob
+    scope=OperationPerception(record)
+    scope.begin_operation("pick_bowl")
+    first=_partial_observation(record,{setup.BOWL},frame=1)
+    scope.consume(first)
+    current=_partial_observation(record,{setup.BOWL},frame=2)
+    if bad=="duplicate": current=first
+    elif bad=="unverified": current=replace(current,pose_frame_verified=False)
+    elif bad=="old_time": current=replace(current,timestamp_ms=0.)
+    else:
+        transform=np.eye(4);transform[0,3]=.1
+        current=replace(current,T_sdk_camera=transform)
+    with pytest.raises(ValueError,match="新帧|外参"):
+        scope.consume(current)
+
+
+def test_post_contact_wait_happens_before_next_capture_once(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _,record=prepared_no_knob
+    waits=[]
+    scope=OperationPerception(record,sleep=waits.append)
+    scope.begin_operation("open_door")
+    scope.after_door_phase("post_contact")
+    scope.prepare_capture()
+    assert waits == [2.]
+    assert scope.last_settle_s == 2.
+    scope.prepare_capture()
+    assert waits == [2.]
+    assert scope.last_settle_s == 0.
+
+
+def test_handle_to_push_handoff_requests_post_contact_refresh(tmp_path, monkeypatch):
+    from gene_agent.realworld.microwave import door
+    events=[]
+    def observer(): pytest.fail("handoff must schedule, not duplicate capture")
+    observer.after_door_phase=lambda phase:events.append(phase)
+    def skill(**kw):
+        if kw["skill_id"] == "push_open":
+            assert events == ["post_contact"]
+        return {"success":True,"status":"executed","postcondition":{}}
+    monkeypatch.setattr(door,"run_observed_door_skill",skill)
+    monkeypatch.setattr(door,"has_realworld_success_evidence",lambda _:True)
+    result=door.run_observed_door_subtask(
+        part="open",observe_collision_scene=observer,make_runtime=lambda _:None,
+        planner_pool=object(),output_dir=tmp_path/"door",config_path="unused",execute=True,
+        max_microwave_translation_m=.005,max_microwave_rotation_rad=.15,
+        max_start_error_rad=.02,max_gripper_width_error_m=.005,max_door_angle_error_rad=.05)
+    assert result["success"]
+    assert events == ["post_contact"]

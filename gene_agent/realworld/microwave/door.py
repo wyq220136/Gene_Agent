@@ -205,6 +205,8 @@ def run_observed_door_skill(
                     # 真实命令可能已经执行一部分。停下后重新读现场，供人工
                     # 决定恢复起点；观测失败也保留原 SDK 错误，不自动回 home。
                     try:
+                        from .operation_perception import after_door_observation_phase
+                        after_door_observation_phase(observe_collision_scene, "failure")
                         row["observed_after_failure"] = _scene_state_summary(
                             observe_collision_scene()
                         )
@@ -227,6 +229,11 @@ def run_observed_door_skill(
                 })
                 return save()
             previous_source = scene["provenance"]
+            from .operation_perception import after_door_observation_phase
+            if skill_id != "handle_pull" and index == len(targets["phases"]) - 1:
+                after_door_observation_phase(observe_collision_scene, "door_complete")
+            elif phase.name.startswith(("pull_", "swing_", "push_")):
+                after_door_observation_phase(observe_collision_scene, phase.name)
             scene = observe_collision_scene()
             current_source = scene["provenance"]
             freshness = door_observation_freshness(
@@ -396,6 +403,9 @@ def run_observed_door_subtask(
                 "message": "门 Skill 执行或实际门角后置条件未确认",
             })
             return save()
+        if execute and skill_id == "handle_pull":
+            from .operation_perception import after_door_observation_phase
+            after_door_observation_phase(observe_collision_scene, "post_contact")
     result.update(success=True, status="executed")
     return save()
 

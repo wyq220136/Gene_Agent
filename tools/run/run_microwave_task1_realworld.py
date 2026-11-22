@@ -555,11 +555,14 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
 
     observer_options = {}
     if setup is not None:
-        from gene_agent.realworld.microwave.live_perception import LiveArticulationReader, collision_objects
-        reader = LiveArticulationReader(setup, include_knob=config.get("include_knob", False))
+        from gene_agent.realworld.microwave.live_perception import collision_objects
+        from gene_agent.realworld.microwave.operation_perception import OperationPerception
+        scoped_perception = OperationPerception(setup, include_knob=config.get("include_knob", False))
+        reader = scoped_perception.reader
         read_angles = reader
         read_anchor = reader.anchor
-        observer_options = {"observation_filter": collision_objects, "camera_calibration": setup["camera"],
+        observer_options = {"operation_perception": scoped_perception,
+                            "observation_filter": collision_objects, "camera_calibration": setup["camera"],
                             "include_knob": config.get("include_knob", False)}
 
     with _record_entry_errors(output, config["source_sha256"]), ExitStack() as stack:
@@ -659,6 +662,8 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             if prepare_held_bowl:
                 if subtask not in {"insert_bowl", "place_bowl_on_table"} or hold is not None:
                     raise ValueError("现场持碗准备只用于独立放碗/桌面 Place，且不能混用证据文件")
+                from gene_agent.realworld.microwave.operation_perception import begin_observation_operation
+                begin_observation_operation(observer, subtask)
                 first_scene = observer()
                 prepared = _prepare_current_held_bowl_report(
                     first_scene, output=output, ask=input,
@@ -672,6 +677,8 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                         return scene
                     return live_observer()
 
+                from gene_agent.realworld.microwave.operation_perception import forward_observation_hooks
+                forward_observation_hooks(live_observer, observe_first_then_live)
                 observer = observe_first_then_live
             return run_observed_microwave_subtask(
                 name=subtask, observe_collision_scene=observer,
