@@ -102,6 +102,9 @@ class RealWorldRuntime:
 
     def run_motion_stage(self, stage: SkillStage, *, execute: bool = False) -> dict:
         """核对一个已规划运动阶段；`execute=True` 才允许发 SDK 命令。"""
+        if stage.details.get("execution_forbidden"):
+            return self._failed(stage.name, "prediction_execution_forbidden",
+                                "plan_only 预测轨迹不能作为真机执行证据；须从新现场逐段重规划")
         request, result = stage.request, stage.result
         if stage.status != "planned" or request is None or result is None or not result.success:
             failure = None if result is None or result.failure is None else result.failure.to_dict()

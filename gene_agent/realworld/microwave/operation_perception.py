@@ -71,7 +71,11 @@ class OperationPerception:
         self.last_stamp = -1.
 
     def begin_operation(self, operation):
-        if operation in {"pick_bowl", "insert_bowl", "extract_bowl", "place_bowl_on_table",
+        if operation == "plan_only":
+            # 仅在完整预览初态获取一次全部任务对象；后续全为预测，不再感知。
+            self.dynamic = {BOWL, MICROWAVE} | ({KNOB} if self.include_knob else set())
+            self.pending = set()
+        elif operation in {"pick_bowl", "insert_bowl", "extract_bowl", "place_bowl_on_table",
                          "pick", "insert", "extract", "table", "load_bowl", "unload_bowl"}:
             self.dynamic, self.pending = {BOWL}, set()
         elif operation in {"open_door", "close_door", "door"}:

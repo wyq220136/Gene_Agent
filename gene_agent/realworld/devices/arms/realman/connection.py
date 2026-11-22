@@ -212,7 +212,7 @@ def _connect_realman_state(
 def connect_realman(
     ip: str, *, group: str, port: int = 8080, level: int = 3,
     mode: int = 2, sdk=None, T_flange_tcp=None,
-    max_width_m: float | None = None,
+    max_width_m: float | None = None, configure_gripper: bool = True,
 ) -> RealmanConnection:
     """按旧真机入口连接并配置夹爪行程；调用时才导入厂家 SDK。
 
@@ -234,9 +234,10 @@ def connect_realman(
     if getattr(handle, "id", -1) == -1:
         raise RuntimeError(f"无法连接 RealMan：{ip}:{port}")
     try:
-        code = sdk.rm_set_gripper_route(min_route=0, max_route=1000)
-        if code not in (None, 0):
-            raise RuntimeError(f"RealMan 夹爪行程设置失败，SDK 码 {code}")
+        if configure_gripper:
+            code = sdk.rm_set_gripper_route(min_route=0, max_route=1000)
+            if code not in (None, 0):
+                raise RuntimeError(f"RealMan 夹爪行程设置失败，SDK 码 {code}")
         names = tuple(f"{group}_joint_{index}" for index in range(1, 8))
         robot = RealmanAdapter(
             sdk, group=group, joint_names=names, T_flange_tcp=T_flange_tcp,

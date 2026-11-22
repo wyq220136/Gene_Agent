@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .prediction import is_prediction, predicted_report, reject_assumption_on_live_scene
+
 import json
 import math
 import time
@@ -253,7 +255,7 @@ def plan_observed_bowl_extract_motion_stage(
     if (not math.isfinite(measured_width)
             or abs(measured_width - expected_width) > .002):
         raise ValueError("取碗接触前的实测夹爪开口与旧 profile 不一致")
-    if (stage_name != "pre_extract_1" and
+    if (not is_prediction(collision_scene) and stage_name != "pre_extract_1" and
             int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"])):
         raise ValueError("取碗后续阶段必须使用上一阶段执行后的新观测帧")
     current = build_observed_bowl_extract_targets(
@@ -370,15 +372,16 @@ def plan_observed_bowl_extract_retreat_stage(
         raise ValueError("取碗撤离的锚点及持碗容差必须为正有限值")
     source = collision_scene["provenance"]
     snapshot = collision_scene["snapshot"]
-    if int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"]):
+    if not is_prediction(collision_scene) and int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"]):
         raise ValueError("携物撤离必须使用闭爪后的新现场观测帧")
-    if (grasp_report.get("execute") is not True
+    if not predicted_report(collision_scene, grasp_report, "hold") and (grasp_report.get("execute") is not True
             or grasp_report.get("status") != "executed"
             or grasp_report.get("grasp_success") is not True):
         raise ValueError("取碗撤离需要已执行且确认夹持的闭爪报告")
     if (not isinstance(current_hold_check, CheckResult)
             or not current_hold_check.passed):
         raise ValueError("取碗撤离前必须确认当前仍持碗")
+    reject_assumption_on_live_scene(collision_scene, current_hold_check.to_dict())
     if current_hold_check.source in _SIMULATION_HOLD_SOURCES:
         raise ValueError("仿真夹持证据不能用于真机取碗撤离")
     if (current_hold_check.evidence.get("collision_snapshot_sha256")

@@ -76,7 +76,7 @@ class SkillInspectorApp:
         self.root = Path(run_dir).resolve()
         self.timeline = ReplayTimeline.load(self.root, skill=skill)
         self.view = self.timeline.view
-        self.read_only = read_only or self.view.source_format == "microwave_actual_record"
+        self.read_only = read_only or self.view.source_format in {"microwave_actual_record", "microwave_plan_only"}
         self.requested_skill = skill
         model_ref = self.view.model_ref or ("source_scene/scene.xml"
                                             if (self.root / "source_scene/scene.xml").is_file() else None)
@@ -190,7 +190,8 @@ class SkillInspectorApp:
         self.stage_control = gui.add_dropdown("检查范围", options=options,
                                               initial_value=self.selected_stage or "完整 Skill")
         self.stage_control.on_update(self._on_selection)
-        mode_options = ((_MODE_LABELS['actual'],) if self.view.source_format == 'microwave_actual_record'
+        mode_options = ((_MODE_LABELS['planned'],) if self.view.source_format == 'microwave_plan_only' else
+                        (_MODE_LABELS['actual'],) if self.view.source_format == 'microwave_actual_record'
                         else tuple(_MODE_LABELS.values()))
         self.mode_control = gui.add_dropdown("查看数据", options=mode_options,
                                              initial_value=_MODE_LABELS[self.mode])

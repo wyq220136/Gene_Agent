@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .prediction import is_prediction, predicted_report, reject_assumption_on_live_scene
+
 import json
 import math
 import time
@@ -62,6 +64,7 @@ def build_observed_table_place_targets(
         raise NotImplementedError("原 task_1 Bowl 桌面放置目前只验收右臂")
     if not isinstance(current_hold_check, CheckResult) or not current_hold_check.passed:
         raise ValueError("桌面放置前必须重新确认当前仍持碗")
+    reject_assumption_on_live_scene(collision_scene, current_hold_check.to_dict())
     if current_hold_check.source in _SIMULATION_HOLD_SOURCES:
         raise ValueError("仿真夹持证据不能用作真机持碗检查")
     if (current_hold_check.evidence.get("collision_snapshot_sha256")
@@ -245,7 +248,7 @@ def plan_observed_table_descent(
         raise ValueError("桌面高度和持碗容差必须为正有限值")
     source = collision_scene["provenance"]
     snapshot = collision_scene["snapshot"]
-    if int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"]):
+    if not is_prediction(collision_scene) and int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"]):
         raise ValueError("桌面下降必须使用预放置执行后的新现场观测帧")
     if (not isinstance(current_hold_check, CheckResult)
             or not current_hold_check.passed
@@ -378,17 +381,18 @@ def plan_observed_table_detached_retreat(
     if any(not math.isfinite(float(value)) or float(value) <= 0 for value in limits):
         raise ValueError("桌面撤离的位姿容差必须为正有限值")
     check = release_report.get("postcondition") or {}
-    if (release_report.get("status") != "executed"
+    if not predicted_report(collision_scene, release_report, "release") and (release_report.get("status") != "executed"
             or release_report.get("release_success") is not True
             or check.get("status") != "pass" or not check.get("source")):
         raise ValueError("桌面松爪后置条件未确认，不能撤离")
+    reject_assumption_on_live_scene(collision_scene, check)
     if check["source"] in {
         "simulation_privileged_weld", "mujoco_contact_geometry_at_planned_waypoints",
     }:
         raise ValueError("仿真松爪证据不能用于真机桌面撤离")
     source = collision_scene["provenance"]
     snapshot = collision_scene["snapshot"]
-    if int(source["source_frame_number"]) <= int(release_report["source_frame_number"]):
+    if not is_prediction(collision_scene) and int(source["source_frame_number"]) <= int(release_report["source_frame_number"]):
         raise ValueError("松爪后必须读取更新的现场观测帧")
     table_error = _pose_delta(
         targets_report["table_pose_world"], source["table_pose_world"],

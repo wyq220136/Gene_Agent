@@ -1,6 +1,8 @@
 """真实持物证据与规划附着；不以仿真辅助代替真实夹持。"""
 
 from __future__ import annotations
+
+from .prediction import is_prediction, predicted_report, reject_assumption_on_live_scene
 from gene_agent.motion.configuration import CollisionMode, resolve_collision_mode
 
 import hashlib
@@ -23,6 +25,7 @@ from gene_agent.tasks.checks import CheckResult
 _BOWL = "Bowl/Bowl_0"
 _SIMULATION_SOURCES = {
     "simulation_privileged_weld", "mujoco_contact_geometry_at_planned_waypoints",
+    "planning_assumption",
 }
 
 
@@ -167,6 +170,7 @@ def prepare_observed_bowl_attachment(
     执行 lift 后仍需通过新的实测/人工后置条件，不可把附着代理当成功。
     默认保留原抓碗 5 球；取碗撤离显式选择旧 mesh 表面 32 球。
     """
+    preview = predicted_report(collision_scene, grasp_report, "hold")
     manual = grasp_report.get("source_format") == "manual_prepared_held_bowl"
     if manual:
         evidence = validate_manual_held_bowl_report(
@@ -176,7 +180,8 @@ def prepare_observed_bowl_attachment(
     else:
         grasp_evidence = grasp_report.get("physical_grasp_check") or {}
         evidence = grasp_evidence if hold_evidence is None else hold_evidence
-    if not manual and (grasp_report.get("execute") is not True
+    reject_assumption_on_live_scene(collision_scene, evidence)
+    if not manual and not preview and (grasp_report.get("execute") is not True
             or grasp_report.get("status") != "executed"
             or grasp_report.get("grasp_success") is not True
             or grasp_evidence.get("status") != "pass"
@@ -272,7 +277,8 @@ def prepare_observed_bowl_attachment(
         "schema_version": 1,
         "object_id": _BOWL_INSTANCE,
         "selected_candidate_id": grasp_report.get("selected_candidate_id"),
-        "hold_origin": ("manual_prepared_held_bowl" if manual else "executed_grasp"),
+        "hold_origin": ("planned_grasp_assumption" if preview else
+                        "manual_prepared_held_bowl" if manual else "executed_grasp"),
         "source_frame_number": provenance["source_frame_number"],
         "base_collision_snapshot_sha256": snapshot["snapshot_sha256"],
         "attached_collision_snapshot_sha256": transferred["snapshot_sha256"],

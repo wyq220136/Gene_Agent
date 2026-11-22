@@ -24,7 +24,7 @@ python tools/run/run_microwave_task1_realworld.py \
 ```
 
 按现场填写 IP。端口默认 8080，可用 `--left-port`、`--right-port` 覆盖。
-去掉 `--check-config` 后是读取真实状态的 plan-only；显式添加 `--execute --yes` 才允许运动。运行时用 `--output` 指定证据目录。
+去掉 `--check-config` 后默认只做首段预检。完整任务预览使用 `--subtask all --plan-only`；显式添加 `--execute --yes` 才允许运动。运行时用 `--output` 指定证据目录。
 
 | 子任务 | 说明 |
 |---|---|
@@ -49,3 +49,50 @@ python tools/run/run_microwave_task1_realworld.py \
 FoundationPose 可继续使用 Python 3.9；依赖环境保持独立，详见操作指南。
 
 执行目录中的 `runtime_input.json` 保存自动配置及来源。任务接线位于 `gene_agent/realworld/microwave/task.py`；模块边界见[真机模块说明](../../../gene_agent/realworld/README.md)。
+
+## 完整任务规划预览
+
+默认不加执行参数仍是“首段预检”，会返回 `validated_prefix`。完整预览需显式使用
+`--subtask all --plan-only`（兼容 `--plan_only`）；它与 `--execute` 互斥。
+只读取一次新的现场感知及双臂/夹爪状态，之后在私有运动学影子里沿 cuRobo 返回的
+真实轨迹末帧继续下一段，不再调用相机或 SDK，不设置夹爪行程、不发送命令。
+两轮开关门、Pick、Insert、Extract、桌面 Place 及全部默认 TCP 过渡沿用真机步骤表、
+目标生成和各阶段碰撞策略。默认仍跳过旋钮；原有仅自碰撞/机器人本体等接触规划层保持
+原有范围，记录中的停用障碍仍需在实际执行前按原流程审核。
+
+```bash
+MUJOCO_GL=egl "$PY" tools/run/run_microwave_task1_realworld.py \
+  --perception "$PERCEPTION" \
+  --left-ip "$LEFT_IP" --right-ip "$RIGHT_IP" \
+  --subtask all --plan-only --video \
+  --output runs/realworld/task1_full_plan
+```
+
+`--video` 可选，生成 `plan_preview.mp4`；失败前缀也可导出。输出目录须为空。
+`task_result.json` 中 `status=planned` 和 `planning_success=true` 才表示所有选中步骤
+规划完成；`planning_failed` 会保留 `first_failure`、全部成功前缀及原规划器证据。
+始终 `execute=false`、`task_success=null`；不把规划完成写成真机操作成功。
+夹持、门/旋钮随动、释放留在预测位姿均为显式 `assumptions`，没有动力学落稳或真实接触证据。
+预测不修改初始现场帧号/时间，另用 `prediction_step` 表示规划状态变化。
+
+浏览器三维回放（可拖时间轴、选择阶段和显示碰撞）：
+
+```bash
+"$PY" tools/viewers/view_skill_run.py \
+  --run runs/realworld/task1_full_plan --mode planned \
+  --host 0.0.0.0 --port 8092
+```
+
+重新导出视频无需重新规划，也无需连接真机：
+
+```bash
+MUJOCO_GL=egl "$PY" tools/viewers/recording/record_skill_run_video.py \
+  --run runs/realworld/task1_full_plan --mode planned \
+  --output runs/realworld/task1_full_plan/plan_preview.mp4 \
+  --camera task --camera gripper_side --profile microwave_task1
+```
+
+旋钮仅在准备及运行均显式 `--with-knob` 时纳入；若所用 profile 包含未经轨迹规划的
+直接末关节 SDK 命令，预览会报告 `unplanned_direct_joint_command` 并停在该处，
+不能把未规划路径说成完整碰撞规划通过。实际执行仍逐段读取现场、重规划和验证接触，
+不能将预览预测状态、夹持假设或历史轨迹直接作为执行证据。

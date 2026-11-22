@@ -491,8 +491,10 @@ def _record_entry_errors(output: Path, site_config_sha256: str):
 
 @configured_motion("config")
 def run_site(config: dict, *, subtask: str, output_dir: str | Path,
-             execute: bool, prepare_held_bowl: bool = False) -> dict:
+             execute: bool, prepare_held_bowl: bool = False, plan_only: bool = False) -> dict:
     """接通设备并调用现有子任务/Task；只在 execute=True 时允许 SDK 运动。"""
+    if plan_only and (execute or subtask != "all" or prepare_held_bowl):
+        raise ValueError("--plan-only 只用于 --subtask all，不能与 --execute/--prepare-held-bowl 混用")
     source = Path(config["source_path"])
     if hashlib.sha256(source.read_bytes()).hexdigest() != config["source_sha256"]:
         raise ValueError("现场配置文件或感知记录在检查后已改变，请重新检查再运行")
@@ -514,7 +516,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         "schema_version": 1,
         "site_config_path": str(source),
         "site_config_sha256": config["source_sha256"],
-        "subtask": subtask, "execute": bool(execute),
+        "subtask": subtask, "execute": bool(execute), "plan_only": bool(plan_only),
         "include_knob": config.get("include_knob", False),
         "prepare_held_bowl": bool(prepare_held_bowl),
         "active_group": config["active_group"],
@@ -581,6 +583,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                     "port": config["robot_ports"][side],
                     "T_flange_tcp": T_flange_tcp,
                     "max_width_m": max_width_m,
+                    **({"configure_gripper": False} if plan_only else {}),
                 }
                 # This keeps lightweight injected connectors usable while the
                 # production connector receives the complete hardware profile.
@@ -652,6 +655,14 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                 for kind in ("pick", "insert", "knob", "extract", "table"):
                     if kind in options:
                         options[kind]["ask_manual"] = input
+            if plan_only:
+                from gene_agent.realworld.microwave.operation_perception import begin_observation_operation
+                from gene_agent.realworld.microwave.plan_only import plan_microwave_task1
+                begin_observation_operation(observer, "plan_only")
+                initial_scene = observer()
+                return plan_microwave_task1(
+                    initial_scene, planner_pool=pool, output_dir=output,
+                    subtask_options=options, include_knob=config.get("include_knob", False))
             if subtask == "all":
                 return run_observed_microwave_task1(
                     observe_collision_scene=observer, make_runtime=make_runtime,
@@ -713,11 +724,19 @@ def main(argv: list[str] | None = None) -> int:
     knobs.add_argument("--with-knob", dest="no_knob", action="store_false",
                        help="显式启用旋钮；感知记录也必须包含旋钮 session")
     parser.set_defaults(no_knob=True)
-    parser.add_argument("--execute", action="store_true", help="逐段向机器人发令")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--execute", action="store_true", help="逐段向机器人发令")
+    mode.add_argument("--plan-only", "--plan_only", dest="plan_only", action="store_true",
+                      help="完整 Task1 预测规划与回放；只读取初始现场，不发送运动或夹爪命令")
+    parser.add_argument("--video", action="store_true", help="plan_only 后导出 planned 预览 MP4")
     parser.add_argument("--yes", action="store_true", help="确认执行模式；仍需现场后置检查")
     parser.add_argument("--prepare-held-bowl", action="store_true",
                         help="独立放碗/桌面 Place：观察当前持碗场景并由操作者确认")
     args = parser.parse_args(argv)
+    if args.plan_only and (args.subtask != "all" or args.prepare_held_bowl):
+        raise ValueError("--plan-only 需要 --subtask all，且不能准备人工持碗")
+    if args.video and not args.plan_only:
+        raise ValueError("--video 只用于 --plan-only 的规划预览")
     if args.execute and not args.yes:
         raise ValueError("执行真机运动必须显式加 --yes")
     if args.no_knob and args.subtask == "rotate_knob":
@@ -751,13 +770,25 @@ def main(argv: list[str] | None = None) -> int:
               ))
     report = run_site(config, subtask=args.subtask,
                       output_dir=output, execute=args.execute,
-                      prepare_held_bowl=args.prepare_held_bowl)
+                      prepare_held_bowl=args.prepare_held_bowl,
+                      **({"plan_only": True} if args.plan_only else {}))
+    video_failed = False
+    if args.video:
+        try:
+            from gene_agent.visualization.video_export import export_video
+            export_video(output, output / "plan_preview.mp4", mode="planned",
+                         cameras=("task", "gripper_side"), profile="microwave_task1")
+        except Exception as error:
+            video_failed = True
+            write = {"status": "failed", "message": f"{type(error).__name__}: {error}"}
+            (output / "video_result.json").write_text(json.dumps(write, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+            print(f"规划报告已保存，视频导出失败：{error}", file=sys.stderr)
     print(json.dumps({"status": report.get("status"), "success": report.get("success"),
                       "requested_scope": report.get("requested_scope", args.subtask),
                       "task_success": report.get("task_success"),
                       "output_dir": str(output.resolve())},
                      ensure_ascii=False))
-    return 0 if report.get("success") is True or report.get("status") == "validated_prefix" else 2
+    return 0 if not video_failed and (report.get("success") is True or report.get("status") == "validated_prefix") else 2
 
 
 if __name__ == "__main__":

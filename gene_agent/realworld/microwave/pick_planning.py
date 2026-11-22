@@ -1,6 +1,8 @@
 """现场状态适配；操作几何与规划算法复用现有 Knowledge、Skill 和 motion。"""
 
 from __future__ import annotations
+
+from .prediction import is_prediction, predicted_report, reject_assumption_on_live_scene
 from gene_agent.motion.configuration import CollisionMode, resolve_collision_mode
 
 import hashlib
@@ -456,7 +458,8 @@ def plan_observed_bowl_lift(
     改为闭爪后现场实测关节。这里只规划，不发送机器人命令。
     """
     evidence = grasp_report.get("physical_grasp_check") or {}
-    if (grasp_report.get("execute") is not True
+    preview = predicted_report(collision_scene, grasp_report, "hold")
+    if not preview and (grasp_report.get("execute") is not True
             or grasp_report.get("status") != "executed"
             or grasp_report.get("grasp_success") is not True
             or evidence.get("status") != "pass"):
@@ -485,7 +488,7 @@ def plan_observed_bowl_lift(
     settings = load_grasp_settings(_PROFILE_PATH, profile_name)
     original_rows = {row["name"]: row for row in selection_report["plan"]["stages"]}
     executed_rows = [row for row in grasp_report["stages"] if row["stage"] == "approach"]
-    if len(executed_rows) != 1 or executed_rows[0]["status"] != "executed":
+    if len(executed_rows) != 1 or executed_rows[0]["status"] != ("planned" if preview else "executed"):
         raise ValueError("lift 缺少已执行的 approach 阶段")
     actual_row = executed_rows[0]["plan"]["stage"]
     if actual_row.get("status") != "planned":

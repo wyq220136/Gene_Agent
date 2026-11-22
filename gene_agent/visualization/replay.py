@@ -118,9 +118,21 @@ class ReplayTimeline:
         if stage.result_ref is None:
             return (_Sample(0.0, "stage_marker", (), None),)
         report = self._read(stage.result_ref)
-        if self.view.source_format == "skill_plan":
+        if self.view.source_format in {"skill_plan", "microwave_plan_only"}:
             index = int(stage.stage_id.split("_", 1)[0])
             row = report["stages"][index]
+            if self.view.source_format == "microwave_plan_only":
+                preview = row.get("planned_replay_samples") or []
+                if not preview:
+                    # 失败阶段只有标记，保持最后一个真实规划样本。
+                    preview = next((r["planned_replay_samples"][-1:] for r in reversed(report["stages"][:index])
+                                    if r.get("planned_replay_samples")), [])
+                    preview = [{**s, "time_s": 0.} for s in preview]
+                return tuple(_Sample(float(s["time_s"]), "planned_kinematic_preview",
+                    tuple(s["joint_names"]), tuple(s["joint_positions_rad"]),
+                    s["gripper_width_m"], s.get("object_poses_world"),
+                    attachment=s.get("attachment"), qpos=tuple(s["qpos"]),
+                    tcp_poses_world={s["robot_group"]:s["tcp_pose_world"]}) for s in preview)
             # 规划记录的开/闭爪是零时长状态事件。回放任意单独阶段时仍
             # 必须从前面最近一次夹爪命令恢复宽度，否则随机拖动时间轴
             # 会沿用上一帧的宽度，误判是否真正夹住物体。

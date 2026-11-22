@@ -90,3 +90,7 @@ PYTHONUTF8=1 PYTHONPATH=. /home/ubuntu/miniconda3/envs/curobo/bin/python \
 ## 本地网页工作台
 
 `PYTHONPATH=. /home/ubuntu/miniconda3/envs/curobo/bin/python tools/run/workbench.py --open` 启动任务选择、运行和视频、场景/部件编辑及只读助手。当前接入旧刷清扫和微波炉，范围见[操作说明](../docs/user/workbench/usage.md)。
+
+微波炉真机完整规划预览：`run/run_microwave_task1_realworld.py --subtask all --plan-only --video`；
+沿现场初态规划整条任务，输出 `task_result.json`、`plan_preview.json` 和可选 MP4。
+回放复用 `viewers/view_skill_run.py --mode planned`，细节见[现场入口](../docs/user/microwave/realworld_microwave_entry.md)。

@@ -60,3 +60,8 @@ Pose tracking session 是服务进程内存状态，perception_setup.json 中的
 旧记录缺少恢复参数时必须重新运行感知准备并使用新 --perception 目录，不手工修改随机 ID。
 重新注册也受原帧龄检查；冷启动过慢导致帧过期时本轮停止，待会话建立后重新预检，
 不延长帧龄、不自动执行动作。
+
+完整 Task1 预览：运行入口增加 `--subtask all --plan-only`，可加 `--video`。
+`microwave/plan_only.py` 沿真机共享步骤表调用现有阶段规划入口；
+`plan_only_world.py` 仅保存预测状态、导出碰撞和规划回放，不持有设备或执行器。
+`prediction.py` 区分规划假设与真机证据，真实执行仍逐段重观测；命令和限制见入口说明。

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .prediction import is_prediction, predicted_report, reject_assumption_on_live_scene
+
 import json
 import math
 import time
@@ -62,8 +64,11 @@ def build_observed_bowl_insert_targets(
             or source.get("pose_frame_verified") is not True
             or source.get("collision_snapshot_sha256") != snapshot.get("snapshot_sha256")):
         raise ValueError("放碗目标需要同帧现场观测及一致的碰撞快照")
+    preview = predicted_report(scene, pick_report, "hold")
     manual = pick_report.get("source_format") == "manual_prepared_held_bowl"
-    if manual:
+    if preview:
+        check = current_hold_check or pick_report["postcondition"]
+    elif manual:
         check = validate_manual_held_bowl_report(
             scene, pick_report, current_hold_check=current_hold_check,
         )
@@ -72,7 +77,7 @@ def build_observed_bowl_insert_targets(
             or pick_report.get("pick_success") is not True
             or not pick_report.get("post_lift_scene_snapshot_sha256")):
         raise ValueError("放碗目标需要已执行且确认持碗的 Pick 结果")
-    if not manual:
+    if not manual and not preview:
         pick_frame = pick_report.get("post_lift_source_frame_number")
         pick_timestamp = pick_report.get("post_lift_source_timestamp_ms")
         if pick_frame is None or pick_timestamp is None:
@@ -87,6 +92,7 @@ def build_observed_bowl_insert_targets(
                  else pick_report.get("postcondition") or {})
         if current_hold_check is not None:
             require_current_hold_check(scene, check)
+    reject_assumption_on_live_scene(scene, check)
     if check.get("status") != "pass" or not check.get("source"):
         raise ValueError("放碗目标缺少有来源的现场持碗后置条件")
     if check["source"] in {
@@ -122,7 +128,8 @@ def build_observed_bowl_insert_targets(
         "source_frame_number": source["source_frame_number"],
         "frame_alignment_source": microwave_frame_alignment["source"],
         "hold_evidence_source": check["source"],
-        "hold_origin": ("manual_prepared_held_bowl" if manual else "executed_pick"),
+        "hold_origin": ("planned_pick_assumption" if preview else
+                        "manual_prepared_held_bowl" if manual else "executed_pick"),
         "T_world_profile_microwave": (T_world_microwave @ T_scene_profile).tolist(),
         "T_tcp_bowl_from_actual_hold": T_tcp_bowl.tolist(),
         "keyposes_world_tcp": {name: pose.tolist() for name, pose in targets.items()},
@@ -254,7 +261,7 @@ def plan_observed_bowl_insert_linear(
     if any(not math.isfinite(float(v)) or float(v) <= 0 for v in limits):
         raise ValueError("放碗锚点容差必须为正有限值")
     source = collision_scene["provenance"]
-    if int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"]):
+    if not is_prediction(collision_scene) and int(source["source_frame_number"]) <= int(initial_targets["source_frame_number"]):
         raise ValueError("insert 必须使用 preplace 执行后的新现场观测帧")
     current = build_observed_bowl_insert_targets(
         collision_scene, pick_report,
@@ -384,7 +391,7 @@ def plan_observed_bowl_detached_retreat_stage(
     if any(not math.isfinite(float(v)) or float(v) <= 0 for v in limits):
         raise ValueError("撤离锚点容差必须为正有限值")
     check = release_report.get("postcondition") or {}
-    if (release_report.get("status") != "executed"
+    if not predicted_report(collision_scene, release_report, "release") and (release_report.get("status") != "executed"
             or release_report.get("release_success") is not True
             or check.get("status") != "pass" or not check.get("source")):
         raise ValueError("撤离前必须有已执行松爪及 Bowl 离爪的现场通过证据")
@@ -397,8 +404,8 @@ def plan_observed_bowl_detached_retreat_stage(
             or source.get("pose_frame_verified") is not True
             or source.get("collision_snapshot_sha256") != snapshot.get("snapshot_sha256")):
         raise ValueError("撤离需要同帧现场观测及一致的碰撞快照")
-    if (int(source["source_frame_number"]) <= int(release_report["source_frame_number"])
-            or float(source["source_timestamp_ms"]) <= float(release_report["source_timestamp_ms"])):
+    if (not is_prediction(collision_scene) and (int(source["source_frame_number"]) <= int(release_report["source_frame_number"])
+            or float(source["source_timestamp_ms"]) <= float(release_report["source_timestamp_ms"]))):
         raise ValueError("撤离必须使用松爪后更新的现场帧")
     if snapshot["active_group"] != "right":
         raise NotImplementedError("原 task_1 Bowl 撤离当前只验收右臂")

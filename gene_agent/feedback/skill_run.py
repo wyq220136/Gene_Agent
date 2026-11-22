@@ -72,6 +72,25 @@ def _existing(root: Path, relative: str) -> str | None:
 def load_skill_run(root: str | Path, *, skill: str | None = None) -> SkillRunView:
     """按产物格式读取；旧probe与新Skill规划的能力边界分别保留。"""
     run = Path(root).resolve()
+    preview_path = run / "plan_preview.json"
+    if preview_path.is_file():
+        report = _read(preview_path)
+        if report.get("schema_version") != 1 or report.get("source_format") != "microwave_plan_only":
+            raise ValueError("不支持的全任务预览记录")
+        if skill is not None:
+            raise ValueError("完整预览请按 --stage 选择阶段")
+        rows = []
+        for index, row in enumerate(report["stages"]):
+            rows.append(StageView(f"{index:02d}_{row['name']}", row["name"], row.get("operation"),
+                row["status"], "not_executed", "plan_preview.json" if row.get("request") else None,
+                "plan_preview.json", row.get("collision_snapshot_ref"), None, None, None,
+                path_kind=row.get("operation")))
+        if not rows:
+            raise ValueError("该预览在首阶段前失败，尚无可回放状态；请查看 task_result.json")
+        if not report.get("model_ref") or not (run / report["model_ref"]).is_file():
+            raise FileNotFoundError("预览缺少原现场模型")
+        return SkillRunView("microwave_task1", "microwave", None, "microwave_plan_only",
+            report.get("initial_scene_snapshot_sha256"), tuple(rows), model_ref=report["model_ref"])
     from gene_agent.feedback.microwave_actual_run import load_microwave_actual_run
     recorded = load_microwave_actual_run(run, skill=skill)
     if recorded is not None:

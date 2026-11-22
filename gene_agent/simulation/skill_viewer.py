@@ -142,7 +142,7 @@ class SkillMujocoViewer:
                 "skill_close_door_result.json") if (self.run / name).is_file()), result)
         report = json.loads(result.read_text(encoding="utf-8")) if result.is_file() else {}
         self.active_group = report.get("robot_group") or (
-            "right" if getattr(self.timeline.view, "source_format", None) in {"skill_plan", "microwave_actual_record"}
+            "right" if getattr(self.timeline.view, "source_format", None) in {"skill_plan", "microwave_actual_record", "microwave_plan_only"}
             and self.robot_metadata and "right" in self.robot_metadata["joint_groups"]
             else None
         )
