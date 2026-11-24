@@ -265,6 +265,7 @@ def build_observed_collision_scene(
         "perception_refresh": observed.perception_refresh,
         "all_objects_same_frame": not bool(observed.perception_refresh),
         "aligned_object_poses_world": {name: pose.tolist() for name, pose in aligned.items()},
+        "T_world_sdk": alignment_inputs["T_world_sdk"],
         "table_pose_world": table_pose.tolist(),
         "table_size_xy_m": table_size.tolist(),
         "accepted_table_thickness_m": thickness,
@@ -574,4 +575,3 @@ def bowl_state_summary(scene: dict) -> dict:
         "gripper_width_m": float(source["gripper_widths_m"][group]),
         "bowl_pose_world": source["aligned_object_poses_world"]["Bowl/Bowl_0"],
     }
-

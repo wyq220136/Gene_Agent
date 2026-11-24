@@ -136,7 +136,7 @@ def base_side_bowl_proposals(
 
     抓取角定义为 TCP +Z 接近轴与实际桌面平面的锐角，而不是与 Bowl
     中轴的夹角。后者会把近水平伸入碗内的姿态误认为合格钝角。
-    真机可显式关闭桌面角度硬筛选；角度仍用于证据和排序，其余几何约束不变。
+    enforce_table_angle 仅控制此筛选器的角度条件；真机 AffordToolAct 路线不调用此筛选器。
     """
     proposals = legacy_bowl_proposals(candidates)
     object_pose = validate_pose(object_pose_world, field_name="object_pose_world")
@@ -278,26 +278,9 @@ def base_side_bowl_proposals(
 def bowl_grasp_geometry_metrics(
     candidate: GraspProposal, *, object_pose_world: np.ndarray,
     base_position_world: np.ndarray, table_normal_world: np.ndarray,
-) -> dict[str, float | bool]:
+) -> dict[str, float | bool | None]:
     """公开单候选几何证据，和筛选器使用相同定义。"""
-    selected = base_side_bowl_proposals(
-        [{
-            "candidate_id": candidate.candidate_id,
-            "T_world_tcp": candidate.tcp_pose_world.tolist(),
-            "parameters": candidate.parameters,
-        }],
-        object_pose_world=object_pose_world,
-        base_position_world=base_position_world,
-        table_normal_world=table_normal_world,
-        min_base_alignment=-1.0,
-        enforce_table_angle=False,
-        preferred_table_angle_deg=45.0,
-        min_external_approach_alignment=0.0,
-        rim_radial_tolerance_m=1.0,
-        rim_height_tolerance_m=1.0,
-    )
-    if not selected:
-        raise ValueError("无法计算 Bowl 抓取几何证据")
+    # 证据计算不再偷偷筛选候选；真机可采用不同于仿真接触代理的抓取输入。
     object_pose = validate_pose(object_pose_world, field_name="object_pose_world")
     ring = load_concept(ROOT / "assets/objects/bowl_concept.json", part_name="bowl_rim").concept
     ring_world = object_pose @ ring.pose_in_object
@@ -308,10 +291,22 @@ def bowl_grasp_geometry_metrics(
     approach = candidate.tcp_pose_world[:3, 2].copy()
     approach /= np.linalg.norm(approach)
     normal = np.asarray(table_normal_world, dtype=float).copy()
-    normal /= np.linalg.norm(normal)
-    base_delta = np.asarray(base_position_world, dtype=float)[:2] - center[:2]
-    base_delta /= np.linalg.norm(base_delta)
-    pivot = np.asarray(candidate.parameters.get("tilt_pivot_tcp_m", [0.0, 0.0, 0.0]))
+    normal_norm = float(np.linalg.norm(normal))
+    if normal.shape != (3,) or not np.isfinite(normal).all() or normal_norm <= 1e-9:
+        raise ValueError("桌面法向必须是有限非零三维向量")
+    normal /= normal_norm
+    base = np.asarray(base_position_world, dtype=float)
+    if base.shape != (3,) or not np.isfinite(base).all():
+        raise ValueError("活动臂基座位置必须是有限三维向量")
+    base_delta = base[:2] - center[:2]
+    base_norm = float(np.linalg.norm(base_delta))
+    radial_norm_xy = float(np.linalg.norm(radial[:2]))
+    # 真机不要求近基座侧，退化的平面投影只记为未定义，不以诊断拒绝合法 pose。
+    base_alignment = (float(radial[:2] @ base_delta / (radial_norm_xy * base_norm))
+                      if min(base_norm, radial_norm_xy) > 1e-9 else None)
+    pivot = np.asarray(candidate.parameters.get("tilt_pivot_tcp_m", [0.0, 0.0, 0.0]), dtype=float)
+    if pivot.shape != (3,) or not np.isfinite(pivot).all():
+        raise ValueError("Bowl 候选接触支点必须是有限三维向量")
     contact = candidate.tcp_pose_world[:3, 3] + candidate.tcp_pose_world[:3, :3] @ pivot
     delta = contact - center
     opening_axis = candidate.tcp_pose_world[:3, 0].copy()
@@ -325,7 +320,7 @@ def bowl_grasp_geometry_metrics(
     tangent = np.cross(ring_axis, radial)
     tangent /= np.linalg.norm(tangent)
     return {
-        "base_alignment": float(np.dot(radial[:2] / np.linalg.norm(radial[:2]), base_delta)),
+        "base_alignment": base_alignment,
         "table_angle_deg": float(np.rad2deg(np.arcsin(np.clip(abs(approach @ normal), 0., 1.)))),
         "external_approach_alignment": float(-approach @ radial),
         "contact_radius_m": float(delta @ radial),
@@ -359,6 +354,7 @@ def active_arm_base_reference(case: PickBowlCase, group: str = "right") -> tuple
 def plan_bowl_grasp_stages(
     case: PickBowlCase, profile, *, seed: int = 123,
     enforce_table_angle: bool = True,
+    proposals: Sequence[GraspProposal] | None = None,
 ) -> BowlGraspStageSelection:
     """从当前 GT、实际开口快照按旧候选顺序筛 grasp 和 pregrasp。
 
@@ -373,12 +369,18 @@ def plan_bowl_grasp_stages(
     _, base_position = active_arm_base_reference(case, "right")
     table = case.data.geom("scene_table")
     table_normal = np.asarray(table.xmat, dtype=float).reshape(3, 3)[:, 2].copy()
-    proposals = base_side_bowl_proposals(
-        case.candidates, object_pose_world=case.bowl_pose,
-        base_position_world=base_position,
-        table_normal_world=table_normal,
-        enforce_table_angle=enforce_table_angle,
-    )
+    if proposals is None:
+        proposals = base_side_bowl_proposals(
+            case.candidates, object_pose_world=case.bowl_pose,
+            base_position_world=base_position,
+            table_normal_world=table_normal,
+            enforce_table_angle=enforce_table_angle,
+        )
+    else:
+        # 真机显式提供 AffordToolAct 候选；下游仍使用相同 IK、路径和碰撞检查。
+        proposals = tuple(proposals)
+        if not proposals or any(not isinstance(item, GraspProposal) for item in proposals):
+            raise ValueError("抓碗规划必须提供非空 GraspProposal 列表")
     # Bowl 的当前 Knowledge 候选共享同一个 pregrasp 开口。若未来的
     # 候选各用不同开口，就必须分批冻结对应快照，不能用第一项代替全部。
     openings = {float(item.parameters.get("pregrasp_opening_width_m", profile.open_width_m))

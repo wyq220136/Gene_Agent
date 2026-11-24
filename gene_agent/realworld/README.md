@@ -25,19 +25,24 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 `microwave/operation_perception.py` 按当前操作选择刷新对象，`microwave/live_perception.py` 在需要刷新门/旋钮时测角并核对固定柜体参考；默认不感知或操作旋钮，显式 `--with-knob` 才启用旋钮。准备阶段只分割碗和把手；桌面复用已迁移的 AffordToolAct Task1 固定 XY 和厚度，从标定后的场景点云计算高度，不做桌面分割或 pose estimation，不要求手填站点或角度 JSON。
 目录合并尚未统一三种后端的完整任务循环，实机效果仍需现场验收。
 
-自动抓碗与仿真使用同一个 `tasks/policies/microwave_task/planning/bowl_candidates.py` 参数入口，
-场景查看器的新建/重载和任务可视化接线也复用这一入口，
-经 `knowledge.bowl_grasp_candidates` 生成 48 个候选，再由共享 `planning/grasp.py` 筛选和规划。
-参数保持 Gene_Agent_new 的 auto 路线：15 mm 深度、六个外侧倾角、实际 FK 指垫支点、
-世界 Z 偏移 -12 mm；保留右臂基座侧、外侧接近和碗沿接触筛选。
-真机不限制桌面接近角范围，只保留优先 55° 的排序偏好；仿真继续限制 45–70°。
-自动模式仅使用 `pick_bowl_legacy_visual`；手动候选探针仍保留其独立的 12 mm 默认。
+自动抓碗复用 `knowledge.bowl_grasp_candidates` 的 Ring 几何，但区分真实硬件与仿真的候选策略。
+真机由 `microwave/bowl_candidates.py` 读取 `data/task_1/realworld/pick_bowl.json`，
+对齐 AffordToolAct：4 个深度（15/25/28/30 mm）×8 方位×5 倾角（0/±10/±20°），共160个候选；
+在 SDK frame 应用 Z 偏移 -15 mm，按 TCP 方位优先 -X、其次 -Y，仅排序不删除候选。
+随后将 TCP 的 SDK Z 截断在实测桌面上方50–70 mm，再派生 pregrasp；不使用仿真 FK 指垫支点、
+近基座侧、外侧接近、碗沿高度/半径/切向/跨沿硬筛选，也不保留55°偏好。
+仿真查看器与任务入口继续使用 `tasks/policies/microwave_task/planning/bowl_candidates.py` 的48个自动候选，
+15 mm深度、六个外侧倾角、FK指垫支点、世界Z偏移 -12 mm及原45–70°等几何筛选不变。
+两者继续使用共享 `planning/grasp.py`、`pick_bowl_legacy_visual` 和 PickSkill 的 IK/轨迹/碰撞检查，
+真机检查全部160个候选，保留原关节行程限制；没有复制参考项目中的碰撞关闭或轨迹截断行为。
+手动候选探针仍保留其独立的12 mm默认。
 真机只适配同帧物体观测和实测机器人状态，候选生成不推进物理、不执行设备。
 感知 mesh 选择复用 AffordToolAct 迁移的 `pose_est.task_pose_est.pose_mesh_path`，
 已知任务资产直接注册，不触发 SAM3D；默认只分割并跟踪碗和门把手。
-候选一致性与感知调用范围可离线检查：
-`python -m pytest -q tests/realworld/test_bowl_candidate_parity.py tests/realworld/test_automatic_microwave_setup.py`。
-候选一致不代表相机标定、夹持物理或真机成功率已经验收。
+候选策略隔离、历史失败输入与感知调用范围可离线检查：
+`python -m pytest -q tests/realworld/test_bowl_realworld_candidates.py tests/realworld/test_bowl_candidate_parity.py tests/realworld/test_automatic_microwave_setup.py`。
+`candidate_selection.json` 保存候选配置hash、SDK变换、桌面高度、限高前后目标及修改量。
+候选生成通过不代表相机标定、GPU规划、夹持物理或真机成功率已经验收。
 
 新场景保存实际候选参数，重载时按记录复现；没有候选参数的历史场景沿用原有候选几何，避免同名候选被重新解释。
 

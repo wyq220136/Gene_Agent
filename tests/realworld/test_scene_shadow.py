@@ -277,7 +277,7 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
     seen = {}
 
     class StubPlan:
-        selected_candidate_id = "bowl_ring_02_00"
+        selected_candidate_id = "real_d00_bowl_ring_02_00"
 
         def stage(self, name):
             return SimpleNamespace(status="planned" if name in {
@@ -289,16 +289,17 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
                     "stages": [{"name": name, "status": self.stage(name).status}
                                for name in ("open", "pregrasp", "approach", "close", "lift", "hold")]}
 
-    def old_selection(case, settings, *, seed, enforce_table_angle):
+    def old_selection(case, settings, *, seed, enforce_table_angle, proposals):
         assert enforce_table_angle is False
         seen["seed"] = seed
         seen["settings"] = settings
         seen["case"] = case
-        assert len(case.candidates) == 48
-        assert case.candidates[0]["candidate_id"] == "bowl_ring_00_00"
-        assert case.candidates[0]["parameters"]["depth_m"] == pytest.approx(0.015)
+        assert len(case.candidates) == len(proposals) == settings.max_grasp_candidates == 160
+        assert {item["parameters"]["depth_m"] for item in case.candidates} == {.015, .025, .028, .03}
+        assert [item.candidate_id for item in proposals] == [item["candidate_id"] for item in case.candidates]
         assert case.candidates[0]["parameters"]["radial_offset_m"] == pytest.approx(0.)
-        assert len(case.candidates[0]["parameters"]["tip_y_rad"]) == 6
+        assert len(case.candidates[0]["parameters"]["tip_y_rad"]) == 5
+        np.testing.assert_allclose(case.candidates[0]["parameters"]["tilt_pivot_tcp_m"], 0.)
         assert case.snapshot["snapshot_sha256"] == scene["snapshot"]["snapshot_sha256"]
         np.testing.assert_allclose(case.data.qpos, scene["snapshot"]["qpos_snapshot"])
         np.testing.assert_allclose(case.bowl_pose, observed.object_poses_sdk["Bowl/Bowl_0"])

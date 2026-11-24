@@ -1,4 +1,4 @@
-"""仿真与真机共用的 Task1 自动抓碗候选输入，保持参考仿真的数值和顺序。"""
+"""Task1 仿真自动抓碗参数；真机候选由 realworld/microwave/bowl_candidates 适配。"""
 
 from __future__ import annotations
 

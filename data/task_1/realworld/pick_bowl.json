@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source": "AffordToolAct/configs/grasp/grasp_profiles.json#task_1_bowl_0",
+  "depths_m": [0.015, 0.025, 0.028, 0.03],
+  "tip_y_deg": [0.0, 10.0, -10.0, 20.0, -20.0],
+  "azimuths_deg": [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0],
+  "tcp_sdk_offset_m": [0.0, 0.0, -0.015],
+  "pregrasp_opening_width_m": 0.041,
+  "table_clearance_m": [0.05, 0.07],
+  "table_clearance_source": "AffordToolAct/configs/tasks/microwave_object_manipulation.json#Bowl_0"
+}

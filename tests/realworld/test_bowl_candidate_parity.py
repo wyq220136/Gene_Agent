@@ -1,8 +1,9 @@
-"""冻结场景下共享候选输入，但仅仿真限制桌面角度；不执行 GPU 或设备。"""
+"""冻结同一场景，仿真保留接触筛选，真机使用 AffordToolAct 候选；不执行设备。"""
 
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from dataclasses import replace
 
 import mujoco
 import numpy as np
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("dx,dy,yaw_deg", [(0., 0., 0.), (.07, -.03, 35.), (-.03, .06, -60.)])
-def test_real_and_sim_share_candidates_but_not_angle_constraint(tmp_path, monkeypatch, dx, dy, yaw_deg):
+def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, dx, dy, yaw_deg):
     config = json.loads((ROOT / "config/scenes/task_1.json").read_text())
     bowl = np.array(config["objects"]["bowl"]["simulation_nominal_pose"], dtype=float)
     bowl[:2, 3] += [dx, dy]
@@ -29,6 +30,9 @@ def test_real_and_sim_share_candidates_but_not_angle_constraint(tmp_path, monkey
     runtime = MujocoRuntime(case.model, case.data, case.metadata)
     frozen_qpos = case.data.qpos.copy()
     frozen_qvel = case.data.qvel.copy()
+    table_pose = np.eye(4)
+    table_pose[:3, :3] = case.data.geom("scene_table").xmat.reshape(3, 3)
+    table_pose[:3, 3] = case.data.geom("scene_table").xpos
     scene = {
         "snapshot": case.snapshot, "scene_xml_path": case.metadata["xml_path"],
         "scene_metadata": case.metadata,
@@ -38,6 +42,9 @@ def test_real_and_sim_share_candidates_but_not_angle_constraint(tmp_path, monkey
             "aligned_object_poses_world": {"Bowl/Bowl_0": case.bowl_pose.tolist()},
             "source_frame_number": 1, "source_timestamp_ms": 1000.,
             "scene_config_sha256": "synthetic-same-scene",
+            "T_world_sdk": np.eye(4).tolist(),
+            "table_pose_world": table_pose.tolist(),
+            "accepted_table_thickness_m": config["table"]["thickness_m"],
         },
     }
     seen = []
@@ -51,14 +58,18 @@ def test_real_and_sim_share_candidates_but_not_angle_constraint(tmp_path, monkey
         def to_dict(self):
             return {"selected_candidate_id": None, "stages": []}
 
-    def select(current, settings, *, seed, enforce_table_angle=True):
+    def select(current, settings, *, seed, enforce_table_angle=True, proposals=None):
         _, base = grasp.active_arm_base_reference(current)
-        proposals = grasp.base_side_bowl_proposals(
-            current.candidates, object_pose_world=current.bowl_pose,
-            base_position_world=base,
-            table_normal_world=current.data.geom("scene_table").xmat.reshape(3, 3)[:, 2],
-            enforce_table_angle=enforce_table_angle,
-        )
+        if proposals is None:
+            assert len(seen) == 0  # 只有仿真调用严格接触筛选。
+            proposals = grasp.base_side_bowl_proposals(
+                current.candidates, object_pose_world=current.bowl_pose,
+                base_position_world=base,
+                table_normal_world=current.data.geom("scene_table").xmat.reshape(3, 3)[:, 2],
+                enforce_table_angle=enforce_table_angle,
+            )
+        else:
+            assert len(proposals) == len(current.candidates) == 160
         assert enforce_table_angle is (len(seen) == 0)
         seen.append((current.candidates, proposals, settings, seed))
         return SimpleNamespace(
@@ -80,35 +91,34 @@ def test_real_and_sim_share_candidates_but_not_angle_constraint(tmp_path, monkey
     assert len(seen) == 2
     sim_candidates, sim_proposals, sim_settings, sim_seed = seen[0]
     real_candidates, real_proposals, real_settings, real_seed = seen[1]
-    assert len(sim_candidates) == len(real_candidates) == len(case.candidates) == 48
+    assert len(sim_candidates) == len(case.candidates) == 48
+    assert len(real_candidates) == len(real_proposals) == 160
     reopened = load_pick_bowl_case(case.output_dir)
     for expected, displayed, loaded in zip(sim_candidates, case.candidates, reopened.candidates):
         assert displayed["candidate_id"] == loaded["candidate_id"] == expected["candidate_id"]
         np.testing.assert_allclose(displayed["T_world_tcp"], expected["T_world_tcp"], atol=1e-12, rtol=0)
         np.testing.assert_allclose(loaded["T_world_tcp"], expected["T_world_tcp"], atol=1e-12, rtol=0)
-    for expected, actual in zip(sim_candidates, real_candidates):
-        assert actual["candidate_id"] == expected["candidate_id"]
+    assert len({item["candidate_id"] for item in real_candidates}) == 160
+    assert {item["parameters"]["depth_m"] for item in real_candidates} == {.015, .025, .028, .03}
+    for actual in real_candidates:
         assert actual["pose_source"] == "observed_scene_asset_aligned"
-        for key in ("T_world_tcp", "T_object_tcp", "T_primitive_tcp", "T_primitive_tcp_raw"):
-            np.testing.assert_allclose(actual[key], expected[key], atol=1e-12, rtol=0)
-        for key, value in expected["parameters"].items():
-            if key in {"direction", "explicit_overrides"}:
-                assert actual["parameters"][key] == value
-            else:
-                np.testing.assert_allclose(actual["parameters"][key], value, atol=1e-12, rtol=0)
-    sim_ids = {p.candidate_id for p in sim_proposals}
-    assert [p.candidate_id for p in real_proposals if p.candidate_id in sim_ids] == [
-        p.candidate_id for p in sim_proposals
-    ]
-    assert len(real_proposals) > 0
+        assert len(actual["parameters"]["tip_y_rad"]) == 5
+        assert "tilt_pivot_tcp_m" not in actual["parameters"]["explicit_overrides"]
+        np.testing.assert_allclose(actual["parameters"]["tilt_pivot_tcp_m"], 0.)
+        np.testing.assert_allclose(np.asarray(actual["T_world_tcp"]),
+                                   bowl @ np.asarray(actual["T_object_tcp"]), atol=1e-12)
     displayed = real.build_observed_bowl_grasp_proposals(scene)["proposals"]
     assert [p.candidate_id for p in displayed] == [p.candidate_id for p in real_proposals]
-    assert real_settings == sim_settings
+    assert real_settings.max_grasp_candidates == 160
+    assert replace(real_settings, max_grasp_candidates=sim_settings.max_grasp_candidates) == sim_settings
     assert real_seed == sim_seed == 123
-    assert report["generated_candidate_count"] == 48
+    assert report["generated_candidate_count"] == 160
     assert report["grasp_table_angle_constraint_enabled"] is False
     assert report["grasp_table_angle_allowed_deg"] is None
-    assert report["grasp_table_angle_preferred_deg"] == 55.
+    assert report["grasp_table_angle_preferred_deg"] is None
+    assert report["simulation_geometry_pruning_enabled"] is False
+    assert len(report["candidate_parameters"]["candidate_targets"]) == 160
+    assert len(report["candidate_parameters"]["profile_sha256"]) == 64
     np.testing.assert_array_equal(case.data.qpos, frozen_qpos)
     np.testing.assert_array_equal(case.data.qvel, frozen_qvel)
     assert case.data.time == 0.

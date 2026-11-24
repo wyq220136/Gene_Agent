@@ -19,14 +19,13 @@ from scipy.spatial.transform import Rotation
 
 from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase, prepare_grasp_stage_snapshots
 from gene_agent.tasks.policies.microwave_task.planning.grasp import (
-    active_arm_base_reference, base_side_bowl_proposals, bowl_grasp_geometry_metrics,
+    active_arm_base_reference, legacy_bowl_proposals, bowl_grasp_geometry_metrics,
     plan_bowl_grasp_stages,
 )
 from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
-    BOWL_AUTO_GRASP_PROFILE, BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
-    auto_bowl_grasp_parameters,
+    BOWL_AUTO_GRASP_PROFILE,
 )
-from gene_agent.knowledge import bowl_grasp_candidates
+from .bowl_candidates import observed_bowl_candidates
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.motion.model import (
     MotionOperation,
@@ -86,9 +85,10 @@ def _observed_case(
         raise ValueError("Bowl 抓取活动臂与场景机器人元数据不一致")
     candidates = ()
     if generate_candidates:
-        parameters = auto_bowl_grasp_parameters(model, data, metadata["robot"], group=group)
-        candidates = bowl_grasp_candidates(
-            target["bowl_pose_world"], parameters=parameters, pose_source=target["pose_source"],
+        if group != "right":
+            raise NotImplementedError("真机自动抓碗目前只支持右臂")
+        candidates, parameters = observed_bowl_candidates(
+            collision_scene, target["bowl_pose_world"], pose_source=target["pose_source"],
         )
         target.update(candidates=candidates, candidate_parameters=parameters)
     case = PickBowlCase(
@@ -105,14 +105,9 @@ def _selection_geometry(case):
 
 
 def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
-    """复用仿真 auto 候选输入和排序，真机不按桌面角度淘汰候选。"""
+    """使用 AffordToolAct 真机候选顺序，不套用仿真接触几何硬筛选。"""
     case, target = _observed_case(collision_scene, ".")
-    _, position, normal = _selection_geometry(case)
-    target["proposals"] = base_side_bowl_proposals(
-        case.candidates, object_pose_world=case.bowl_pose,
-        base_position_world=position, table_normal_world=normal,
-        enforce_table_angle=False,
-    )
+    target["proposals"] = legacy_bowl_proposals(case.candidates)
     return target
 
 
@@ -150,18 +145,21 @@ def plan_observed_bowl_grasp_stages(
         raise ValueError("自动候选筛选目前只支持已验证的 pick_bowl_legacy_visual profile")
     profile_bytes = _PROFILE_PATH.read_bytes()
     settings = load_grasp_settings(_PROFILE_PATH, profile_name)
+    settings = replace(settings, max_grasp_candidates=len(case.candidates))
     output.mkdir(parents=True, exist_ok=True)
     body, position, normal = _selection_geometry(case)
     evidence = {
         "input_state_id": target["collision_snapshot_sha256"],
         "bowl_pose_world": case.bowl_pose.tolist(),
-        "candidate_order_policy": "right_arm_base_side_external_rim_then_preferred_55_deg_table_angle",
+        "candidate_order_policy": target["candidate_parameters"]["candidate_order_policy"],
         "right_arm_base_reference_body": body,
         "right_arm_base_position_world": position.tolist(),
         "grasp_table_angle_definition": "acute angle(TCP +Z, actual scene_table plane)",
         "grasp_table_angle_constraint_enabled": False,
         "grasp_table_angle_allowed_deg": None,
-        "grasp_table_angle_preferred_deg": BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+        "grasp_table_angle_preferred_deg": None,
+        "simulation_geometry_pruning_enabled": False,
+        "max_grasp_candidates": settings.max_grasp_candidates,
         "candidate_parameters": target["candidate_parameters"],
         "generated_candidate_count": len(case.candidates),
     }
@@ -169,6 +167,7 @@ def plan_observed_bowl_grasp_stages(
     try:
         selected = plan_bowl_grasp_stages(
             case, settings, seed=seed, enforce_table_angle=False,
+            proposals=legacy_bowl_proposals(case.candidates),
         )
     except Exception as error:
         evidence["failure"] = {"type": type(error).__name__, "message": str(error)}
