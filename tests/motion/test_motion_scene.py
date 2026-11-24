@@ -175,3 +175,20 @@ def test_static_internal_pair_is_recorded_and_margin_expands_boxes(tmp_path):
     for record in result['records']:
         assert record['contact_margin_m']==pytest.approx(.0002)
         np.testing.assert_allclose(result['scene_model']['cuboid'][record['obstacle_name']]['dims'],[.2004,.4004,.6004])
+
+
+def test_explicit_realworld_link_policy_changes_hash_without_removing_obstacles(tmp_path):
+    from copy import deepcopy
+    model, data, metadata, _ = fixture_model()
+    strict = export_collision_scene(model, data, metadata, 'arm', tmp_path / 'strict')
+    assert not strict['mounting_contact_policy'].get('scene_collision_ignore_links')
+    realworld = deepcopy(metadata)
+    realworld['scene_collision_ignore_links'] = ['base_link', 'link_1']
+    realworld['scene_collision_ignore_source'] = 'AffordToolAct reference'
+    observed = export_collision_scene(model, data, realworld, 'arm', tmp_path / 'observed')
+    assert observed['scene_model'] == strict['scene_model']
+    assert observed['snapshot_sha256'] != strict['snapshot_sha256']
+    assert observed['mounting_contact_policy']['scene_collision_ignore_links'] == ['base_link', 'link_1']
+    assert 'scene_collision_ignore_links' not in metadata
+    repeat = export_collision_scene(model, data, realworld, 'arm', tmp_path / 'repeat')
+    assert observed['snapshot_sha256'] == repeat['snapshot_sha256']

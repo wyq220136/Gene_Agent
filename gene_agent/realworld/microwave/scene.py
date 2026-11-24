@@ -214,6 +214,14 @@ def build_observed_collision_scene(
         robot_profile="realman_dual_standard", table_config=table_config,
     )
     robot = metadata["robot"]
+    # 真机沿用 AffordToolAct 的场景 link 策略；完整自身球对另行复核。
+    # 只在 observed 元数据声明，不改变仿真默认的严格安装接触规则。
+    robot["scene_collision_ignore_links"] = ["base_link", "link_1"]
+    robot["scene_collision_ignore_source"] = (
+        "AffordToolAct/tamp/curobo/planner_backend.py:"
+        "DEFAULT_SCENE_COLLISION_IGNORE_LINKS/_temporarily_disable_scene_collision_links")
+    Path(robot["xml_path"]).with_name("robot_metadata.json").write_text(
+        json.dumps(robot, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     positions = {}
     for group, values in groups.items():
         names = robot["joint_groups"][group]

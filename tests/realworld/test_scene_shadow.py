@@ -63,6 +63,12 @@ def test_observed_collision_scene_uses_measured_poses_and_joint_angles(tmp_path)
 
     snapshot = result["snapshot"]
     assert snapshot["active_group"] == "right"
+    expected_links = ["base_link", "link_1"]
+    assert snapshot["mounting_contact_policy"]["scene_collision_ignore_links"] == expected_links
+    robot = result["robot_metadata"]
+    assert robot["scene_collision_ignore_links"] == expected_links
+    persisted = json.loads(Path(robot["xml_path"]).with_name("robot_metadata.json").read_text())
+    assert persisted["scene_collision_ignore_links"] == expected_links
     assert snapshot["scene_model"]["cuboid"] or snapshot["scene_model"]["mesh"]
     assert any(row["body_name"] == "bowl" for row in snapshot["records"])
     assert any(row["body_name"] == "microwave_support" for row in snapshot["records"])
@@ -214,6 +220,7 @@ def test_observed_snapshot_connects_to_existing_curobo_settings_without_gpu(tmp_
         scene["snapshot"]["gripper_snapshot"]["snapshot_id"]
     )
     assert created[0]["scene_model"] is scene["snapshot"]["scene_model"]
+    assert created[0]["mounting_contact_policy"]["scene_collision_ignore_links"] == ["base_link", "link_1"]
     skill_context = SkillContext(
         group="right", start=context["start"], scene=context["scene"],
         object_id="Bowl/Bowl_0",
@@ -248,6 +255,9 @@ def test_observed_bowl_reuses_visual_grasp_collision_policy(tmp_path):
     assert not any(row["body_name"] == "bowl" for row in contact["records"])
     assert tuple(scene["snapshot"]["qpos_snapshot"]) == original_qpos
     assert strict["gripper_snapshot"]["group"] == "right"
+    for stage in (strict, contact):
+        assert stage["mounting_contact_policy"]["scene_collision_ignore_links"] == ["base_link", "link_1"]
+        assert any(row["geom_name"] == "scene_table" for row in stage["records"])
     model = mujoco.MjModel.from_xml_path(str(scene["scene_xml_path"]))
     for name in scene["robot_metadata"]["grippers"]["right"]["joint_names"]:
         address = model.joint(name).qposadr[0]

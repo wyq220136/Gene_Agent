@@ -562,7 +562,8 @@ class SynchronousPlanner:
             raise ValueError("cuRobo 内部关节顺序与配置不一致")
         self.mounting_contact_policy = copy.deepcopy(mounting_contact_policy or {})
         self._validator = None
-        if self.mounting_contact_policy.get("obstacle_names"):
+        if (self.mounting_contact_policy.get("obstacle_names")
+                or self.mounting_contact_policy.get("scene_collision_ignore_links")):
             from ..collision import MountingCollisionValidator
             self._validator = MountingCollisionValidator(self.kinematics, self.scene_model, self.mounting_contact_policy)
         self._ik = self._planner = None
@@ -646,7 +647,7 @@ class SynchronousPlanner:
         from ..collision import MountingCollisionValidator
         policy = copy.deepcopy(policy or {})
         validator = None
-        if policy.get("obstacle_names"):
+        if policy.get("obstacle_names") or policy.get("scene_collision_ignore_links"):
             validator = MountingCollisionValidator(self.kinematics, self.scene_model, policy)
         self.mounting_contact_policy = policy
         self._validator = validator
@@ -698,7 +699,8 @@ class SynchronousPlanner:
         self.gripper_metadata = {**gripper_result_metadata(gripper_snapshot),
                                  **collision_mode_metadata(self.collision_mode)}
         if updates is None:
-            if self.mounting_contact_policy.get("obstacle_names"):
+            if (self.mounting_contact_policy.get("obstacle_names")
+                or self.mounting_contact_policy.get("scene_collision_ignore_links")):
                 from ..collision import MountingCollisionValidator
                 self._validator = MountingCollisionValidator(
                     self.kinematics, self.scene_model, self.mounting_contact_policy,
@@ -1322,8 +1324,8 @@ class SynchronousPlanner:
     def _collision_diagnostic(self, positions, *, context_label: str = "failed_solver_best_candidate") -> dict:
         """按严格接触策略定位失败姿态的限位、自碰撞和场景物体。
 
-        外部物体始终使用完整碰撞球；只有指定的本体障碍物才临时屏蔽
-        policy 内的安装 link。逐物体查询后恢复原 enable 状态。
+        默认外物使用完整球；真机快照可显式声明 AffordToolAct 场景 link
+        忽略。自身碰撞始终使用完整球，逐物体查询后恢复球与 enable 状态。
         """
         from ..collision import optimizer_mounting_mask
 
@@ -1342,22 +1344,29 @@ class SynchronousPlanner:
             self_hit = bool((self_value > 0).any().item())
             if self_hit:
                 try:
-                    distances = checker.self_collision_cost._pair_distance.detach().reshape(-1)
-                    pairs = checker.kinematics.get_self_collision_config().collision_pairs
-                    pairs = pairs.detach().reshape(-1, 2)
-                    active = distances[:len(pairs)] > 0
+                    # 某些 cuRobo 版本的 _pair_distance 仅有聚合值，不能
+                    # 按完整球对列表做布尔索引；使用相同 pair/padding 还原归因。
+                    config = checker.kinematics.get_self_collision_config()
+                    pairs = config.collision_pairs.to(dtype=self.torch.long).reshape(-1, 2)
+                    spheres = full_state.robot_spheres.detach().reshape(-1, 4)
+                    first_spheres, second_spheres = spheres[pairs[:, 0]], spheres[pairs[:, 1]]
+                    overlap = (first_spheres[:, 3] + second_spheres[:, 3]
+                               + config.sphere_padding[pairs[:, 0]] + config.sphere_padding[pairs[:, 1]]
+                               - self.torch.linalg.vector_norm(first_spheres[:, :3] - second_spheres[:, :3], dim=-1))
+                    active = ((overlap > 0) & (first_spheres[:, 3] > 0) & (second_spheres[:, 3] > 0))
                     for first, second in pairs[active].detach().cpu().numpy().tolist():
                         first, second = int(first), int(second)
                         self_indices.update((first, second))
                         self_pairs.append([first, second])
                 except (AttributeError, TypeError, RuntimeError, ValueError):
-                    # cuRobo versions without the pair-distance debug buffer still
+                    # cuRobo versions without compatible pair metadata still
                     # retain the aggregate self-collision result below.
                     pass
         else:
             self_hit = None
         obstacles = []
         allowed_mounting = []
+        ignored_scene_contacts = []
         scene_hits: dict[int, set[str]] = {}
         world = checker.scene_model
         if checker.collision_constraint is not None and world is not None:
@@ -1389,12 +1398,22 @@ class SynchronousPlanner:
                     full_hit = bool((full_scores > 0).any().item())
                     if not full_hit:
                         continue
-                    if name in body_names and self._validator:
-                        with optimizer_mounting_mask(checker.kinematics, self.mounting_contact_policy):
+                    scene_ignored = self.mounting_contact_policy.get("scene_collision_ignore_links", ())
+                    ignored_links = list(dict.fromkeys((
+                        *scene_ignored,
+                        *(self.mounting_contact_policy.get("robot_links", ()) if name in body_names else ()),
+                    )))
+                    if ignored_links and self._validator:
+                        with optimizer_mounting_mask(checker.kinematics, {"robot_links": ignored_links}):
                             masked_state = checker.get_kinematics(query)
                             restricted_scores = checker.get_collision_constraint(masked_state).detach().reshape(-1)
                             restricted_hit = bool((restricted_scores > 0).any().item())
-                        (obstacles if restricted_hit else allowed_mounting).append(name)
+                        if restricted_hit:
+                            obstacles.append(name)
+                        elif name in body_names:
+                            allowed_mounting.append(name)
+                        else:
+                            ignored_scene_contacts.append(name)
                         hit_scores = restricted_scores if restricted_hit else None
                     else:
                         obstacles.append(name)
@@ -1420,6 +1439,8 @@ class SynchronousPlanner:
             "scene_collision": bool(obstacles),
             "colliding_obstacles": obstacles,
             "allowed_mounting_contacts": allowed_mounting,
+            "ignored_scene_contacts": ignored_scene_contacts,
+            "scene_collision_ignore_links": list(self.mounting_contact_policy.get("scene_collision_ignore_links", ())),
             "checked_configuration": context_label,
             "robot_collision_spheres_world": sphere_records,
             "self_collision_sphere_pairs": self_pairs,
@@ -1552,14 +1573,17 @@ class SynchronousPlanner:
             else:
                 if self._planner is None:
                     from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
-                    self._planner = MotionPlanner(MotionPlannerCfg.create(robot=copy.deepcopy(self.robot_config), scene_model=self.scene_model,
+                    planner_config = MotionPlannerCfg.create(robot=copy.deepcopy(self.robot_config), scene_model=self.scene_model,
                         collision_cache=self.collision_cache,
                         optimizer_collision_activation_distance=self.optimizer_collision_activation_distance,
                         self_collision_check=True, num_ik_seeds=16, num_trajopt_seeds=4,
-                        interpolation_dt=0.025,
                         store_debug=(self.diagnostic_output_dir is not None
                                      and self.planner_mode is PlannerMode.DEVELOPMENT),
-                        **self.runtime_options))
+                        **self.runtime_options)
+                    # 新旧 create 签名不同；两版都在 TrajOpt 配置中消费此字段。
+                    # 在创建 solver 前显式设置，保持原有 25 ms 采样语义。
+                    planner_config.trajopt_solver_config.interpolation_dt = 0.025
+                    self._planner = MotionPlanner(planner_config)
                 phase_timing["solver_initialization_s"] = time.perf_counter()-initialization_started
                 solver_started = time.perf_counter()
                 with self._linear_criteria(non_terminal_scale) if linear else nullcontext():

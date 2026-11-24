@@ -410,11 +410,17 @@ def export_collision_scene(model, data, robot_metadata: dict, active_group: str,
                     moving_body_names=list(moving_body_names),
                     disabled_body_names=list(disabled_body_names),
                     mounting_contact_exceptions=robot_metadata.get("mounting_contact_exceptions", {}))
+    if robot_metadata.get("scene_collision_ignore_links"):
+        snapshot["scene_collision_ignore_links"] = list(robot_metadata["scene_collision_ignore_links"])
+        snapshot["scene_collision_ignore_source"] = robot_metadata.get("scene_collision_ignore_source")
     digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     exception = robot_metadata.get("mounting_contact_exceptions", {})
     mounting_policy = {"robot_links": exception.get("robot_links", []),
                        "obstacle_names": [r["obstacle_name"] for r in records if r["geom_name"] in exception.get("source_geom_names", [])],
                        "source": exception.get("source"), "semantics": exception.get("semantics")}
+    if robot_metadata.get("scene_collision_ignore_links"):
+        mounting_policy["scene_collision_ignore_links"] = list(robot_metadata["scene_collision_ignore_links"])
+        mounting_policy["scene_collision_ignore_source"] = robot_metadata.get("scene_collision_ignore_source")
     result = dict(gripper_snapshot=gripper_snapshot, static_internal_contact_pairs=static_pairs, mounting_contact_policy=mounting_policy, scene_model=scene, records=records, excluded=excluded, snapshot_sha256=digest,
                   transferred_objects=transferred_objects,
                   moving_body_names=list(moving_body_names),
@@ -425,6 +431,8 @@ def export_collision_scene(model, data, robot_metadata: dict, active_group: str,
                   simulation_time_s=float(data.time), qpos_snapshot=data.qpos.tolist(),
                   scope=("MuJoCo启用接触的非活动组几何；其他臂与剩余动态物体冻结；"
                          "活动组采用原cuRobo球与ignore；"
+                         + (f"真机场景忽略 link {mounting_policy['scene_collision_ignore_links']}，完整自碰撞保留；"
+                            if mounting_policy.get("scene_collision_ignore_links") else "")
                          + (f"按本阶段旧 Skill 策略关闭 {disabled_body_names} 的场景碰撞。"
                             if disabled_body_names else "")
                          + (f"运动关节 {moving_body_names} 不参与静态规划，必须逐帧复核。"

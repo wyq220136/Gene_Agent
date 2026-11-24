@@ -94,6 +94,18 @@ session默认CUDA Graph、容量4的pool，正常/异常退出均释放，精确
 修正，不改变网格、碰撞球、安装例外或启用对象；结果的 `mesh_sdf_query`
 记录实际模式与 cuRobo 来源。回归见 `tests/motion/test_curobo_mesh_sdf.py`。
 
+真机微波炉 observed 场景显式沿用 AffordToolAct 的
+`DEFAULT_SCENE_COLLISION_IGNORE_LINKS=("base_link", "link_1")`：起点、IK、
+轨迹离散复核和诊断均忽略这两个近基座 link 与所有场景障碍的碰撞。
+`link_1` 是第一段连杆；夹爪位于 `link_7` 后方。桌面仍作为障碍保留，
+其他 link/夹爪的场景碰撞及完整原始自身碰撞对继续检查。策略写入 robot
+元数据与快照哈希，抓碗开爪/目标接触阶段继续继承；仿真未声明时沿用严格规则。
+诊断以 `ignored_scene_contacts` 记录策略允许的外物接触，不再作为 start_collision。
+轨迹插值保持 25 ms，通过新旧 API 共有的 TrajOpt 配置设置，避免旧版
+`MotionPlannerCfg.create` 不接受 `interpolation_dt` 而在 IK 后报错。
+此策略不证明两个近基座 link 与外物不发生真实接触；回归见
+`tests/motion/test_realworld_scene_collision_policy.py`。
+
 ## 3. 保存结果，交给执行器
 
 ```python

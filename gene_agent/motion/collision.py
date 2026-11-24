@@ -1,4 +1,4 @@
-"""安装接触例外的局部复核：完整外物保护、完整原始自碰撞对不变。"""
+"""按显式安装/真机场景 link 策略复核；完整原始自碰撞对不变。"""
 from __future__ import annotations
 import copy
 from contextlib import contextmanager
@@ -22,12 +22,13 @@ def optimizer_mounting_mask(kinematics, policy):
     """恢复旧优化期近基座link屏蔽，退出严格恢复半径。
 
     cuRobo当前API不提供link×obstacle过滤，所以优化阶段屏蔽比最终允许策略更宽。
-    该结果不能直接放行：调用方必须用本文件的完整复核检查所有外物和自碰撞。
+    该结果不能直接放行：调用方必须按显式策略复核其他球与外物，并复核完整自碰撞。
     """
     params=kinematics.config.kinematics_config
     saved=params.link_spheres.clone()
     try:
-        for link in policy.get('robot_links',[]):
+        for link in dict.fromkeys((*policy.get('robot_links',()),
+                                   *policy.get('scene_collision_ignore_links',()))):
             params.disable_link_spheres(link)
         yield
     finally:
@@ -50,9 +51,14 @@ class MountingCollisionValidator:
             if any(world.values()):
                 self.checkers[label]=SceneCollision.from_config(SceneCollisionCfg(device_cfg=self.device,scene_model=SceneCfg.create(world)))
         params=kinematics.config.kinematics_config
-        ids=[params.link_name_to_idx_map[link] for link in policy.get('robot_links',[])]
-        self.mounting_mask=torch.zeros_like(params.link_sphere_idx_map,dtype=torch.bool)
-        for index in ids:self.mounting_mask|=params.link_sphere_idx_map==index
+        def link_mask(names):
+            mask=torch.zeros_like(params.link_sphere_idx_map,dtype=torch.bool)
+            for name in names:
+                index=params.link_name_to_idx_map[name]
+                mask|=params.link_sphere_idx_map==index
+            return mask
+        self.scene_mask=link_mask(policy.get('scene_collision_ignore_links',()))
+        self.mounting_mask=link_mask(policy.get('robot_links',())) | self.scene_mask
 
     def check(self, positions, planner_joint_names):
         """positions=[N,dof]；不更改原球。轨迹只覆盖调用方给出的离散样本。"""
@@ -65,7 +71,8 @@ class MountingCollisionValidator:
         costs={}
         for label,checker in self.checkers.items():
             values=query.clone()
-            if label=='body':values[:,:,self.mounting_mask,3]=-100.
+            mask=self.mounting_mask if label=='body' else self.scene_mask
+            values[:,:,mask,3]=-100.
             buffer=CollisionBuffer.from_shape(values.shape,self.device)
             cost=checker.get_sphere_distance_raw(values,buffer,torch.tensor([1.],device='cuda'),torch.tensor([0.],device='cuda'))
             costs[label]=float(cost.max().item())
