@@ -127,6 +127,7 @@ def base_side_bowl_proposals(
     min_table_angle_deg: float = BOWL_GRASP_TABLE_ANGLE_RANGE_DEG[0],
     max_table_angle_deg: float = BOWL_GRASP_TABLE_ANGLE_RANGE_DEG[1],
     preferred_table_angle_deg: float = BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+    enforce_table_angle: bool = True,
     min_external_approach_alignment: float = 0.3,
     rim_radial_tolerance_m: float = 0.001,
     rim_height_tolerance_m: float = 0.002,
@@ -135,6 +136,7 @@ def base_side_bowl_proposals(
 
     抓取角定义为 TCP +Z 接近轴与实际桌面平面的锐角，而不是与 Bowl
     中轴的夹角。后者会把近水平伸入碗内的姿态误认为合格钝角。
+    真机可显式关闭桌面角度硬筛选；角度仍用于证据和排序，其余几何约束不变。
     """
     proposals = legacy_bowl_proposals(candidates)
     object_pose = validate_pose(object_pose_world, field_name="object_pose_world")
@@ -247,7 +249,8 @@ def base_side_bowl_proposals(
         metrics = candidate_metrics(item)
         if (np.isfinite(list(metrics.values())).all()
                 and metrics["base_alignment"] >= minimum_alignment - 1e-9
-                and lower - 1e-9 <= metrics["table_angle_deg"] <= upper + 1e-9
+                and (not enforce_table_angle
+                     or lower - 1e-9 <= metrics["table_angle_deg"] <= upper + 1e-9)
                 and metrics["external_approach_alignment"] >= minimum_external - 1e-9
                 and inner_radius - radial_tolerance <= metrics["contact_radius_m"]
                 <= outer_radius + radial_tolerance
@@ -257,7 +260,8 @@ def base_side_bowl_proposals(
                 and metrics["contact_tangent_error_m"] <= radial_tolerance):
             eligible.append((index, item, metrics))
     if not eligible:
-        raise ValueError("没有满足右臂基座侧、外侧碗沿和桌面角度约束的 Bowl 候选")
+        constraints = "右臂基座侧、外侧碗沿" + ("和桌面角度" if enforce_table_angle else "")
+        raise ValueError(f"没有满足{constraints}约束的 Bowl 候选")
 
     return tuple(item for index, item, metrics in sorted(
         eligible,
@@ -286,8 +290,7 @@ def bowl_grasp_geometry_metrics(
         base_position_world=base_position_world,
         table_normal_world=table_normal_world,
         min_base_alignment=-1.0,
-        min_table_angle_deg=1e-6,
-        max_table_angle_deg=89.999999,
+        enforce_table_angle=False,
         preferred_table_angle_deg=45.0,
         min_external_approach_alignment=0.0,
         rim_radial_tolerance_m=1.0,
@@ -355,6 +358,7 @@ def active_arm_base_reference(case: PickBowlCase, group: str = "right") -> tuple
 
 def plan_bowl_grasp_stages(
     case: PickBowlCase, profile, *, seed: int = 123,
+    enforce_table_angle: bool = True,
 ) -> BowlGraspStageSelection:
     """从当前 GT、实际开口快照按旧候选顺序筛 grasp 和 pregrasp。
 
@@ -373,6 +377,7 @@ def plan_bowl_grasp_stages(
         case.candidates, object_pose_world=case.bowl_pose,
         base_position_world=base_position,
         table_normal_world=table_normal,
+        enforce_table_angle=enforce_table_angle,
     )
     # Bowl 的当前 Knowledge 候选共享同一个 pregrasp 开口。若未来的
     # 候选各用不同开口，就必须分批冻结对应快照，不能用第一项代替全部。

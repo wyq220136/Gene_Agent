@@ -144,16 +144,25 @@ class SkillInspectorApp:
         if not getattr(self, "_client_hook_registered", False):
             @server.on_client_connect
             def _connected(client: Any) -> None:
-                client.camera.position = (-1.26, 1.69, 1.00)
-                client.camera.look_at = (.16, .20, .10)
-                client.camera.up_direction = (0., 0., 1.)
-                client.camera.fov = .95
+                client.camera.position = server.initial_camera.position
+                client.camera.look_at = server.initial_camera.look_at
+                client.camera.up_direction = server.initial_camera.up
+                client.camera.fov = server.initial_camera.fov
                 client.flush()
                 client.get_render(height=8, width=8, transport_format="png", timeout=8.0)
                 print(f"[skill-inspector] scene-ready stage={self.selected_stage or 'all'} mode={self.mode}", flush=True)
             self._client_hook_registered = True
 
     def _configure_camera(self) -> None:
+        cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "observed_rgbd_camera")
+        if cid >= 0:
+            rotation = self.data.cam_xmat[cid].reshape(3, 3)
+            position = self.data.cam_xpos[cid]
+            self.server.initial_camera.position = tuple(position)
+            self.server.initial_camera.look_at = tuple(position - rotation[:, 2])
+            self.server.initial_camera.up = tuple(rotation[:, 1])
+            self.server.initial_camera.fov = float(np.radians(self.model.cam_fovy[cid]))
+            return
         self.server.initial_camera.position = (-1.26, 1.69, 1.00)
         self.server.initial_camera.look_at = (.16, .20, .10)
         self.server.initial_camera.up = (0., 0., 1.)

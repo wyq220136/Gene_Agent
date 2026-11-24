@@ -29,7 +29,8 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 场景查看器的新建/重载和任务可视化接线也复用这一入口，
 经 `knowledge.bowl_grasp_candidates` 生成 48 个候选，再由共享 `planning/grasp.py` 筛选和规划。
 参数保持 Gene_Agent_new 的 auto 路线：15 mm 深度、六个外侧倾角、实际 FK 指垫支点、
-世界 Z 偏移 -12 mm；按实际肩部位置及桌面法向筛选，桌面接近角 45–70°、优先 55°。
+世界 Z 偏移 -12 mm；保留右臂基座侧、外侧接近和碗沿接触筛选。
+真机不限制桌面接近角范围，只保留优先 55° 的排序偏好；仿真继续限制 45–70°。
 自动模式仅使用 `pick_bowl_legacy_visual`；手动候选探针仍保留其独立的 12 mm 默认。
 真机只适配同帧物体观测和实测机器人状态，候选生成不推进物理、不执行设备。
 感知 mesh 选择复用 AffordToolAct 迁移的 `pose_est.task_pose_est.pose_mesh_path`，
@@ -65,3 +66,7 @@ Pose tracking session 是服务进程内存状态，perception_setup.json 中的
 `microwave/plan_only.py` 沿真机共享步骤表调用现有阶段规划入口；
 `plan_only_world.py` 仅保存预测状态、导出碰撞和规划回放，不持有设备或执行器。
 `prediction.py` 区分规划假设与真机证据，真实执行仍逐段重观测；命令和限制见入口说明。
+
+完整 plan_only 的现场几何由 `microwave/observed_geometry.py` 从本次 PERCEPTION 冻结 RGB-D 和 data mesh 构建。
+桌面位姿与可见范围来自点云，三维回放显示原始点颜色，视频支持 `--camera observed`；
+几何来源、mesh 哈希及坐标检查保存在 `observed_geometry/reconstruction.json`，使用方式见真机操作指南。

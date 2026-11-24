@@ -1,4 +1,4 @@
-"""相同冻结场景下，仿真 auto 与真机候选/筛选必须一致；不执行 GPU 或设备。"""
+"""冻结场景下共享候选输入，但仅仿真限制桌面角度；不执行 GPU 或设备。"""
 
 import json
 from pathlib import Path
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("dx,dy,yaw_deg", [(0., 0., 0.), (.07, -.03, 35.), (-.03, .06, -60.)])
-def test_real_and_sim_auto_candidates_and_order_match_without_stepping(tmp_path, monkeypatch, dx, dy, yaw_deg):
+def test_real_and_sim_share_candidates_but_not_angle_constraint(tmp_path, monkeypatch, dx, dy, yaw_deg):
     config = json.loads((ROOT / "config/scenes/task_1.json").read_text())
     bowl = np.array(config["objects"]["bowl"]["simulation_nominal_pose"], dtype=float)
     bowl[:2, 3] += [dx, dy]
@@ -51,13 +51,15 @@ def test_real_and_sim_auto_candidates_and_order_match_without_stepping(tmp_path,
         def to_dict(self):
             return {"selected_candidate_id": None, "stages": []}
 
-    def select(current, settings, *, seed):
+    def select(current, settings, *, seed, enforce_table_angle=True):
         _, base = grasp.active_arm_base_reference(current)
         proposals = grasp.base_side_bowl_proposals(
             current.candidates, object_pose_world=current.bowl_pose,
             base_position_world=base,
             table_normal_world=current.data.geom("scene_table").xmat.reshape(3, 3)[:, 2],
+            enforce_table_angle=enforce_table_angle,
         )
+        assert enforce_table_angle is (len(seen) == 0)
         seen.append((current.candidates, proposals, settings, seed))
         return SimpleNamespace(
             plan=UnselectedPlan(), proposals=proposals,
@@ -94,12 +96,18 @@ def test_real_and_sim_auto_candidates_and_order_match_without_stepping(tmp_path,
                 assert actual["parameters"][key] == value
             else:
                 np.testing.assert_allclose(actual["parameters"][key], value, atol=1e-12, rtol=0)
-    assert [p.candidate_id for p in real_proposals] == [p.candidate_id for p in sim_proposals]
+    sim_ids = {p.candidate_id for p in sim_proposals}
+    assert [p.candidate_id for p in real_proposals if p.candidate_id in sim_ids] == [
+        p.candidate_id for p in sim_proposals
+    ]
     assert len(real_proposals) > 0
+    displayed = real.build_observed_bowl_grasp_proposals(scene)["proposals"]
+    assert [p.candidate_id for p in displayed] == [p.candidate_id for p in real_proposals]
     assert real_settings == sim_settings
     assert real_seed == sim_seed == 123
     assert report["generated_candidate_count"] == 48
-    assert report["grasp_table_angle_allowed_deg"] == [45., 70.]
+    assert report["grasp_table_angle_constraint_enabled"] is False
+    assert report["grasp_table_angle_allowed_deg"] is None
     assert report["grasp_table_angle_preferred_deg"] == 55.
     np.testing.assert_array_equal(case.data.qpos, frozen_qpos)
     np.testing.assert_array_equal(case.data.qvel, frozen_qvel)

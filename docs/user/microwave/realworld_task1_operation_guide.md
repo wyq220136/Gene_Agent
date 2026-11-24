@@ -203,6 +203,9 @@ OUT="runs/realworld/pick_bowl_precheck_$(date +%Y%m%d_%H%M%S)"
 仅使用 `--subtask all` 而不加执行或完整预览参数时，也只预检完整任务的首段，
 不表示已规划整个抓碗子任务或整条 Task。
 
+真机抓碗候选不使用桌面夹角 45–70° 的硬限制（仿真仍保留），只保留优先 55° 的排序偏好。
+右臂基座侧、外侧接近、碗沿接触和原有碰撞检查不变。
+
 ### 7.2 完整 Task1 plan_only 与预览视频
 
 实际执行之前，使用以下命令连续规划整个任务并导出视频：
@@ -228,6 +231,26 @@ MUJOCO_GL=egl "$PY" "$PWD/tools/run/run_microwave_task1_realworld.py" \
 后续在私有运动学影子中，按 cuRobo 返回的真实规划轨迹末帧衔接下一段，
 更新预测门角、夹爪开口、碗位姿和规划附着，并重新导出阶段碰撞场景；
 不再采集新相机帧或将预测状态写成 SDK 实测。
+
+完整 `plan_only` 预览会读取本次 `PERCEPTION/capture/rgb.png`、`depth.png`、
+`camera.json` 与 `perception_setup.json` 的相机标定，重建带原始 RGB 颜色的米制点云。
+坐标只按 `T_world_camera = T_world_sdk @ T_sdk_camera` 转换一次，
+不使用历史仿真相机位姿、名义桌面中心或名义物体摆位替代本次观测。
+桌面的中心、倾角和可见范围由点云平面拟合；厚度沿用已确认值，遮挡和视野外边界仍属未知。
+碗、微波炉机身、门板和把手显示读取 `data/task_1/objs/.../meshes` 下的实际 mesh，
+按本次感知 pose 与原资产 frame 对齐，门板和把手随原门轴运动，不重新分割或生成 mesh。
+
+预览的桌面碰撞与拟合位姿同步；其他机器人、碗、微波炉及支撑的碰撞保护代理保留，
+RGB-D 背景表面本身不作为已验收的完整碰撞模型。
+以上重建用于完整 `plan_only`；真实执行仍沿原现场逐段观测、规划和验收流程，
+不能把预览几何或预测轨迹直接作为已验收的执行输入。
+背景隐藏原位置的待操作物体及机器人几何区域，避免运动回放重影；
+深度缺失和遮挡处保留空洞，不跨越深度跳变补面。
+
+默认视频第一视角及三维回放初始视角使用本次实测相机，第二视角保留夹爪侧视图。
+若点云桌面朝上法向不符合当前规划世界的 `+Z` 约定，
+程序保存重建场景并报告 `observed_world_up_mismatch`，可先打开三维回放检查；
+应核对相机外参和 SDK 坐标，程序不自动翻转、平移点云来消除差异。
 
 预览包含两轮开关门、抓碗、放入并释放撤离、取碗、放回桌面并释放撤离，
 以及全部默认 TCP 过渡；默认跳过旋钮。
@@ -278,9 +301,10 @@ MUJOCO_GL=egl "$PY" "$PWD/tools/run/run_microwave_task1_realworld.py" \
 MUJOCO_GL=egl "$PY" "$PWD/tools/viewers/recording/record_skill_run_video.py" \
   --run "$OUT" --mode planned \
   --output "$OUT/plan_preview.mp4" \
-  --camera task --camera gripper_side --profile microwave_task1
+  --camera observed --camera gripper_side --profile microwave_task1
 ```
 
+`observed` 使用点云重建保存的实测相机；旧版未重建点云的预览记录仍使用 `--camera task`。
 `--mode planned` 表示规划运动学预览。失败前缀也可导出，不能据此认为整条任务已通过。
 
 ## 8. 真机执行
@@ -338,6 +362,7 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 - 感知目录：原始 RGB-D、两个物体 mask、桌面高度计算及固定几何来源、关门参考、两个 session 和来源哈希。
 - `runtime_input.json`：自动装配的有效配置、输入来源、profile 和运行参数。
 - `observations/`：碗与把手的新帧 tracking、门角、场景与碰撞导出。旋钮仅记录静态碰撞代理及未观测标记，没有实测角或观测时间戳。
+- `observed_geometry/reconstruction.json`：冻结帧、相机变换、mesh 路径及哈希、桌面拟合质量与坐标检查；`observed_pointcloud.npz` 保存实测点和原始颜色，`scene/` 保存重建模型与纹理。
 - 完整 `plan_only` 目录：`task_result.json`、`plan_preview.json`、各阶段规划与碰撞快照，以及可选的 `plan_preview.mp4`；视频导出失败时另存 `video_result.json`。预测状态及其假设与真机执行证据分别记录。
 - 各阶段计划、SDK 执行结果、人工确认和异常 traceback。
 

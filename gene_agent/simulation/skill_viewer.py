@@ -189,6 +189,14 @@ class SkillMujocoViewer:
         return self.seek(selected)
 
     def _camera(self, name: str):
+        if name == "observed":
+            cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "observed_rgbd_camera")
+            if cid < 0:
+                raise ValueError("该记录没有 PERCEPTION 实测相机；请使用点云重建后的新预览")
+            camera = mujoco.MjvCamera()
+            camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
+            camera.fixedcamid = cid
+            return camera, {"source": "PERCEPTION_RGBD", "fixed_camera": "observed_rgbd_camera"}
         presets = camera_presets(
             self.model, self.data, self.timeline.view.instance_id,
             robot_metadata=self.robot_metadata if self.active_group else None,

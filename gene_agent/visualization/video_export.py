@@ -156,6 +156,8 @@ def _evidence(run, mode):
 
 
 def _camera(viewer, frame, name, profile):
+    if name == "observed":
+        return viewer._camera(name)
     if profile == 'microwave_task1':
         from gene_agent.visualization.microwave.cameras import camera_parameters
         params = camera_parameters(viewer, frame, name)

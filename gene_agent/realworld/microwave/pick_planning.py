@@ -24,7 +24,7 @@ from gene_agent.tasks.policies.microwave_task.planning.grasp import (
 )
 from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
     BOWL_AUTO_GRASP_PROFILE, BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
-    BOWL_GRASP_TABLE_ANGLE_RANGE_DEG, auto_bowl_grasp_parameters,
+    auto_bowl_grasp_parameters,
 )
 from gene_agent.knowledge import bowl_grasp_candidates
 from gene_agent.knowledge.geometry import validate_pose
@@ -105,12 +105,13 @@ def _selection_geometry(case):
 
 
 def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
-    """复用仿真 auto 候选输入和按实际桌面/肩部位置定义的筛选顺序。"""
+    """复用仿真 auto 候选输入和排序，真机不按桌面角度淘汰候选。"""
     case, target = _observed_case(collision_scene, ".")
     _, position, normal = _selection_geometry(case)
     target["proposals"] = base_side_bowl_proposals(
         case.candidates, object_pose_world=case.bowl_pose,
         base_position_world=position, table_normal_world=normal,
+        enforce_table_angle=False,
     )
     return target
 
@@ -154,18 +155,21 @@ def plan_observed_bowl_grasp_stages(
     evidence = {
         "input_state_id": target["collision_snapshot_sha256"],
         "bowl_pose_world": case.bowl_pose.tolist(),
-        "candidate_order_policy": "right_arm_base_side_external_rim_then_45_to_70_deg_table_angle",
+        "candidate_order_policy": "right_arm_base_side_external_rim_then_preferred_55_deg_table_angle",
         "right_arm_base_reference_body": body,
         "right_arm_base_position_world": position.tolist(),
         "grasp_table_angle_definition": "acute angle(TCP +Z, actual scene_table plane)",
-        "grasp_table_angle_allowed_deg": list(BOWL_GRASP_TABLE_ANGLE_RANGE_DEG),
+        "grasp_table_angle_constraint_enabled": False,
+        "grasp_table_angle_allowed_deg": None,
         "grasp_table_angle_preferred_deg": BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
         "candidate_parameters": target["candidate_parameters"],
         "generated_candidate_count": len(case.candidates),
     }
     evidence_path = output / "candidate_selection.json"
     try:
-        selected = plan_bowl_grasp_stages(case, settings, seed=seed)
+        selected = plan_bowl_grasp_stages(
+            case, settings, seed=seed, enforce_table_angle=False,
+        )
     except Exception as error:
         evidence["failure"] = {"type": type(error).__name__, "message": str(error)}
         evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2,

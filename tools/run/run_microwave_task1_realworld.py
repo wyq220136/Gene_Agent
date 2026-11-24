@@ -660,6 +660,12 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                 from gene_agent.realworld.microwave.plan_only import plan_microwave_task1
                 begin_observation_operation(observer, "plan_only")
                 initial_scene = observer()
+                if setup is not None:
+                    from gene_agent.realworld.microwave.observed_geometry import reconstruct_plan_scene
+                    initial_scene = reconstruct_plan_scene(
+                        initial_scene, perception_dir=source.parent, setup=setup,
+                        output_dir=output / "observed_geometry",
+                        T_world_sdk=config["scene_parameters"]["T_world_sdk"])
                 return plan_microwave_task1(
                     initial_scene, planner_pool=pool, output_dir=output,
                     subtask_options=options, include_knob=config.get("include_knob", False))
@@ -777,7 +783,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from gene_agent.visualization.video_export import export_video
             export_video(output, output / "plan_preview.mp4", mode="planned",
-                         cameras=("task", "gripper_side"), profile="microwave_task1")
+                         cameras=(("observed", "gripper_side") if report.get("observed_geometry")
+                                  else ("task", "gripper_side")), profile="microwave_task1")
         except Exception as error:
             video_failed = True
             write = {"status": "failed", "message": f"{type(error).__name__}: {error}"}

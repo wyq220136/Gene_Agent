@@ -18,6 +18,7 @@ from gene_agent.tasks.policies.microwave_task.operations.bowl import (
 )
 from gene_agent.tasks.policies.microwave_task.planning.grasp import (
     base_side_bowl_proposals,
+    bowl_grasp_geometry_metrics,
     legacy_bowl_proposals,
 )
 from gene_agent.knowledge import bowl_grasp_candidates
@@ -244,7 +245,41 @@ def test_base_side_order_rejects_opposite_half_horizontal_and_oververtical_angle
             for item in proposals}.isdisjoint({135, 180, 225})
 
 
-def test_base_side_order_rejects_contact_pivot_outside_rim():
+def test_disabled_table_angle_accepts_out_of_range_but_keeps_base_side_constraint():
+    bowl = np.eye(4)
+    bowl[:3, :3] = np.array([[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]])
+    concept = json.loads((TASK_DIR.parents[1] / "assets/objects/bowl_concept.json").read_text())
+    ring = np.asarray(concept["conceptualization"][0]["parameters"]["pose_matrix"])
+    base = (bowl @ ring)[:3, 3] + (bowl @ ring)[:3, :3] @ np.array([1., 0., 0.])
+    candidates = bowl_grasp_candidates(bowl, parameters={
+        "tip_y_rad": np.deg2rad([-55., -18.]).tolist(),
+        "max_abs_tip_y_rad": np.deg2rad(80.),
+        "radial_offset_m": 0.,
+        "tilt_pivot_tcp_m": [0., 0., -.010451],
+    })
+    with pytest.raises(ValueError, match="桌面角度"):
+        base_side_bowl_proposals(
+            candidates, object_pose_world=bowl, base_position_world=base,
+        )
+    proposals = base_side_bowl_proposals(
+        candidates, object_pose_world=bowl, base_position_world=base,
+        enforce_table_angle=False,
+    )
+    angles = [np.rad2deg(np.arcsin(abs(p.tcp_pose_world[2, 2]))) for p in proposals]
+    assert min(angles) < 45.
+    assert max(angles) > 70.
+    assert {round(np.rad2deg(p.parameters["azimuth_rad"])) % 360
+            for p in proposals}.isdisjoint({135, 180, 225})
+    # 日志计算不能重新施加隐藏的桌面角度限制（例如严格 0°）。
+    evidence = bowl_grasp_geometry_metrics(
+        proposals[0], object_pose_world=bowl, base_position_world=base,
+        table_normal_world=proposals[0].tcp_pose_world[:3, 0].copy(),
+    )
+    assert evidence["table_angle_deg"] == pytest.approx(0., abs=1e-8)
+
+
+@pytest.mark.parametrize("enforce_table_angle", [True, False])
+def test_base_side_order_rejects_contact_pivot_outside_rim(enforce_table_angle):
     bowl = np.eye(4)
     bowl[:3, :3] = np.array([[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]])
     concept = json.loads((TASK_DIR.parents[1] / "assets/objects/bowl_concept.json").read_text())
@@ -259,10 +294,12 @@ def test_base_side_order_rejects_contact_pivot_outside_rim():
     with pytest.raises(ValueError, match="外侧碗沿"):
         base_side_bowl_proposals(
             candidates, object_pose_world=bowl, base_position_world=base,
+            enforce_table_angle=enforce_table_angle,
         )
 
 
-def test_base_side_order_rejects_approach_from_bowl_inside():
+@pytest.mark.parametrize("enforce_table_angle", [True, False])
+def test_base_side_order_rejects_approach_from_bowl_inside(enforce_table_angle):
     bowl = np.eye(4)
     bowl[:3, :3] = np.array([[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]])
     concept = json.loads((TASK_DIR.parents[1] / "assets/objects/bowl_concept.json").read_text())
@@ -281,4 +318,5 @@ def test_base_side_order_rejects_approach_from_bowl_inside():
     with pytest.raises(ValueError, match="外侧碗沿"):
         base_side_bowl_proposals(
             [inside], object_pose_world=bowl, base_position_world=base,
+            enforce_table_angle=enforce_table_angle,
         )

@@ -289,7 +289,8 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
                     "stages": [{"name": name, "status": self.stage(name).status}
                                for name in ("open", "pregrasp", "approach", "close", "lift", "hold")]}
 
-    def old_selection(case, settings, *, seed):
+    def old_selection(case, settings, *, seed, enforce_table_angle):
+        assert enforce_table_angle is False
         seen["seed"] = seed
         seen["settings"] = settings
         seen["case"] = case

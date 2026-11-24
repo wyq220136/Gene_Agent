@@ -270,6 +270,7 @@ def plan_microwave_task1(initial_scene, *, planner_pool, output_dir,
         "execute": False, "status": "planning", "success": False,
         "planning_success": False, "task_success": None, "operation_success": False,
         "include_knob": bool(include_knob), "planner_backend": "curobo",
+        "observed_geometry": initial_scene["provenance"].get("observed_geometry"),
         "step_order": [s.name for s in specs], "steps": [], "first_failure": None,
         "claim": "完整预测规划预览；不发送真机命令，不表示夹持、接触或任务物理成功"}
     world = PlanOnlyWorld(initial_scene, output,
@@ -277,6 +278,13 @@ def plan_microwave_task1(initial_scene, *, planner_pool, output_dir,
     planner = TaskPreview(world, planner_pool, subtask_options)
     row = None
     try:
+        geometry = report.get("observed_geometry") or {}
+        if geometry:
+            world.event("observed_initial_scene", duration_s=1.)
+        if geometry.get("table_world_up_consistent") is False:
+            raise PlanningFailed("observed_world_up_mismatch",
+                "实测桌面朝上法向与规划世界 +Z 不一致；请核对相机外参及 SDK 坐标。已保存实际场景供回放。",
+                geometry)
         for spec in specs:
             row = {"step_id": spec.name, "subtask": spec.kind, "status": "planning",
                    "predicted_start": world.state(), "first_stage": len(world.stages)}
@@ -298,10 +306,16 @@ def plan_microwave_task1(initial_scene, *, planner_pool, output_dir,
         details = failure.get("details") or {}
         failed_collision_ref = (details.get("stage_collision_snapshot_ref")
                                 if isinstance(details, dict) else None)
+        if not failed_collision_ref:
+            try:
+                failed_scene = world.scene()
+                failed_collision_ref = world.collision_ref(failed_scene["snapshot"]["snapshot_sha256"])
+            except Exception as evidence_error:
+                failure["collision_record_error"] = f"{type(evidence_error).__name__}: {evidence_error}"
         world.stages.append({"name": (row["step_id"] if row else "initial")+"/failed",
             "status": "failed", "operation": "state_event", "predicted": True,
             "failure": failure, "planned_replay_samples": [world.sample(0.)],
-            "collision_snapshot_ref": failed_collision_ref or str(world.output/"prediction_scenes"/f"{world.revision:04d}"/"collision_snapshot.json")})
+            "collision_snapshot_ref": failed_collision_ref})
         report.update(status="planning_failed",
                       first_failure={"step_id": None if row is None else row["step_id"], **failure})
     finally:

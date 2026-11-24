@@ -28,7 +28,7 @@ def stage_facts(root: Path, stage: StageView) -> dict[str, Any]:
     """从原始记录提取阶段事实，缺失值保持为空，供界面和自动检查共用。"""
     plan = read_json(root, stage.result_ref)
     if stage.result_ref in {"skill_pick_bowl_result.json", "skill_insert_bowl_result.json", "skill_rotate_knob_0_result.json",
-                            "skill_open_door_result.json", "skill_close_door_result.json"}:
+                            "skill_open_door_result.json", "skill_close_door_result.json", "plan_preview.json"}:
         plan = plan["stages"][int(stage.stage_id.split("_", 1)[0])]
     execution = read_json(root, stage.execution_ref)
     if stage.execution_ref == "result.json":
@@ -210,7 +210,7 @@ class SkillInspectorScene:
         # 旧执行报告只保存关节轨迹；其终点 TCP 由同一 MuJoCo 模型正运动学求出。
         if pose is None and stage.result_ref and stage.result_ref not in {
                 "skill_pick_bowl_result.json", "skill_insert_bowl_result.json", "skill_rotate_knob_0_result.json",
-                "skill_open_door_result.json", "skill_close_door_result.json"}:
+                "skill_open_door_result.json", "skill_close_door_result.json", "plan_preview.json"}:
             plan = read_json(self.root, stage.result_ref)
             rows = plan.get("positions_rad") or []
             names = plan.get("joint_names") or []

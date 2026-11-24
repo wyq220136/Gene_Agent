@@ -69,6 +69,31 @@ def _compiled_mesh(model: Any, geom_id: int) -> trimesh.Trimesh:
     return mesh
 
 
+def _compiled_observed_cloud(model, geom_id):
+    """显示 RGB-D 原采样及颜色，不给现场背景套角色色。"""
+    from PIL import Image
+    mid = int(model.geom_dataid[geom_id])
+    va, vn = int(model.mesh_vertadr[mid]), int(model.mesh_vertnum[mid])
+    fa, fn = int(model.mesh_faceadr[mid]), int(model.mesh_facenum[mid])
+    ta = int(model.mesh_texcoordadr[mid])
+    faces = np.asarray(model.mesh_face[fa:fa+fn])
+    tids = np.asarray(model.mesh_facetexcoord[fa:fa+fn])
+    vertex_ids, first = np.unique(faces.reshape(-1), return_index=True)
+    uv = np.asarray(model.mesh_texcoord)[ta+tids.reshape(-1)[first]]
+    material = int(model.geom_matid[geom_id])
+    texture_ids = np.asarray(model.mat_texid[material]).reshape(-1)
+    texture = next(int(i) for i in texture_ids if i >= 0
+                   and int(model.tex_type[i]) == int(mujoco.mjtTexture.mjTEXTURE_2D))
+    adr = int(model.tex_pathadr[texture])
+    if adr < 0:
+        raise ValueError("实测点云缺少冻结 RGB 图像")
+    path = model.paths[adr:].split(bytes([0]), 1)[0].decode()
+    rgb = np.asarray(Image.open(path).convert("RGB"))
+    u = np.clip(np.rint(uv[:,0]*(rgb.shape[1]-1)).astype(int),0,rgb.shape[1]-1)
+    v = np.clip(np.rint((1-uv[:,1])*(rgb.shape[0]-1)).astype(int),0,rgb.shape[0]-1)
+    return np.asarray(model.mesh_vert[va:va+vn])[vertex_ids].copy(), rgb[v,u].copy()
+
+
 def _collision_group(record: dict, frozen_groups: set[str]) -> str:
     """按物体/部件归并规划代理，不让用户逐个翻看几十个细小 geom。"""
     body = str(record.get("body_name") or "").lower()
@@ -134,7 +159,11 @@ class PickBowlScene:
             pose = _geom_pose(data, geom_id)
             wxyz, position = _pose(pose)
             common = dict(wxyz=wxyz, position=position, color=color, opacity=float(rgba[3]))
-            if kind == int(mujoco.mjtGeom.mjGEOM_MESH):
+            if name == "observed_rgbd_surface":
+                points, colors = _compiled_observed_cloud(self.model, geom_id)
+                handle = scene.add_point_cloud(node, points=points, colors=colors,
+                    point_size=.004, wxyz=wxyz, position=position)
+            elif kind == int(mujoco.mjtGeom.mjGEOM_MESH):
                 mesh = _compiled_mesh(self.model, geom_id)
                 mesh.visual.face_colors = np.r_[np.asarray(color, dtype=np.uint8), np.uint8(round(rgba[3] * 255))]
                 handle = scene.add_mesh_trimesh(node, mesh, wxyz=wxyz, position=position)
