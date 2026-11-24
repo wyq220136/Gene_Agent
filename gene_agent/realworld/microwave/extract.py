@@ -110,7 +110,8 @@ def run_observed_bowl_extract(
             max_width_error_m=max_gripper_width_error_m,
             planned_scene_snapshot_sha256=scene["snapshot"]["snapshot_sha256"],
             execute=execute,
-            **({"command_mode": "grasp", "grasp_force": force}
+            **({"command_mode": "grasp", "grasp_force": force,
+                "grasp_settle_time_s": grasp_settle_time_s}
                if name == "close" else {}),
         )
         if execute:
@@ -242,7 +243,13 @@ def run_observed_bowl_extract(
                     return stopped
                 if grasp_settle_time_s:
                     observed = _command_end_state({}, name)
-                    time.sleep(grasp_settle_time_s)
+                    close_execution = rows[-1]["execution"]
+                    completed = (float(close_execution.get("grasp_settle_time_s", 0.))
+                                 if close_execution.get("grasp_settle_completed") else 0.)
+                    remaining = max(0., grasp_settle_time_s - completed)
+                    if remaining:
+                        time.sleep(remaining)
+                    report["grasp_settle_remaining_s"] = remaining
                     settled = observe_collision_scene()
                     observed = _operation_state(settled)
                     old_source = scene["provenance"]
@@ -257,10 +264,15 @@ def run_observed_bowl_extract(
                     new_joints = np.asarray(_observed_start(settled).positions_rad)
                     old_width = float(old_source["gripper_widths_m"]["right"])
                     new_width = float(new_source["gripper_widths_m"]["right"])
-                    if (np.max(np.abs(old_joints - new_joints)) > max_start_error_rad
-                            or abs(old_width - new_width) > max_gripper_width_error_m):
+                    if np.max(np.abs(old_joints - new_joints)) > max_start_error_rad:
                         return stop("close", "observed_state_discontinuity",
-                                    "闭爪等待期间机械臂或夹爪状态变化")
+                                    "闭爪等待期间机械臂关节变化")
+                    # 若仍在执行显式闭爪稳定等待，开口变化正是预期行为。
+                    # 稳定后重新冻结真实开口，随后必须通过当前帧夹持检查。
+                    if (not remaining
+                            and abs(old_width - new_width) > max_gripper_width_error_m):
+                        return stop("close", "observed_state_discontinuity",
+                                    "闭爪稳定后夹爪开口意外变化")
                     scene = settled
                     report["grasp_settle_observation"] = _summary(scene)
                 return {'success': True}

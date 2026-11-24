@@ -517,6 +517,8 @@ class SynchronousPlanner:
         self.gripper_metadata['optimizer_collision_activation_distance_m'] = self.optimizer_collision_activation_distance
         if gripper_snapshot is not None and _digest(robot_config['kinematics']['collision_spheres']) != gripper_snapshot['merged_sphere_sha256']:
             raise ValueError('Planner spheres do not match synchronized gripper snapshot')
+        from .mesh_sdf import ensure_mesh_sdf_compatibility
+        self.gripper_metadata["mesh_sdf_query"] = ensure_mesh_sdf_compatibility()
         import torch
         from curobo.kinematics import Kinematics, KinematicsCfg
         self.torch = torch

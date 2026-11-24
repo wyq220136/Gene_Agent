@@ -37,6 +37,8 @@ def optimizer_mounting_mask(kinematics, policy):
 class MountingCollisionValidator:
     """对成功IK/离散轨迹做局部允许对之外的完整球碰撞复核。"""
     def __init__(self, kinematics, scene, policy):
+        from .curobo.mesh_sdf import ensure_mesh_sdf_compatibility
+        self.mesh_sdf_query = ensure_mesh_sdf_compatibility()
         import torch
         from curobo._src.geom.collision.collision_scene import SceneCollision,SceneCollisionCfg
         from curobo._src.geom.types import SceneCfg
@@ -82,4 +84,5 @@ class MountingCollisionValidator:
         costs['self']=maximum
         return {'valid': all(value<=1e-7 for value in costs.values()),'max_collision_costs':costs,
                 'sample_count':int(tensor.shape[0]),'mounting_contact_policy':self.policy,
+                'mesh_sdf_query':self.mesh_sdf_query,
                 'trajectory_continuous_collision_checked':False}

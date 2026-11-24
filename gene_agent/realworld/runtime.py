@@ -289,7 +289,7 @@ class RealWorldRuntime:
         planned_start, planned_start_width_m: float,
         max_width_error_m: float, planned_scene_snapshot_sha256: str,
         execute: bool = False, command_mode: str = "position",
-        grasp_force: float = 0.5,
+        grasp_force: float = 0.5, grasp_settle_time_s: float = 1.5,
     ) -> dict:
         """使用真机实测关节和夹爪开口核对米制命令。
 
@@ -298,6 +298,9 @@ class RealWorldRuntime:
         分别沿用旧版 RealMan 的力控抓取与松爪 SDK 语义。这里只记录
         指令和读数，真实夹持/放置仍由 Task 后置检查判定；预览不发令。
         """
+        settle = float(grasp_settle_time_s)
+        if not math.isfinite(settle) or settle < 0:
+            raise ValueError("闭爪稳定等待时间必须是非负有限秒数")
         if not math.isfinite(max_width_error_m) or max_width_error_m <= 0:
             raise ValueError("夹爪起点误差阈值必须为正有限米数")
         if command_mode not in {"position", "grasp", "release"}:
@@ -349,6 +352,8 @@ class RealWorldRuntime:
             "measured_start_width_m": measured_width,
             "measured_end_width_m": None,
             "measured_joint_start": measured_joints.to_dict(),
+            "grasp_settle_time_s": settle if command_mode == "grasp" else 0.0,
+            "grasp_settle_completed": False,
             "claim": "只核对夹爪指令与真机起点；未执行运动",
         }
         if not execute:
@@ -369,11 +374,19 @@ class RealWorldRuntime:
                 return self._failed(stage, "start_state_mismatch", "发令前机械臂起点变化")
             if command_mode == "grasp":
                 self.gripper.grasp(force=force)
+                # 连续力控命令返回后仍可能继续闭合。沿用 AffordToolAct
+                # 的1.5秒稳定期，再冻结实测终态，避免正常闭合被下一帧
+                # handoff 判成开口突变；不能将规划闭合宽度当力控到位值。
+                if settle:
+                    time.sleep(settle)
+                record["grasp_settle_completed"] = True
             elif command_mode == "release":
                 self.gripper.release()
             else:
                 self.gripper.command_width_m(target)
             measured_end_width = float(self.gripper.read_width_m())
+            if not math.isfinite(measured_end_width) or not 0 <= measured_end_width <= maximum:
+                raise ValueError("夹爪实测终点开口无效")
         except Exception as error:
             failure = self._failed(stage, "gripper_execution_failed",
                                    f"夹爪执行或终点读取失败：{type(error).__name__}: {error}")

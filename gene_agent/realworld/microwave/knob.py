@@ -55,7 +55,7 @@ def _check(
 
 def _wait_handoff_error(
     previous: dict, current: dict, *, max_joint_error_rad: float,
-    max_width_error_m: float,
+    max_width_error_m: float, allow_gripper_motion: bool = False,
 ) -> str | None:
     old, new = previous["provenance"], current["provenance"]
     if (int(new["source_frame_number"]) <= int(old["source_frame_number"])
@@ -67,8 +67,11 @@ def _wait_handoff_error(
     if max(abs(a - b) for a, b in zip(before.positions_rad, after.positions_rad)) > max_joint_error_rad:
         return "等待时机械臂关节意外变化"
     group = previous["snapshot"]["active_group"]
-    if abs(float(old["gripper_widths_m"][group])
-           - float(new["gripper_widths_m"][group])) > max_width_error_m:
+    old_width = float(old["gripper_widths_m"][group])
+    new_width = float(new["gripper_widths_m"][group])
+    if not math.isfinite(old_width) or not math.isfinite(new_width):
+        return "等待时夹爪开口读数无效"
+    if not allow_gripper_motion and abs(old_width - new_width) > max_width_error_m:
         return "等待时夹爪开口意外变化"
     return None
 
@@ -133,10 +136,11 @@ def run_observed_knob_skill(
         group = scene["snapshot"]["active_group"]
         open_width = initial["settings"].open_width_m
         selection = None
+        grasp_settled_s = 0.0
         observed = _operation_state(scene)
 
         def perform(name):
-            nonlocal scene, selection, observed
+            nonlocal scene, selection, observed, grasp_settled_s
             if name == 'open':
                 runtime = make_runtime(scene["snapshot"]["snapshot_sha256"])
                 if execute:
@@ -248,17 +252,22 @@ def run_observed_knob_skill(
                 return stop("knob_start_angle_changed", "当前旋钮角与阶段起点不一致")
             if stage_target.action == "wait":
                 observed = _command_end_state({}, name)
-                time.sleep(stage_target.settle_time_s)
+                remaining = max(0., stage_target.settle_time_s -
+                                (grasp_settled_s if name == "grasp_settle" else 0.))
+                if remaining:
+                    time.sleep(remaining)
                 next_scene = observe_collision_scene()
                 observed = _operation_state(next_scene)
                 row["execution"] = {
                     "source_format": "realworld_wait_stage", "status": "executed",
-                    "duration_s": stage_target.settle_time_s,
+                    "duration_s": remaining,
+                    "settled_in_close_s": grasp_settled_s if name == "grasp_settle" else 0.,
                     "claim": "只等待并重新读取现场状态；不声明接触成功",
                 }
                 handoff = _wait_handoff_error(
                     scene, next_scene, max_joint_error_rad=max_start_error_rad,
                     max_width_error_m=max_gripper_width_error_m,
+                    allow_gripper_motion=(name == "grasp_settle" and remaining > 0.),
                 )
             elif stage_target.action.startswith("gripper_"):
                 runtime = make_runtime(scene["snapshot"]["snapshot_sha256"])
@@ -273,13 +282,18 @@ def run_observed_knob_skill(
                     max_width_error_m=max_gripper_width_error_m,
                     planned_scene_snapshot_sha256=scene["snapshot"]["snapshot_sha256"],
                     execute=True,
-                    **({"command_mode": "grasp", "grasp_force": force}
+                    **({"command_mode": "grasp", "grasp_force": force,
+                        "grasp_settle_time_s": next(
+                            (target.settle_time_s for target in selection["targets"]
+                             if target.name == "grasp_settle"), 1.5)}
                        if stage_target.action == "gripper_grasp" else
                        {"command_mode": "release"}
                        if stage_target.action == "gripper_release" else {}),
                 )
                 observed = _command_end_state(execution, name)
                 row["execution"] = execution
+                if stage_target.action == "gripper_grasp" and execution.get("grasp_settle_completed"):
+                    grasp_settled_s = float(execution.get("grasp_settle_time_s", 0.))
                 if not execution.get("success"):
                     row["status"] = "failed"
                     failure = execution.get("failure") or {}

@@ -98,6 +98,8 @@ def execution_handoff_error(
         group = current["snapshot"]["active_group"]
         old_width = float(old["gripper_widths_m"][group])
         new_width = float(new["gripper_widths_m"][group])
+        if not math.isfinite(old_width) or not math.isfinite(new_width):
+            return "运动阶段夹爪开口读数无效"
         if abs(old_width - new_width) > max_width_error_m:
             return "运动阶段夹爪开口意外变化"
         return None

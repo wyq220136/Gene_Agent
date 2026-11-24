@@ -87,6 +87,13 @@ session默认CUDA Graph、容量4的pool，正常/异常退出均释放，精确
 批次/重试之间不要随意重置。`collision_policy`声明预期接触，不代表任意允许表
 都已支持；实际接触配置需要对应快照及应用/执行后检，后端仍拒绝不支持的策略。
 
+旧版 cuRobo 的四参数 mesh SDF 可能把查询未命中的短范围当作真实距离，
+使远处的大碰撞球与小网格误报穿透。planner 和独立 mounting 复核会在
+创建 solver/CUDA Graph 前自动应用 [网格查询兼容](curobo/mesh_sdf.py)：
+旧 API 查询真实最近表面，新五参数 API 保持原实现。静态与 swept 核同步
+修正，不改变网格、碰撞球、安装例外或启用对象；结果的 `mesh_sdf_query`
+记录实际模式与 cuRobo 来源。回归见 `tests/motion/test_curobo_mesh_sdf.py`。
+
 ## 3. 保存结果，交给执行器
 
 ```python

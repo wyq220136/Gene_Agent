@@ -225,3 +225,35 @@ def test_extract_command_exception_preserves_traceback_and_reobserves_end(tmp_pa
     assert result['shared_flow']['end_state']['source'] == 'realworld_observation'
     assert result['shared_flow']['end_state']['values']['gripper_widths_m']['right'] == .025
     assert 'partial extract command' in result['first_failure']['traceback']
+
+
+@pytest.mark.parametrize("settled_in_runtime", [False, True])
+def test_force_grasp_normal_closing_is_not_an_unexpected_state_change(
+        tmp_path, monkeypatch, settled_in_runtime):
+    """旧闭爪40mm瞬态→稳定24mm；实际夹持检查在新帧通过后才撤离。"""
+    original_runtime = _Runtime
+    original_kwargs = _kwargs
+    waits=[]
+    class ClosingRuntime(original_runtime):
+        def run_gripper_stage(self, name, **kwargs):
+            result=super().run_gripper_stage(name,**kwargs)
+            if name=="close":
+                assert kwargs["grasp_settle_time_s"]==.25
+                result["measured_end_width_m"] = .024 if settled_in_runtime else .040
+                if settled_in_runtime:
+                    result.update(grasp_settle_time_s=.25,grasp_settle_completed=True)
+            return result
+    def options(tmp, observe, runtime, execute):
+        def current():
+            scene=observe(); frame=scene["provenance"]["source_frame_number"]
+            if frame>=25:
+                scene["provenance"]["gripper_widths_m"]["right"]=(
+                    .040 if frame==25 and not settled_in_runtime else .024)
+            return scene
+        return {**original_kwargs(tmp,current,runtime,execute),"grasp_settle_time_s":.25}
+    monkeypatch.setitem(globals(),"_Runtime",ClosingRuntime)
+    monkeypatch.setitem(globals(),"_kwargs",options)
+    monkeypatch.setattr(module.time,"sleep",lambda seconds:waits.append(seconds))
+    test_extract_execute_reobserves_each_stage_and_checks_hold(
+        tmp_path,monkeypatch,None,True)
+    assert waits==([] if settled_in_runtime else [.25])

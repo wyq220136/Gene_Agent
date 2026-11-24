@@ -130,9 +130,10 @@ def _settings(tmp_path, scenes, *, execute, calls):
     (0.02, None, False),
     (0.0, 9, False),
 ])
+@pytest.mark.parametrize("settled_in_close", [False, True])
 def test_knob_skill_executes_same_stages_and_requires_observed_rotation(
     tmp_path, monkeypatch, final_microwave_shift_m, rotation_evidence_frame,
-    expected_success,
+    expected_success, settled_in_close,
 ):
     calls = []
     stages = _setup(monkeypatch, calls)
@@ -153,6 +154,21 @@ def test_knob_skill_executes_same_stages_and_requires_observed_rotation(
         "Microwave/Microwave_0"
     ][0][3] = final_microwave_shift_m
     settings = _settings(tmp_path, scenes, execute=True, calls=calls)
+    if settled_in_close:
+        factory = settings["make_runtime"]
+        def settled_runtime(scene_hash):
+            runtime = factory(scene_hash)
+            gripper_stage = runtime.run_gripper_stage
+            def run_gripper(stage, **kwargs):
+                record = gripper_stage(stage, **kwargs)
+                if stage == "close":
+                    assert kwargs["grasp_settle_time_s"] == .01
+                    calls.append(("settle_in_close", .01))
+                    record.update(grasp_settle_time_s=.01, grasp_settle_completed=True)
+                return record
+            runtime.run_gripper_stage = run_gripper
+            return runtime
+        settings["make_runtime"] = settled_runtime
     if rotation_evidence_frame is not None:
         settings["check_rotation"] = lambda _scene: CheckResult(
             "pass", "vision", {"source_frame_number": rotation_evidence_frame},
@@ -173,7 +189,8 @@ def test_knob_skill_executes_same_stages_and_requires_observed_rotation(
     assert calls == [
         "execute_open", "select", "plan_pregrasp", "execute_pregrasp",
         "plan_approach", "execute_approach", "execute_close",
-        ("wait", .01), "plan_rotate_06", "execute_rotate_06",
+        (("settle_in_close", .01) if settled_in_close else ("wait", .01)),
+        "plan_rotate_06", "execute_rotate_06",
         "execute_release", ("wait", .01), "plan_retreat", "execute_retreat",
     ]
     assert scenes == []
