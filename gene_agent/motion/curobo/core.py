@@ -1204,7 +1204,29 @@ class SynchronousPlanner:
             if self._validator else nullcontext()
         )
         with mask_context:
-            valid = self._collision_checker.validate(values)
+            # 部分 cuRobo 版本的 validate 内部仍把 spheres Tensor 交给
+            # 已改为接收 KinematicsState 的 SceneCollisionCost.forward。
+            # 在适配边界显式传完整 FK state，保留 validate 原有的三项判据；
+            # 不能捕获 AttributeError 后跳过碰撞，也不能把 state 传给 validate。
+            checker = self._collision_checker
+            batch, horizon = values.shape[:2]
+            checker.setup_batch_tensors(batch, horizon)
+            state = checker.get_kinematics(values)
+            costs = [checker.get_bound(values).sum(dim=-1, keepdim=True)]
+            if checker.self_collision_cost is not None:
+                costs.append(checker.get_self_collision(state.robot_spheres).sum(
+                    dim=-1, keepdim=True,
+                ))
+            constraint = checker.collision_constraint
+            if constraint is not None:
+                # 旧版 setup_batch_tensors 也没有同步实际球数，必须先更新
+                # num_spheres 再分配本批次 buffer，动态夹爪/attachment 同理。
+                constraint.config.update_num_spheres(state.robot_spheres.shape[2])
+                constraint.setup_batch_tensors(batch, horizon)
+                costs.append(constraint.forward(state, idxs_env_query=None).sum(
+                    dim=-1, keepdim=True,
+                ))
+            valid = self.torch.cat(costs, dim=-1).sum(dim=-1) == 0.0
         return [bool(value) for value in valid.detach().cpu().reshape(-1).tolist()]
 
     def validate_joint_trajectory(self, joint_names, positions) -> dict:

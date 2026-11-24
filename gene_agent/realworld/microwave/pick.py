@@ -6,6 +6,7 @@ import json
 import math
 import time
 import traceback
+from collections import Counter
 from pathlib import Path
 from typing import Callable
 
@@ -65,6 +66,37 @@ def _run_observed_pick_flow(report, *, observe, perform, execute, **options):
     return flow
 
 
+def _grasp_selection_failure(selection: dict) -> dict:
+    """把候选的底层失败带到真机结果，混合原因保留计数而非一概称为 IK 无解。"""
+    attempts = selection.get("plan", {}).get("attempts", ())
+    failed = [row for row in attempts
+              if row.get("result", {}).get("failure")]
+    counts = Counter(
+        (row.get("stage"), row["result"]["failure"].get("kind"),
+         row["result"]["failure"].get("backend_status"),
+         row["result"]["failure"].get("summary"))
+        for row in failed
+    )
+    reasons = [{"stage": stage, "kind": kind, "backend_status": status,
+                "summary": summary, "count": count}
+               for (stage, kind, status, summary), count in counts.items()]
+    message = "原 PickSkill 没有生成完整的抓取前缀"
+    if reasons:
+        message += "；" + "；".join(
+            f"{row['stage']}: {row['summary']}（{row['count']} 次）" for row in reasons
+        )
+    failure = {"code": "grasp_selection_failed", "message": message,
+               "attempt_count": len(attempts), "failure_counts": reasons}
+    if failed:
+        first = failed[0]
+        failure["first_failed_attempt"] = {
+            "candidate_id": first.get("candidate_id"), "stage": first.get("stage"),
+            "request_id": first.get("request", {}).get("request_id"),
+            "failure": first["result"]["failure"],
+        }
+    return failure
+
+
 
 def run_observed_bowl_grasp(
     *, observe_collision_scene: Callable[[], dict],
@@ -115,10 +147,7 @@ def run_observed_bowl_grasp(
         report["selection_ref"] = str(output / "selection/selection.json")
         report["selected_candidate_id"] = selection.get("selected_candidate_id")
         if not selection.get("grasp_prefix_planned"):
-            report.update(status="failed", first_failure={
-                "code": "grasp_selection_failed",
-                "message": "原 PickSkill 没有生成完整的抓取前缀",
-            })
+            report.update(status="failed", first_failure=_grasp_selection_failure(selection))
             return save()
         plan_rows = {row["name"]: row for row in selection["plan"]["stages"]}
         observed = _operation_state(scene)

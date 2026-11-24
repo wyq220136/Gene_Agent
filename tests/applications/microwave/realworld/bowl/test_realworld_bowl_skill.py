@@ -47,6 +47,47 @@ def _install_selection(monkeypatch):
                         lambda *_args, **_kwargs: _selection())
 
 
+def test_selection_backend_error_reaches_grasp_result_without_execution(tmp_path, monkeypatch):
+    failure = {"kind": "backend_error", "backend_status": "AttributeError",
+               "summary": "'Tensor' object has no attribute 'robot_spheres'",
+               "details": {"failure_category": "backend_exception", "raw_error": "traceback"}}
+    selection = {"grasp_prefix_planned": False, "selected_candidate_id": None,
+                 "plan": {"attempts": [
+                     {"candidate_id": f"bowl_{index}", "stage": "final_grasp_ik",
+                      "request": {"request_id": f"bowl_{index}:final_ik"},
+                      "result": {"success": False, "failure": failure}}
+                     for index in range(160)
+                 ]}}
+    monkeypatch.setattr(bowl_skill, "plan_observed_bowl_grasp_stages",
+                        lambda *_args, **_kwargs: selection)
+    def no_runtime(*args):
+        raise AssertionError("候选筛选失败时不能创建执行器")
+    report = bowl_skill.run_observed_bowl_grasp(**_options(
+        tmp_path, lambda: _scene("initial", 1), no_runtime, execute=False))
+    result = report["first_failure"]
+    assert result["code"] == "grasp_selection_failed"
+    assert "robot_spheres" in result["message"]
+    assert result["attempt_count"] == result["failure_counts"][0]["count"] == 160
+    assert result["first_failed_attempt"]["failure"] == failure
+    assert result["first_failed_attempt"]["request_id"] == "bowl_0:final_ik"
+    assert report["stages"] == [] and report["grasp_success"] is False
+
+
+def test_selection_mixed_failures_keep_distinct_stage_reason_counts():
+    attempts = [
+        {"stage": "final_grasp_ik", "result": {"success": True, "failure": None}},
+        {"stage": "final_grasp_ik", "result": {"failure": {
+            "kind": "ik_no_solution", "summary": "未收敛"}}},
+        {"stage": "pregrasp", "result": {"failure": {
+            "kind": "path_not_found", "summary": "没有轨迹"}}},
+    ]
+    result = bowl_skill._grasp_selection_failure({"plan": {"attempts": attempts}})
+    assert result["attempt_count"] == 3
+    assert [row["count"] for row in result["failure_counts"]] == [1, 1]
+    assert [row["stage"] for row in result["failure_counts"]] == ["final_grasp_ik", "pregrasp"]
+    assert bowl_skill._grasp_selection_failure({})["failure_counts"] == []
+
+
 def test_runtime_exception_does_not_report_precommand_state_as_terminal(tmp_path, monkeypatch):
     _install_selection(monkeypatch)
     class Runtime:

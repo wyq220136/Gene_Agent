@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "site_config_path": "/home/ubuntu/yuquanwang/Gene_Agent/runs/realworld/perception_20261124-145443/perception_setup.json",
+  "site_config_sha256": "3c7fe57c9a31d91ac0c2c3aa6f5473ff0835e38dbd0ce658105a3aedac829e9f",
+  "subtask": "pick_bowl",
+  "execute": false,
+  "plan_only": false,
+  "include_knob": false,
+  "prepare_held_bowl": false,
+  "active_group": "right",
+  "robot_ports": {
+    "left": 8080,
+    "right": 8080
+  },
+  "gripper_config": "/home/ubuntu/yuquanwang/Gene_Agent/config/robots/standard_gripper.json",
+  "gripper_config_sha256": "2470fd9877c956a50b9482218c3b89b0b8fd8746a55e15b012ed89f208be05b5",
+  "motion": {
+    "collision_mode": "full"
+  },
+  "camera_serial": "323522063015",
+  "pose_sessions": {
+    "Bowl/Bowl_0": "Bowl/Bowl_0-06470b18ae08",
+    "Microwave/Microwave_0": "Microwave/Microwave_0-06470b18ae08"
+  },
+  "runtime": {
+    "max_start_error_rad": 0.02,
+    "min_tcp_z_m": -0.016174170672893524,
+    "motion_speed_scale": 0.1,
+    "max_tcp_speed_mps": 0.1,
+    "canfd_frequency_hz": 100.0
+  },
+  "scene_drift_limits": {
+    "max_object_translation_m": 0.005,
+    "max_object_rotation_rad": 0.15,
+    "max_robot_joint_error_rad": 0.02,
+    "max_gripper_width_error_m": 0.005,
+    "max_articulated_angle_error_rad": 0.05
+  },
+  "input_mode": "automatic_perception",
+  "angle_source": "same_frame_foundationpose",
+  "subtask_options": {
+    "door": {
+      "max_start_error_rad": 0.02,
+      "max_gripper_width_error_m": 0.005,
+      "max_microwave_translation_m": 0.005,
+      "max_microwave_rotation_rad": 0.15,
+      "max_door_angle_error_rad": 0.05,
+      "config_path": "/home/ubuntu/yuquanwang/Gene_Agent/data/task_1/skills/door_skill_debug.json"
+    },
+    "pick": {
+      "max_start_error_rad": 0.02,
+      "max_gripper_width_error_m": 0.005,
+      "max_bowl_translation_m": 0.005,
+      "max_bowl_rotation_rad": 0.15
+    },
+    "insert": {
+      "max_start_error_rad": 0.02,
+      "max_gripper_width_error_m": 0.005,
+      "max_microwave_translation_m": 0.005,
+      "max_microwave_rotation_rad": 0.15,
+      "max_hold_translation_m": 0.005,
+      "max_hold_rotation_rad": 0.15,
+      "microwave_frame_alignment": {
+        "accepted_for_planning": true,
+        "source": "/home/ubuntu/yuquanwang/Gene_Agent/runs/realworld/perception_20261124-145443/perception_setup.json:paired_asset_frames",
+        "T_scene_asset_profile": [
+          [
+            -0.9999508990610008,
+            -0.005320624085619449,
+            -0.008359393032584537,
+            0.11784764210723998
+          ],
+          [
+            -0.008294852721958363,
+            -0.012036534290442017,
+            0.9998931230237001,
+            -0.1559468023194728
+          ],
+          [
+            -0.005420666466797294,
+            0.9999133780889576,
+            0.011991804714327307,
+            0.10822200400296994
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "extract": {
+      "max_start_error_rad": 0.02,
+      "max_gripper_width_error_m": 0.005,
+      "max_microwave_translation_m": 0.005,
+      "max_microwave_rotation_rad": 0.15,
+      "max_hold_translation_m": 0.005,
+      "max_hold_rotation_rad": 0.15,
+      "max_bowl_translation_m": 0.005,
+      "max_bowl_rotation_rad": 0.15,
+      "microwave_frame_alignment": {
+        "accepted_for_planning": true,
+        "source": "/home/ubuntu/yuquanwang/Gene_Agent/runs/realworld/perception_20261124-145443/perception_setup.json:paired_asset_frames",
+        "T_scene_asset_profile": [
+          [
+            -0.9999508990610008,
+            -0.005320624085619449,
+            -0.008359393032584537,
+            0.11784764210723998
+          ],
+          [
+            -0.008294852721958363,
+            -0.012036534290442017,
+            0.9998931230237001,
+            -0.1559468023194728
+          ],
+          [
+            -0.005420666466797294,
+            0.9999133780889576,
+            0.011991804714327307,
+            0.10822200400296994
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "table": {
+      "max_start_error_rad": 0.02,
+      "max_gripper_width_error_m": 0.005,
+      "max_hold_translation_m": 0.005,
+      "max_hold_rotation_rad": 0.15,
+      "max_bowl_translation_m": 0.005,
+      "max_bowl_rotation_rad": 0.15,
+      "max_table_height_delta_m": 0.005,
+      "max_table_translation_m": 0.005,
+      "max_table_rotation_rad": 0.15,
+      "table_height_alignment": {
+        "accepted_for_planning": true,
+        "source": "/home/ubuntu/yuquanwang/Gene_Agent/runs/realworld/perception_20261124-145443/perception_setup.json:confirmed_rgbd_table",
+        "height_bias_m": 0.0
+      }
+    }
+  },
+  "claim": "仅记录输入来源；设备连接、规划和实际执行需另看阶段报告"
+}

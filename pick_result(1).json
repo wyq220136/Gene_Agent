@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "subtask": "pick_bowl",
+  "execute": false,
+  "status": "failed",
+  "pick_success": false,
+  "first_failure": {
+    "code": "grasp_selection_failed",
+    "message": "原 PickSkill 没有生成完整的抓取前缀"
+  },
+  "claim": "抓取和直线抬升逐段实测；规划附着本身不是物理成功",
+  "grasp": {
+    "schema_version": 1,
+    "skill_id": "grasp_bowl",
+    "execute": false,
+    "status": "failed",
+    "grasp_success": false,
+    "stages": [],
+    "first_failure": {
+      "code": "grasp_selection_failed",
+      "message": "原 PickSkill 没有生成完整的抓取前缀"
+    },
+    "claim": "只验证现场抓取与夹持；未规划或执行 lift/hold",
+    "selection_ref": "/home/ubuntu/yuquanwang/Gene_Agent/runs/realworld/task1_plan_20261124_155224/grasp/selection/selection.json",
+    "selected_candidate_id": null
+  },
+  "grasp_result_ref": "/home/ubuntu/yuquanwang/Gene_Agent/runs/realworld/task1_plan_20261124_155224/grasp/grasp_result.json"
+}
