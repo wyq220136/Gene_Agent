@@ -43,6 +43,15 @@ def observed_bowl_candidates(collision_scene, bowl_pose_world, *, pose_source):
     if (not np.isfinite(thickness) or thickness <= 0 or clearance.shape != (2,)
             or not np.isfinite(clearance).all() or not 0 <= clearance[0] <= clearance[1]):
         raise ValueError("真机 Bowl 桌面厚度/净空配置无效")
+    from .bowl_pose_check import check_bowl_pose_table, BowlPoseTableError
+    try:
+        pose_consistency = check_bowl_pose_table(sdk_bowl, sdk_table, thickness)
+    except BowlPoseTableError as error:
+        error.diagnostics.update(source_frame_number=provenance.get("source_frame_number"),
+            source_timestamp_ms=provenance.get("source_timestamp_ms"),
+            collision_snapshot_sha256=collision_scene["snapshot"].get("snapshot_sha256"),
+            source_paths=provenance.get("source_paths", {}))
+        raise
     table_height = float((sdk_table @ np.array([0., 0., thickness / 2., 1.]))[2])
     depths = np.asarray(profile["depths_m"], dtype=float)
     if depths.ndim != 1 or not len(depths) or not np.isfinite(depths).all():
@@ -88,6 +97,7 @@ def observed_bowl_candidates(collision_scene, bowl_pose_world, *, pose_source):
                             "T_world_tcp": world_tcp.tolist(),
                             "table_clamp_delta_sdk_z_m": float(target[2, 3] - original[2, 3])})
     return tuple(candidates), {
+        "pose_table_consistency": pose_consistency,
         "source": profile["source"], "profile_path": str(PROFILE_PATH),
         "profile_sha256": hashlib.sha256(raw).hexdigest(),
         "depths_m": depths.tolist(), **parameters, "parameter_frame": "right_sdk_base",

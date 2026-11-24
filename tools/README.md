@@ -96,3 +96,5 @@ PYTHONUTF8=1 PYTHONPATH=. /home/ubuntu/miniconda3/envs/curobo/bin/python \
 回放复用 `viewers/view_skill_run.py --mode planned`，细节见[现场入口](../docs/user/microwave/realworld_microwave_entry.md)。
 
 真机失败日志：`python tools/diagnostics/inspect_realworld_run.py --run <run> --details`；冻结现场导入/重跑：`python tools/diagnostics/replay_realworld_scene.py --bundle <run>/initial_scene`。完整用法见 [真机入口](../docs/user/microwave/realworld_microwave_entry.md#真机失败定位和现场重放)。
+
+标定/桌面可视化：`python tools/diagnostics/view_realworld_alignment.py --run <OUT> --output <新目录>`；RGB 框选桌面并用 `--table-roi` 独立拟合，`--anchor` 核对独立 SDK 参考点。见 [真机流程 5.1](../docs/user/microwave/realworld_task1_operation_guide.md#51-可视化区分标定位姿和桌面问题)。

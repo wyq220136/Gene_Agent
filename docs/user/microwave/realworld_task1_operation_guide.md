@@ -146,6 +146,93 @@ prompt 按实际外观调整。非默认地址用 `--camera-endpoint`、`--seg-s
 改变标定、资产或准备输入后，需以新目录重新准备。
 切换到本流程时，按上述命令在新目录重新准备。旧桌面分割流程的记录因桌面来源已改变，需重新生成；不要手改记录或继续使用失败目录。
 
+## 5.1 可视化区分标定、位姿和桌面问题
+
+本检查只读取保存的真实 RGB-D、原始 pose 和配置，不连接机器人/相机/Pose 服务，
+不调用 cuRobo，不启动仿真，也不修改任何标定、桌面或运行记录。
+在运行真机命令的同一仓库根目录执行；本次修改位于远程 `/data1/yuquan/Gene_agent`。
+沿用已有 `$PY`，需有 `numpy`、`Pillow`、`trimesh`、`plotly`；缺 Plotly 时可在显示用解释器安装，勿替换规划环境。
+
+先使用最新运行的 `$OUT`，生成自包含交互 HTML：
+
+```bash
+CHECK=runs/diagnostics/realworld_alignment_$(date +%Y%m%d-%H%M%S)
+"$PY" "$PWD/tools/diagnostics/view_realworld_alignment.py" \
+  --run "$OUT" --output "$CHECK/overview"
+```
+
+`--run` 也可直接指向已搬迁的 `initial_scene/`。它使用第一帧 RGB-D 和原始 camera pose，
+不混用 `PERCEPTION` 的旧参考帧。若原始帧、mesh 或 pose 缺失，会明确拒绝，而不找其他帧替代。
+也可检查准备记录，或新版输入一致性检查拒绝的准备目录：
+
+```bash
+"$PY" "$PWD/tools/diagnostics/view_realworld_alignment.py" \
+  --perception "$PERCEPTION" --camera-params "$CAMERA_PARAMS" \
+  --output "$CHECK/preparation"
+```
+
+准备成功时直接读取 setup 的标定；准备失败时使用所给原标定文件及保存的原始注册返回。
+旧准备记录未保存原始 camera pose 时只能由 SDK pose 反算，报告会标明它不能独立排除转换错误。
+这时优先检查 `--run` 中的原始 tracking pose，或使用新目录重新准备。
+
+打开生成的 `alignment.html`（浏览器可直接打开，无需联网），按以下顺序看：
+
+1. **RGB 图**：青色 mesh/碗沿是否贴着实物，黄色箭头是否指向真实碗口。橙色为配置桌面顶面在图像上的投影。悬停可读 `u,v` 像素。
+2. 点击图中工具栏的矩形绘制图标，在 RGB 中框选一块**干净、可见的桌面上表面**，排除碗、柜体、桌沿和背景。页面底部显示 `--table-roi U0 V0 U1 V1`；复制该参数加到原命令，换新输出目录。例如以下像素仅展示格式，必须替换为你框选的结果：
+
+```bash
+"$PY" "$PWD/tools/diagnostics/view_realworld_alignment.py" \
+  --run "$OUT" --table-roi 120 360 480 650 --output "$CHECK/table_roi"
+```
+
+3. 重新打开 `table_roi/alignment.html`。绿色是 ROI 在**原相机坐标**独立拟合的平面，不使用外参或 SDK 水平假设；橙色是当前配置桌面。下方两张 3D 图可旋转/缩放，并用图例隐藏遮挡图层。
+4. 绿色法向箭头朝向相机，选择的必须是桌面上表面。橙色箭头是配置顶面 +Z；同时比较法向和高度，不能只看两张平面是否平行。
+
+`alignment.json` 给出相机坐标下的碗沿到实测平面的有符号距离、碗口与该平面的朝向、
+实测平面在 SDK 中的法向、配置/实测法向夹角和高度差、输入帧号及来源。
+`configured_normal_angle_deg` 是不区分正反的平面夹角；
+`configured_top_normal_alignment` 接近 -1 则表示配置顶面方向与实测上表面相反。
+**SDK +Z 不一定是真实竖直方向；输入一致性报错也不等于已经证明实物倒扣。**
+
+仅靠碗和桌面不能唯一判定外参正确。进一步用同帧可见、已有独立 SDK 测量记录的固定标记验证标定：
+重复添加 `--anchor u v sdk_x sdk_y sdk_z`，后 3 项为右臂 SDK base 中的米。
+至少使用 3 个不共线且分散在工作区域的点，不用正在怀疑的碗 pose 或桌面配置当真值。
+以下仅为参数格式示例，数值必须替换成真实标记像素和独立测量值：
+
+```bash
+"$PY" "$PWD/tools/diagnostics/view_realworld_alignment.py" \
+  --run "$OUT" --table-roi 120 360 480 650 \
+  --anchor 320 400 0.10 0.20 0.00 \
+  --anchor 500 400 0.20 0.20 0.00 \
+  --anchor 320 550 0.10 0.30 0.00 \
+  --output "$CHECK/with_references"
+```
+
+SDK 图中的紫色线是参考点残差；JSON 保存逐点残差，单位米，不自动设定合格阈值。
+参考点必须来自当前冻结画面，不能拿另一次移动后的 TCP 位置配旧图。
+
+| 观察结果 | 优先排查 |
+|---|---|
+| 原相机图中 mesh 就与实物不贴合 | FoundationPose、注册 mesh frame、内参、深度/RGB 配准；先不改机器人外参 |
+| 独立 SDK 参考点一致，而橙/绿桌面高度、范围或方向不一致 | 桌面高度拟合、固定 XY 范围、厚度和“SDK 中水平”的设定 |
+| 多个独立 SDK 参考点存在明显且一致的残差 | 外参方向/左右臂 SDK 选择、单位、坐标变换链及 RGB-D 配准 |
+| 原相机中的碗沿与实测平面也矛盾 | 感知 pose、mesh/Concept 或 ROI 选择；全局外参不能改变它们的真实相对几何 |
+| 没有独立 SDK 参考点 | 只能定位矛盾所在，不能仅凭图唯一宣判“标定错”或“桌面错” |
+
+远程查看可下载这个 HTML 单文件后打开；也可只在远程回环地址提供目录：
+
+```bash
+"$PY" -m http.server 8083 --bind 127.0.0.1 --directory "$CHECK"
+```
+
+在自己的电脑另开终端建立 SSH 隧道（按实际 SSH 配置/端口登录）：
+
+```bash
+ssh -N -L 8083:127.0.0.1:8083 58.220.16.98
+```
+
+然后打开 `http://127.0.0.1:8083/overview/alignment.html`，或对应的 `table_roi/` 页面。
+
 ## 6. 配置和状态来源
 
 | 参数或状态 | 来源 |

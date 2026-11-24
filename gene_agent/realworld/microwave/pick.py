@@ -310,9 +310,10 @@ def run_observed_bowl_grasp(
     except Exception as error:
         report["status"] = "failed"
         report["first_failure"] = {
-            "code": "stage_exception",
+            "code": getattr(error, "code", "stage_exception"),
             "message": f"{type(error).__name__}: {error}",
             "traceback": traceback.format_exc(),
+            **({"input_diagnostics": error.diagnostics} if hasattr(error, "diagnostics") else {}),
         }
         return save()
 

@@ -270,8 +270,21 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
                     or str(result.get("camera_id", "0")) != "0"):
                 raise ValueError(f"{name} 注册失败或 session 不一致")
             registered.append(session)
+            registration_path = folder / "registrations" / f"{name}.json"
+            registration_path.parent.mkdir(parents=True, exist_ok=True)
+            save_json(registration_path, {**result, "_capture": {
+                "frame_number": camera["frame_number"], "serial": camera["serial"]}})
             poses[name] = validate_pose(np.array(calibration["T_sdk_camera"]) @ validate_pose(result["T_camera_object"])).tolist()
             sessions[name] = session
+        # CLOSED/ACCEPT 只确认门零位和 mask，不能替代碗 pose 的几何一致性。
+        from .bowl_pose_check import check_bowl_pose_table, BowlPoseTableError
+        try:
+            consistency = check_bowl_pose_table(
+                poses[BOWL], table["table_pose_world"], table["accepted_table_thickness_m"])
+        except BowlPoseTableError as error:
+            save_json(folder / "bowl_pose_table_consistency.json", error.diagnostics)
+            raise
+        save_json(folder / "bowl_pose_table_consistency.json", consistency)
     except Exception:
         for session in registered:
             try:
