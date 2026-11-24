@@ -129,6 +129,7 @@ def build_observed_bowl_grasp_stage_snapshots(
 def plan_observed_bowl_grasp_stages(
     collision_scene: Mapping, *, output_dir: str | Path,
     profile_name: str = "pick_bowl_legacy_visual", seed: int = 123,
+    frozen_candidates=None, frozen_parameters=None, profile_path=None,
 ) -> dict:
     """现场抓碗只规划前缀，直接调用原物理探针所用 PickSkill 入口。
 
@@ -138,13 +139,18 @@ def plan_observed_bowl_grasp_stages(
     """
     started = time.perf_counter()
     output = Path(output_dir).resolve()
-    case, target = _observed_case(collision_scene, output)
+    case, target = _observed_case(collision_scene, output, generate_candidates=frozen_candidates is None)
+    if frozen_candidates is not None:
+        # 离线复现消费原生成结果，不用当前 Knowledge 参数替换历史输入。
+        case.candidates = tuple(frozen_candidates)
+        target["candidate_parameters"] = dict(frozen_parameters or {})
     if case.snapshot["active_group"] != "right":
         raise NotImplementedError("原 task_1 抓碗 Skill 规划目前只支持右臂")
     if profile_name != BOWL_AUTO_GRASP_PROFILE:
         raise ValueError("自动候选筛选目前只支持已验证的 pick_bowl_legacy_visual profile")
-    profile_bytes = _PROFILE_PATH.read_bytes()
-    settings = load_grasp_settings(_PROFILE_PATH, profile_name)
+    effective_profile = Path(profile_path) if profile_path is not None else _PROFILE_PATH
+    profile_bytes = effective_profile.read_bytes()
+    settings = load_grasp_settings(effective_profile, profile_name)
     settings = replace(settings, max_grasp_candidates=len(case.candidates))
     output.mkdir(parents=True, exist_ok=True)
     body, position, normal = _selection_geometry(case)
@@ -164,13 +170,24 @@ def plan_observed_bowl_grasp_stages(
         "generated_candidate_count": len(case.candidates),
     }
     evidence_path = output / "candidate_selection.json"
+    from gene_agent.feedback.realworld_diagnostics import write_candidate_inventory
+    from gene_agent.motion.recording import current_motion_recording
+    ordered_proposals = legacy_bowl_proposals(case.candidates)
+    candidate_order = [item.candidate_id for item in ordered_proposals]
+    inventory_ref = write_candidate_inventory(output, case.candidates, candidate_order=candidate_order)
+    evidence["candidate_diagnostics_ref"] = str(inventory_ref)
+    recording = current_motion_recording()
+    if recording is not None:
+        evidence["replay_selection_ref"] = recording.note_selection(
+            collision_scene, case.candidates, target["candidate_parameters"], effective_profile, seed)
     try:
         selected = plan_bowl_grasp_stages(
             case, settings, seed=seed, enforce_table_angle=False,
-            proposals=legacy_bowl_proposals(case.candidates),
+            proposals=ordered_proposals,
         )
     except Exception as error:
         evidence["failure"] = {"type": type(error).__name__, "message": str(error)}
+        write_candidate_inventory(output, case.candidates, candidate_order=candidate_order, error=evidence["failure"])
         evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2,
                                              allow_nan=False) + "\n",
                                  encoding="utf-8")
@@ -183,6 +200,8 @@ def plan_observed_bowl_grasp_stages(
             selected_proposal, object_pose_world=case.bowl_pose,
             base_position_world=position, table_normal_world=normal,
         )
+    write_candidate_inventory(output, case.candidates, selected.plan.to_dict(),
+                              candidate_order=[item.candidate_id for item in selected.proposals])
     evidence.update(
         selected_grasp_geometry=selected_geometry,
         pregrasp_joint_travel_limit_rad=settings.max_pregrasp_joint_travel_rad,

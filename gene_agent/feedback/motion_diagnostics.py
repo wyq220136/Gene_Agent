@@ -103,7 +103,7 @@ class MotionFailureSummary:
                         f"{self.best_position_error_m * 1000:.1f} mm")
             rotation = ("未知" if self.best_rotation_error_rad is None else
                         f"{self.best_rotation_error_rad * 180 / 3.141592653589793:.1f}°")
-            lines.append(f"- 所选候选误差：位置 {position}，姿态 {rotation}")
+            lines.append(f"- 后端候选误差：位置 {position}，姿态 {rotation}")
         if self.local_candidate_count is not None:
             lines.append(
                 f"- 局部旋转候选：{self.local_candidate_success_count or 0}/"
@@ -171,7 +171,8 @@ def summarize_motion_failure(
     if not obstacles and collision_evidence_source is not None:
         obstacles = tuple(str(value) for value in probe.get("blocking_obstacles") or ())
     groups = _collision_groups(obstacles, _mapping(collision_snapshot))
-    selected = _selected_seed(ik)
+    # 批量 IK 只有 solver_diagnostic 的返回候选，也要显示其真实数值。
+    selected = _selected_seed(ik) or solver
     attempts = _mapping(result.get("target_selection_attempts"))
     scene_collision = _optional_bool(collision.get("scene_collision"))
     self_collision = _optional_bool(collision.get("self_collision"))
@@ -403,6 +404,8 @@ def save_motion_diagnostic(root, event, snapshot=None):
     summary=summarize_motion_result(result,snapshot)
     # 同一状态允许多个目标候选；各自保留独立失败工件，避免旧引用被覆盖。
     identity_fields={k:event.get(k) for k in ('episode_id','stage_id','state_id')}
+    for key in ('invocation_id', 'batch_index'):
+        if key in event:identity_fields[key]=event[key]
     call_id=result.get('metrics',{}).get('planning_timing',{}).get('call_id')
     if call_id:identity_fields['call_id']=call_id
     if event.get('target_world_tcp') is not None:

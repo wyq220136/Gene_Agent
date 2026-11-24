@@ -22,7 +22,13 @@ class CuroboPlannerAdapter:
         self.planner = planner
         self.group = str(group)
         self.scene_revision = int(scene_revision)
-        self.request_output_dir = request_output_dir
+        from ..recording import current_motion_recording
+        recording = current_motion_recording()
+        self.request_output_dir = (request_output_dir if request_output_dir is not None else
+                                   recording.request_output_dir if recording else None)
+        if recording is not None and not hasattr(planner, "diagnostic_options"):
+            from .diagnostics import DiagnosticOptions
+            planner.diagnostic_options = DiagnosticOptions(**recording.options)
 
     def _record(self, requests, results, *, invocation=None):
         if self.request_output_dir is None:
@@ -36,7 +42,19 @@ class CuroboPlannerAdapter:
         except Exception as exc:
             # 记录出错不能把原成功/失败改写；缺少现场在摘要里明确保留。
             extra = dict(request_recording_error=f'{type(exc).__name__}: {exc}')
-        return tuple(replace(result,metrics={**result.metrics,**extra}) for result in results)
+        recorded = tuple(replace(result, metrics={**result.metrics, **extra}) for result in results)
+        from ..recording import current_motion_recording
+        recording = current_motion_recording()
+        if recording is not None:
+            try:
+                recording.record(requests, recorded,
+                    snapshot=getattr(self.planner, "diagnostic_snapshot", {}),
+                    replay_ref=extra.get("replay_request_ref"), invocation=invocation)
+            except Exception as exc:
+                recording.record_error("motion_recording", exc)
+                recorded = tuple(replace(result, metrics={**result.metrics,
+                    "event_recording_error": f"{type(exc).__name__}: {exc}"}) for result in recorded)
+        return recorded
 
     def fk(self, state: MotionJointState) -> np.ndarray:
         return self.planner.fk(state.joint_names, state.positions_rad)
@@ -238,7 +256,7 @@ class CuroboPlannerAdapter:
     def solve_ik(self, request: MotionRequest) -> MotionResult:
         invalid = self._validate(request, MotionOperation.IK)
         if invalid is not None:
-            return invalid
+            return self._record((request,), (invalid,))[0]
         raw = self.planner.solve_ik(
             request.start.joint_names, request.start.positions_rad, request.target.matrix,
             target_frame=request.target.frame,
@@ -278,7 +296,7 @@ class CuroboPlannerAdapter:
             return self._invalid(request, "请求 operation 必须是 plan、linear_tcp 或 pivot_tcp")
         invalid = self._validate(request, request.operation)
         if invalid is not None:
-            return invalid
+            return self._record((request,), (invalid,))[0]
         if request.operation is MotionOperation.PIVOT_TCP:
             method = getattr(self.planner, "plan_pivot_tcp", None)
             if method is None:

@@ -399,6 +399,7 @@ def plan_bowl_grasp_stages(
             **settings, **planner_scene_options(stage_snapshot),
             planner_mode=PlannerMode.CUDA_GRAPH_BENCHMARK, random_seed=seed,
         )
+        planner.diagnostic_snapshot = stage_snapshot
         return CuroboPlannerAdapter(
             planner, group="right", scene_revision=case.revision,
         )

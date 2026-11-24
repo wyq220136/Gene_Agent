@@ -213,7 +213,8 @@ def sphere_collisions(planner, q, snapshot, budget):
                     values=costs.detach().cpu().numpy().reshape(-1)
                     for idx in np.flatnonzero(values>1e-7):
                         entity=identities[int(idx)];policy=planner.mounting_contact_policy
-                        allowed=entity['link'] in policy.get('robot_links',[]) and str(name) in policy.get('obstacle_names',[])
+                        allowed=(entity['link'] in policy.get('scene_collision_ignore_links', []) or
+                                 entity['link'] in policy.get('robot_links', []) and str(name) in policy.get('obstacle_names', []))
                         hits.append(dict(kind='environment',first=entity,
                             second=dict(object_id=records.get(str(name),{}).get('body_name',str(name)),mesh_id=str(name),
                                         source=records.get(str(name),{})),value=float(values[idx]),
@@ -222,7 +223,11 @@ def sphere_collisions(planner, q, snapshot, budget):
         finally:
             for col,names,enabled in states:
                 for name,on in zip(names,enabled):col.set_enabled(name,on,0)
+    # 把真正禁止的接触放在前面，避免安装允许对占满有限的展示预算。
+    hits.sort(key=lambda pair: bool(pair.get('allowed')))
     return dict(spheres=identities,pairs=hits[:20],pair_count=len(hits),truncated=len(hits)>20,
+                forbidden_pair_count=sum(not pair.get('allowed', False) for pair in hits),
+                allowed_pair_count=sum(bool(pair.get('allowed')) for pair in hits),
                 complete=not bool(budget.skipped),scene_snapshot_sha256=planner.scene_snapshot_sha256)
 
 

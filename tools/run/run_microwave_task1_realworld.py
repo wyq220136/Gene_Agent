@@ -570,6 +570,14 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                             "include_knob": config.get("include_knob", False)}
 
     with _record_entry_errors(output, config["source_sha256"]), ExitStack() as stack:
+        from gene_agent.feedback.realworld_diagnostics import RealworldRunDiagnostics
+        diagnostics = stack.enter_context(RealworldRunDiagnostics(
+            output, perception_paths=(source.parent if setup is not None else source,
+                                      output / "observations" / "0000"),
+            options=config.get("diagnostics"),
+            metadata={"subtask": subtask, "execute": bool(execute),
+                      "plan_only": bool(plan_only), "active_group": config["active_group"],
+                      "motion": current_motion_config().to_dict()}))
         try:
             gripper_payload = json.loads(
                 Path(config["gripper_config"]).read_text(encoding="utf-8")
@@ -626,6 +634,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             microwave_root_anchor_reader=read_anchor,
             **observer_options,
         )
+        observer = diagnostics.wrap_observer(observer)
         group = config["active_group"]
         speed = config["runtime"]
 
@@ -721,6 +730,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-age-s", type=float, default=5., help="真实采集帧有效期；不刷新旧时间戳")
     parser.add_argument("--speed-scale", type=float, default=.1)
     parser.add_argument("--collision-mode", choices=("full", "robot_only"))
+    parser.add_argument("--diagnostic-mode", choices=("off", "on_failure"), default="on_failure",
+                        help="默认补充失败 FK/约束证据；off 仍保留原始请求与候选清单")
+    parser.add_argument("--diagnostic-budget-s", type=float, default=5., help="单次失败的诊断软预算，秒")
     parser.add_argument("--subtask", choices=("all", *SUBTASK_NAMES), required=True)
     parser.add_argument("--output", help="本次记录目录；省略时自动创建带时间戳的目录")
     parser.add_argument("--check-config", action="store_true", help="只检查静态配置，不连接设备")
@@ -763,6 +775,9 @@ def main(argv: list[str] | None = None) -> int:
         _required_options(kind, config["subtask_options"][kind])
     if args.collision_mode is not None:
         config['motion'] = {**config.get('motion', {}), 'collision_mode': args.collision_mode}
+    from gene_agent.motion.curobo.diagnostics import DiagnosticOptions
+    diagnostic_options = DiagnosticOptions(mode=args.diagnostic_mode, budget_s=args.diagnostic_budget_s)
+    config["diagnostics"] = asdict(diagnostic_options)
     if args.check_config:
         print("配置检查通过：已从感知/标定产物自动装配；尚未验证在线相机、Pose session 或真机")
         return 0
@@ -793,7 +808,9 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({"status": report.get("status"), "success": report.get("success"),
                       "requested_scope": report.get("requested_scope", args.subtask),
                       "task_success": report.get("task_success"),
-                      "output_dir": str(output.resolve())},
+                      "output_dir": str(output.resolve()),
+                      "failure_analysis_ref": str(output.resolve() / "failure_analysis.json"),
+                      "initial_scene_ref": str(output.resolve() / "initial_scene/manifest.json")},
                      ensure_ascii=False))
     return 0 if not video_failed and (report.get("success") is True or report.get("status") == "validated_prefix") else 2
 

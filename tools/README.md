@@ -94,3 +94,5 @@ PYTHONUTF8=1 PYTHONPATH=. /home/ubuntu/miniconda3/envs/curobo/bin/python \
 微波炉真机完整规划预览：`run/run_microwave_task1_realworld.py --subtask all --plan-only --video`；
 沿现场初态规划整条任务，输出 `task_result.json`、`plan_preview.json` 和可选 MP4。
 回放复用 `viewers/view_skill_run.py --mode planned`，细节见[现场入口](../docs/user/microwave/realworld_microwave_entry.md)。
+
+真机失败日志：`python tools/diagnostics/inspect_realworld_run.py --run <run> --details`；冻结现场导入/重跑：`python tools/diagnostics/replay_realworld_scene.py --bundle <run>/initial_scene`。完整用法见 [真机入口](../docs/user/microwave/realworld_microwave_entry.md#真机失败定位和现场重放)。

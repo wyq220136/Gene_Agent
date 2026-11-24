@@ -1981,6 +1981,7 @@ class SynchronousPlanner:
         候选时跳过其余失败姿态的逐物体碰撞查询；整批无解时保留原有的
         逐候选详细诊断。显式布尔值继续保持原有语义。
         """
+        self._failure_diagnostic_budget = None
         targets = tuple(targets)
         if not targets:
             return ()
@@ -2016,6 +2017,7 @@ class SynchronousPlanner:
                                             "start_check": start_check},
                 ) for _ in targets)
 
+            common["start_state_check"] = start_check
             goals = [self._goal(target, target_frame) for target in targets]
             goal = GoalToolPose(
                 tool_frames=goals[0].tool_frames,
@@ -2080,6 +2082,9 @@ class SynchronousPlanner:
                         feasible=np.array([feasible[index]]),
                     )
                     diagnostic = solver_failure_diagnostic(row, "ik", solver)
+                    diagnostic.update(joint_positions_rad=solutions[index].tolist(),
+                        candidate_source="backend_returned_batch_solution",
+                        optimizer_seed_count=int(solver.config.num_seeds), returned_candidate_count=1)
                     if diagnose_this_batch and (not valid[index] or not feasible[index]):
                         try:
                             diagnostic["collision_check"] = self._collision_diagnostic(

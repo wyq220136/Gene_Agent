@@ -403,6 +403,10 @@ class CuroboPlanningSession:
         lease = self._pool.acquire(settings, snapshot, planner_mode=self.planner_mode,
                                    random_seed=self.seed, collision_mode=self.collision_mode.value)
         from .diagnostics import DiagnosticOptions
+        from ..recording import current_motion_recording
+        recording = current_motion_recording()
+        if diagnostic_options is None and recording is not None:
+            diagnostic_options = recording.options
         diagnostic = DiagnosticOptions(**diagnostic_options) if diagnostic_options else DiagnosticOptions(mode="off")
         lease.planner.diagnostic_options = diagnostic
         lease.planner.diagnostic_snapshot = snapshot

@@ -105,3 +105,56 @@ MUJOCO_GL=egl "$PY" tools/viewers/recording/record_skill_run_video.py \
 直接末关节 SDK 命令，预览会报告 `unplanned_direct_joint_command` 并停在该处，
 不能把未规划路径说成完整碰撞规划通过。实际执行仍逐段读取现场、重规划和验证接触，
 不能将预览预测状态、夹持假设或历史轨迹直接作为执行证据。
+
+
+## 真机失败定位和现场重放
+
+原运行命令默认启用失败诊断，仍须给新 `$OUT`，不加 `--execute --yes` 即保持原来的只规划范围。
+可用 `--diagnostic-budget-s 5` 设置每次失败的软预算；`--diagnostic-mode off`
+只关闭补充 FK/约束诊断，原始请求、返回值、候选清单和初始场景仍保存。
+日志接线复用 `Gene_Agent_new` 仿真中的通用 Motion 诊断和冻结请求机制。
+
+- `failure_analysis.md/json`：首个异常、每条实际规划请求的分类、误差和详细证据引用。
+- `events.jsonl`、`motion_results/`、`diagnostics/`：逐请求追加；原始错误和诊断错误分开。
+- `grasp/selection/candidate_diagnostics.json/md`：全部生成/排序候选、参数和 TCP、每个 pregrasp 分支的实际结果、拒绝数值及未到达阶段。某分支失败后另一分支成功，不把整个候选误报为拒绝。
+- `motion_requests/`：完整原 batch、起点、目标、模型、夹爪、碰撞策略、seed、约束和依赖签名。
+- `initial_scene/`：自包含可移动目录，保存第一帧原感知与 RGB-D、标定/pose 来源文件、两臂 q/夹爪、桌面、代理模型、资产哈希、项目源码版本；后续候选筛选场景另存，不覆盖最初现场。`manifest.json` 的 `file_map` 对照原路径和包内资产。
+
+```bash
+# 只读分析；无需 GPU、相机、Pose 服务或 SDK。--details 显示全部请求。
+"$PY" "$PWD/tools/diagnostics/inspect_realworld_run.py" --run "$OUT" --details
+# 精确筛候选或阶段，也可 --format json 供 Agent 读取。
+"$PY" "$PWD/tools/diagnostics/inspect_realworld_run.py" --run "$OUT" --candidate real_d00_bowl_ring_03_00 --stage final_grasp_ik
+
+# 把 initial_scene 整目录拷至仿真机后，验证文件并恢复原 qpos；--render 输出静态代理图。
+"$PY" "$PWD/tools/diagnostics/replay_realworld_scene.py" \
+  --bundle "$OUT/initial_scene" --render --output "$OUT-scene-import"
+# 重跑原生成候选与原 profile，使用该次 selection 对应的现场。
+"$PY" "$PWD/tools/diagnostics/replay_realworld_scene.py" \
+  --bundle "$OUT/initial_scene" --action pick_bowl --selection 0 --output "$OUT-pick-replan"
+# 严格重跑任一冻结请求；下标对应 manifest.requests，也可给其中的文件名。
+"$PY" "$PWD/tools/diagnostics/replay_realworld_scene.py" \
+  --bundle "$OUT/initial_scene" --action request --request 0 --output "$OUT-request-replan"
+```
+
+模型与状态也可直接导入 Python：
+
+```python
+from gene_agent.realworld.scene_archive import load_scene_archive
+scene, model, data = load_scene_archive("<initial_scene>")
+# model/data 是 MuJoCo 对象；data.qpos 为原实测状态，尚未 mj_step。
+```
+
+候选重跑保留原候选、顺序、profile 和现场；代码改变时须显式 `--allow-code-change`，
+输出记录变化列表。严格请求重跑还验证 Python/cuRobo 完整源码配置签名，资产只允许
+经过验签的地址重定位，不能用该选项替换模型或依赖。`--action request` 保留整个原 batch。
+导入场景不要求启动原感知服务；它还原的是感知结果和规划代理，并未验证真实摩擦、接触或抓碗成功。
+实际仿真 `mj_step` 会产生新的物理状态，应另开实验目录，不得覆盖此冻结证据。
+
+每个失败候选记录实际返回 q、独立 FK、位置/转角误差、收敛阈值和可用约束证据。
+只返回一个最优失败解时明确记 `returned_candidate_count=1`，不冒充已保存全部 optimizer seeds。
+未生成路径会标 `not_returned`/未到达路径阶段；失败 seed 上的碰撞不等于目标位姿碰撞。
+预算不足、缺帧、感知早退和写盘异常分别记录，`initial_scene_unavailable` 不能导入成假现场。
+旧 run 的检查可提炼已有 attempts；缺失的原始图像、模型、候选参数和请求无法追补。
+
+迁移完成与验收分开：最终完整性以真机实际运行的 `failure_analysis`、候选清单、冻结请求和 `initial_scene/manifest.json` 为准。离线导入或规划对照不作为真机验收。后端误差与独立 FK 误差分别保留；二者不一致时不相互覆盖。

@@ -74,6 +74,13 @@ def prepare_plan_only_context(
         settings, snapshot, planner_mode=resolved_mode,
         random_seed=int(seed),
     )
+    # 复用 planner 时也绑定本次真实现场，不能沿用上一阶段的诊断快照。
+    from gene_agent.motion.recording import current_motion_recording
+    from gene_agent.motion.curobo.diagnostics import DiagnosticOptions
+    recording = current_motion_recording()
+    lease.planner.diagnostic_snapshot = snapshot
+    lease.planner.diagnostic_options = (DiagnosticOptions(**recording.options) if recording is not None
+                                        else DiagnosticOptions(mode="off"))
     planner = CuroboPlannerAdapter(
         lease.planner, group=group, scene_revision=scene.revision,
     )

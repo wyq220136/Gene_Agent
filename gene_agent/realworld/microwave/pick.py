@@ -69,8 +69,17 @@ def _run_observed_pick_flow(report, *, observe, perform, execute, **options):
 def _grasp_selection_failure(selection: dict) -> dict:
     """把候选的底层失败带到真机结果，混合原因保留计数而非一概称为 IK 无解。"""
     attempts = selection.get("plan", {}).get("attempts", ())
-    failed = [row for row in attempts
-              if row.get("result", {}).get("failure")]
+    failed = []
+    for row in attempts:
+        result = row.get("result") or {}
+        if result.get("failure"):
+            failed.append(row)
+        elif result.get("success") is False:
+            # 姿态行程/接触后检不是 MotionResult，但同样是候选拒绝事实。
+            failure = {"kind": result.get("reason_code", "candidate_postcheck_rejected"),
+                       "summary": result.get("reason") or result.get("reason_code") or "候选独立后检拒绝",
+                       "backend_status": "postcheck_rejected", "details": result}
+            failed.append({**row, "result": {**result, "failure": failure}})
     counts = Counter(
         (row.get("stage"), row["result"]["failure"].get("kind"),
          row["result"]["failure"].get("backend_status"),
@@ -80,6 +89,13 @@ def _grasp_selection_failure(selection: dict) -> dict:
     reasons = [{"stage": stage, "kind": kind, "backend_status": status,
                 "summary": summary, "count": count}
                for (stage, kind, status, summary), count in counts.items()]
+    for reason in reasons:
+        matching = [(index, row) for index, row in enumerate(failed)
+                    if (row.get("stage"), row["result"]["failure"].get("kind"),
+                        row["result"]["failure"].get("backend_status"), row["result"]["failure"].get("summary"))
+                    == (reason["stage"], reason["kind"], reason["backend_status"], reason["summary"])]
+        reason["candidate_ids"] = list(dict.fromkeys(row.get("candidate_id") for _, row in matching))
+        reason["candidate_count"] = len(reason["candidate_ids"])
     message = "原 PickSkill 没有生成完整的抓取前缀"
     if reasons:
         message += "；" + "；".join(
@@ -87,6 +103,21 @@ def _grasp_selection_failure(selection: dict) -> dict:
         )
     failure = {"code": "grasp_selection_failed", "message": message,
                "attempt_count": len(attempts), "failure_counts": reasons}
+    failure["candidate_diagnostics_ref"] = selection.get("candidate_diagnostics_ref")
+    failure["candidate_selection_ref"] = selection.get("candidate_selection_ref")
+    failure["failed_candidate_ids"] = list(dict.fromkeys(row.get("candidate_id") for row in failed))
+    failure["failed_candidate_count"] = len(failure["failed_candidate_ids"])
+    from gene_agent.feedback.motion_diagnostics import summarize_motion_result
+    numeric = [summarize_motion_result(row["result"]).to_dict() for row in failed if row["result"].get("backend") == "curobo"]
+    known = [row for row in numeric if row.get("best_position_error_m") is not None]
+    if known:
+        closest = min(known, key=lambda row: row["best_position_error_m"])
+        failure["smallest_recorded_position_error_m"] = closest["best_position_error_m"]
+        failure["rotation_error_at_smallest_position_rad"] = closest.get("best_rotation_error_rad")
+        failure["numeric_scope"] = "后端记录中位置误差最小的返回候选；独立 FK 见逐候选诊断，非全局最近解或路径证明"
+        rotation = closest.get("best_rotation_error_rad")
+        failure["message"] += (f"；后端返回候选的最小位置误差 {closest['best_position_error_m'] * 1000:.2f} mm"
+                               + (f"，该候选转角误差 {rotation * 180 / np.pi:.2f}°" if rotation is not None else ""))
     if failed:
         first = failed[0]
         failure["first_failed_attempt"] = {
