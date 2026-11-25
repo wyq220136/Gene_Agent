@@ -70,6 +70,14 @@ class LiveArticulationReader:
         self._last_stamp = -1.
         self._anchor = None
 
+    def canonical_observation(self, observed):
+        config = self.setup.get("microwave_pose_disambiguation")
+        if not config or MICROWAVE not in observed.object_poses_sdk:
+            return observed, {}
+        from .geometry_alignment import canonical_handle_pose
+        pose, diagnostics = canonical_handle_pose(observed.object_poses_sdk[MICROWAVE], config)
+        return replace(observed, object_poses_sdk={**observed.object_poses_sdk, MICROWAVE: pose}), diagnostics
+
     def _joint(self, name):
         joint = self.assets["joints"][name]
         T = self.root @ validate_pose(joint["T_asset_joint"])
@@ -90,6 +98,7 @@ class LiveArticulationReader:
             raise ValueError("实时测角需要本次启用对象的同一新帧，不能复用旧观测")
         if not np.allclose(observed.T_sdk_camera, self.setup["camera"]["T_sdk_camera"], atol=1e-8, rtol=0):
             raise ValueError("运行外参与感知参考不一致")
+        observed, _ = self.canonical_observation(observed)
         current = {key: validate_pose(value) for key, value in observed.object_poses_sdk.items()}
         point, axis, limits = self._joint("door")
         closed_handle = self.reference[MICROWAVE] @ self.handle_local

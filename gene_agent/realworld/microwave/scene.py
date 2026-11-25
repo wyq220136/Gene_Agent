@@ -199,7 +199,7 @@ def build_observed_collision_scene(
         # 真机使用 AffordToolAct 的薄桌面盒，必须同时更新导出几何和元数据，
         # 不能只改记录里的厚度而仍生成仿真资产的 3.5 cm 厚盒。
         table_config = {"center_xy_m": table_pose[:2, 3].tolist(), "size_xy_m": table_size.tolist(),
-                        "thickness_m": thickness, "top_z_m": float(table_pose[2, 3] + thickness / 2)}
+                        "thickness_m": thickness, "top_z_m": float(table_pose[2, 3] + table_pose[2, 2] * thickness / 2)}
 
     # 场景只用来计算已有资产的 FK 和碰撞几何；不进行 mj_step、落稳或
     # 接触模拟。物体 pose 来自同一观测帧，桌面由现场单独标定。
@@ -530,6 +530,9 @@ def make_live_microwave_observer(
         diagnostics_path = folder / "door_handle_diagnostics.json"
         try:
             if operation_perception is None:
+                canonical = getattr(angle_reader, "canonical_observation", None)
+                if canonical is not None:
+                    observed, _ = canonical(observed)
                 angles = angle_reader(observed)
             else:
                 observed, angles, scoped_anchor = operation_perception.consume(observed)

@@ -119,6 +119,30 @@ CAMERA_PARAMS="$CALIB_OUT/cam_param.json"
 向导读取 SDK TCP 并指导采样；先完成标定流程和结果检查，再进入下一步。
 已有标定时只需将 `CAMERA_PARAMS` 指向输出文件。移动或更换相机、改变分辨率后重新标定。
 
+### 4.1 本轮 Y/Z 测量符号与绕 X 半转修正版
+
+2026-11-25 根据操作者明确确认，已在 **58.220.16.98** 另存本轮修正版：
+
+```bash
+cd /data1/yuquan/Gene_agent
+PY=/data1/yuquan/miniconda3/envs/gene_agent/bin/python
+CAMERA_PARAMS="$PWD/data/calibration/runs/manual/microwave_third_view_20261125_yz_rx180/cam_param.json"
+```
+
+两项一起应用：板中 TCP 测量值 `[0,+0.17,-0.125]` 改为 `[0,-0.17,+0.125] m`；
+`R_sdk_board=diag(1,-1,-1)`。使用原 SDK TCP 实测点重算
+`t_sdk_board = p_sdk_tcp - R_sdk_board @ p_board_tcp`，再计算
+`T_sdk_camera = T_sdk_board @ T_board_camera`。
+不能直接绕 SDK 原点左乘一个无平移的半转，也不能再叠加此前仅改偏移符号时得到的平移量。
+
+修正后相机在右臂 SDK 中的位置约为 `[0.023422, 0.731217, 0.834066] m`。
+SDK TCP 锚点误差为零，`extrinsic_matrix` 与 `right_extrinsic_matrix` 同步更新，
+重新合并也保留显式板轴关系。原目录未改动；来源及几何核对在同目录 `correction_report.json`。
+仅做原冻结帧的几何检查，未执行新感知、规划或真机动作。
+
+然后按 §5 在**新目录**生成 `$PERCEPTION`，完成后按 §7 **重新定义 `COMMON` 数组**。
+已经展开的 Bash 数组不会因修改 `$PERCEPTION` 自动更新；不能继续复用旧数组或旧感知记录。
+
 ## 5. 自动准备感知
 
 将碗、微波炉和机械臂摆到本次初始位置，把门关紧；无需旋钮置零。
@@ -137,13 +161,15 @@ prompt 按实际外观调整。非默认地址用 `--camera-endpoint`、`--seg-s
 
 1. 输入 `CLOSED`，确认门关紧、柜体和相机固定，不要求旋钮零位。
 2. 程序采集同一帧 RGB-D，核对相机标定，只请求 SAM3 分割碗、把手两个目标。
-3. 程序按 AffordToolAct 的方式，在已有矩形桌面范围内从标定后的点云计算水平桌面高度；不请求桌面分割，也不做桌面 pose estimation。计算记录保存在 `table_measurement.json`，无需编辑。
+3. 程序保留 AffordToolAct 的固定矩形 XY 范围，从本帧 RGB-D 拟合桌面 3D 平面，保留倾角；桌面上法向朝向可见相机一侧，盒体厚度沿法向向下延伸。不请求桌面分割或桌面 FoundationPose。结果在 `table_measurement.json`；若法向反指 SDK −Z，报 `camera_sdk_axis_inconsistent` 并停止，先核对标定轴向，不能翻转机器人或抬高碗绕过。
 4. 打开 `masks_preview.png` 检查两个物体 mask，核对终端显示的桌面顶高、固定中心和尺寸与现场相符后输入 `ACCEPT`。若物体 mask 错误，调整 prompt；若桌面高度异常，检查深度、标定和场景位置，然后使用新目录重跑。
-5. 程序卸载 SAM3，使用已有 mesh 自动注册碗和门把手两个 FoundationPose session；不导出旋钮 mesh，不注册旋钮。
+5. 程序卸载 SAM3，使用已有 mesh 自动注册碗和门把手两个 FoundationPose session；不导出旋钮 mesh，不注册旋钮。把手 mesh 存在局部 Z 半转的等价姿态，代码先验证实际 mesh 的对称性，再按实测桌面上方向选择柜体直立分支；原始返回保存在 `registrations/`，选择依据在 `microwave_pose_disambiguation.json`，后续跟踪采用同一归一化规则。
 6. 成功后生成 `perception_setup.json`，保存感知范围、session、关门参考、桌面结果及标定和资产来源哈希，无需编辑。
 
 准备完成后保持 Pose 服务运行。运行时读取新帧；初始关门姿态只作为几何参考，不充当当前门角。
 改变标定、资产或准备输入后，需以新目录重新准备。
+新版准备记录使用 `geometry_contract_version=2`；旧记录没有真实桌面法向和把手消歧来源，真机入口会明确拒绝。
+旧日志仍可用只读 Viser 查看，不能手改版本号或覆盖原记录来继续运行。
 切换到本流程时，按上述命令在新目录重新准备。旧桌面分割流程的记录因桌面来源已改变，需重新生成；不要手改记录或继续使用失败目录。
 
 ## 5.1 可视化区分标定、位姿和桌面问题
@@ -232,6 +258,93 @@ ssh -N -L 8083:127.0.0.1:8083 58.220.16.98
 ```
 
 然后打开 `http://127.0.0.1:8083/overview/alignment.html`，或对应的 `table_roi/` 页面。
+
+## 5.2 AffordToolAct Viser：查看真机实际使用的碗、桌面和规划障碍
+
+该入口迁移 AffordToolAct `visualization/scene/viser_viewer.py` 的坐标轴和图层开关，
+通过 Gene 的同一套 visual/规划碰撞适配显示**本轮运行的冻结初始输入**。
+它从 `initial_scene` 验证 hash、恢复原模型和两臂/夹爪 qpos，仅执行静态 FK；
+不会落稳物体、重新测桌面、生成候选、规划或连接机器人。
+新运行的 `diagnostic_manifest.json.scene_viewer` 保存查看入口及参数。
+已有日志也可以直接使用，不要求重新跑真机。
+
+在 **58.220.16.98** 上启动（本次附件对应目录名为 `task1_plan_20261124_200548`）：
+
+```bash
+cd /data1/yuquan/Gene_agent
+PY=/data1/yuquan/miniconda3/envs/gene_agent/bin/python
+OUT=runs/realworld/task1_plan_20261124_200548
+"$PY" "$PWD/tools/viewers/view_realworld_scene.py" \
+  --run "$OUT" --host 127.0.0.1 --port 8120
+```
+
+`OUT` 必须指向你实际保存/解压该轮日志的位置；上面的目录名不是自动发现结果。
+运行产生在其他主机时，不要沿用日志里的 `/home/ubuntu/...` 绝对地址。
+该工具使用包内冻结资产重定位；支持 `--run /实际路径/initial_scene` 或 `manifest.json`，
+也支持**已位于运行该工具主机上**的日志压缩包，例如：
+
+```bash
+"$PY" "$PWD/tools/viewers/view_realworld_scene.py" \
+  --run '/实际保存路径/task.tar(3).gz' --host 127.0.0.1 --port 8120
+```
+
+压缩包必须只含一个 `initial_scene`；工具只把该场景包提取到临时目录，退出时清理。
+不自动上传日志、不读取附件中的操作指令，也不更改原运行记录。
+显示解释器需要 `viser`、`mujoco`、`numpy`、`scipy`、`trimesh`、`Pillow`。
+
+在自己电脑另开终端（使用当前能登录该服务器的 SSH 配置；显式参数如下）：
+
+```bash
+ssh -N -L 8120:127.0.0.1:8120 -p 23400 yuquan@58.220.16.98
+```
+
+浏览器打开 **http://127.0.0.1:8120**。终端保持运行，`Ctrl+C` 退出。
+
+界面按以下方式核对：
+
+1. 先看标题中的活动臂、frame 和 snapshot hash，确认没有打开另一轮。本附件为 **right / frame 267937**，hash 以 `2c79c63e4101013f` 开头。
+2. **操作物体模型**来自原 XML 的实际 visual；**实际规划障碍**是当时导出的 cuRobo 几何，用红色半透明显示。橙色为配置桌面顶面，中心与厚度分别列出；不把桌面中心当成顶面。两臂和夹爪使用保存的状态。未保存的活动臂碰撞球会明确标为缺失，不用当前配置推算替代。
+3. 开启**同帧原始 RGB-D 点云**和**原始注册碗 mesh**，可关闭机器人及规划障碍去掉遮挡。青色注册 mesh 应贴着点云中的实碗；青色 mesh 使用原注册资产与原相机 pose，操作碗使用当时消费的 pose。面板给出二者变换差，帮助排查中间坐标链。
+4. 用 `camera`、`active_sdk`、`bowl_consumed`、`configured_table_center/top` 坐标轴定位。X 红、Y 绿、Z 蓝。所有几何统一在保存的 world 中；`T_world_sdk` 明确显示。切换浏览器上方向仅影响观察视角，不修改任何数据，也不证明重力朝向。
+5. 比较点云中的可见桌面与橙色配置顶面的**高度、法向及 XY 范围**。右侧保存原 RGB 和输入矩阵/来源。微波炉保留先前操作状态时单独注明，不冒称本轮重感知。
+
+本附件的冻结数据为：碗原点（右臂 SDK，米）约 `[0.303765, 0.058829, -0.052891]`，
+桌面中心 `[0.1, 0.3, -0.0442143]`，厚度 `0.02 m`，配置顶面 Z 为 `-0.0342143 m`，
+范围为 `0.6 × 0.6 m`。这些值只用于核对日志身份，工具读取包内原值，代码不硬编码本场景。
+该轮在 `bowl_pose_table_inconsistent` 处停止，`stages` 为空；这不是已经执行抓取后的失败。
+
+若青色 mesh 在原相机/点云中就不贴合，先查注册、mesh frame 和 RGB-D；
+若独立 SDK 参照一致而配置桌面不贴合，查桌面设定；
+若多个独立 SDK 参照呈系统偏差，查标定和坐标链。
+仅凭碗与配置桌面矛盾不能唯一归因于标定。需要桌面 ROI 独立平面拟合与参考点残差时，
+继续使用 §5.1 的 HTML 检查，两者读取同一冻结帧。
+
+只想核对输入、不打开服务时：
+
+```bash
+"$PY" "$PWD/tools/viewers/view_realworld_scene.py" --run "$OUT" --check-only
+```
+
+## 5.3 模型翻转与桌面穿插的判别
+
+`task1_plan_20261124_200548` 的原始 RGB-D 分析表明：桌面上法向在该标定输出中约为
+`[0.0360, -0.0868, -0.9956]`，指向 SDK −Z；碗口与它的点积约 `0.99987`。
+因此不能把这轮画面中的碗称为真实倒扣。原单点标定把 `T_sdk_board` 的旋转设为 I，
+没有测量板朝向；若 PnP 板轴与 SDK 板轴约定不同，点云会整体反向。
+该轮机器人安装与 AffordToolAct 相同，原关节的 URDF FK 与保存的右臂 SDK TCP 误差约
+`0.0022 mm / 0.0116°`；不应通过旋转机器人来迎合错误外参。
+
+微波炉另有独立歧义：注册把手 mesh 绕其中心局部 Z 转 180° 后完全重合，
+不能从把手完整 pose 唯一确定整台柜体。新版使用实测桌面法向选等价分支，保持把手位置和几何不变，
+同时纠正柜体方向；动态门测角继续使用固定柜体和把手中心圆轨道。
+桌面原先强制水平，在该轮约 `5.39°` 的 SDK 平面倾角下，碗附近偏差约 `22 mm`；
+新版构造保留实测平面，候选净空也使用各候选 XY 处的顶面高度。
+这些数值是冻结帧几何诊断，不是真机动作验证。
+
+修正标定时，需独立确认 PnP 板 +X/+Y/+Z 与 SDK 的对应；优先用多个不共线的已知 SDK 点确定板姿态，
+不能只用一个点或 `RᵀR=I` 判断正确，也不能简单给旧外参乘一个未核对的 180° 旋转。
+本轮用户已确认的轴关系修正版见 §4.1；使用修正版后，重新执行 §5 的 prepare 命令生成新 `$PERCEPTION`，再运行原只规划命令与 §5.2 的只读查看器。
+历史附件不被重写，新旧快照分别保留。
 
 ## 6. 配置和状态来源
 

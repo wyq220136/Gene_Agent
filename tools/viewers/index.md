@@ -10,6 +10,7 @@
 | 查看已保存的 Skill 记录 | [view_skill_run.py](view_skill_run.py) |
 | 只读 MuJoCo 回放 | [view_skill_mujoco.py](view_skill_mujoco.py) |
 | 检查阶段状态链，不启动 GUI | [inspect_skill_run.py](inspect_skill_run.py) |
+| 查看真机实际碗/桌面、规划障碍和同帧 RGB-D（AffordToolAct Viser） | [view_realworld_scene.py](view_realworld_scene.py) |
 | 检查重建桌面场景 | [view_reconstructed_tabletop_scene.py](view_reconstructed_tabletop_scene.py) |
 | 独立查看 benchmark 初态，不运行 policy | [view_benchmark.py](view_benchmark.py) |
 | 检查 mesh 与 Concept | [inspect_concepts.py](inspect_concepts.py) |

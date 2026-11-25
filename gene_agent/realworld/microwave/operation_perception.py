@@ -126,6 +126,7 @@ class OperationPerception:
         expected = self.dynamic | self.pending
         if measured != expected:
             raise ValueError("当前帧感知对象与操作范围不一致")
+        observed, pose_correction = self.reader.canonical_observation(observed)
         poses = {**self.poses, **observed.object_poses_sdk}
         refreshed_angles = set()
         if measured & {MICROWAVE, KNOB}:
@@ -145,6 +146,7 @@ class OperationPerception:
         retained = set(poses) - measured
         refresh = {
             "policy": POLICY, "operation": self.operation,
+            "pose_frame_disambiguation": pose_correction,
             "settle_wait_s": self.last_settle_s,
             "refreshed_object_ids": sorted(measured),
             "retained_object_ids": sorted(retained),

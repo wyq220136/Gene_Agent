@@ -28,7 +28,11 @@ def prepared(tmp_path):
                  setup.KNOB: (root @ np.array(assets["joints"]["knob"]["T_asset_joint"])).tolist()}
     mesh = tmp_path / "handle.obj"
     mesh.write_text("v 0 0 0\n", encoding="utf-8")
-    record = {"format": setup.FORMAT, "accepted": True,
+    halfturn = np.eye(4); halfturn[:3, :3] = np.diag([-1., -1., 1.])
+    record = {"format": setup.FORMAT, "geometry_contract_version": 2, "accepted": True,
+              "microwave_pose_disambiguation": {"T_mesh_equivalent_halfturn": halfturn.tolist(),
+                  "T_mesh_asset": assets["alignment"], "observed_up_sdk": [0., 0., 1.],
+                  "mesh_sha256": setup.sha256(mesh)},
               "reference_confirmation": "CLOSED_ZERO", "mask_confirmation": "ACCEPT",
               "camera": setup.load_camera_calibration(calibration_path),
               "assets": assets, "camera_endpoint": "tcp://camera", "pose_server": "http://pose",
@@ -301,7 +305,9 @@ def test_table_uses_fixed_geometry_and_current_depth_in_sdk_frame():
     # 只看到部分桌面仍使用已有完整矩形；不要求分割或观察全部边界。
     depth[:70] = 0.
     table = setup.table_from_scene_geometry(depth, K, transform, assets["table_geometry"], thickness_m=.02)
-    np.testing.assert_allclose(np.array(table["table_pose_world"])[:3, 3], [.1, .3, -.21], atol=1e-7)
+    table_pose = np.array(table["table_pose_world"])
+    np.testing.assert_allclose(table_pose[:3,3]+table_pose[:3,2]*.01, [.1,.3,-.2], atol=1e-7)
+    assert table["sdk_up_consistent"] is False  # 该测试相机在平面 SDK -Z 侧。
     assert table["table_top_z_m"] == pytest.approx(-.2)
     assert table["table_size_xy_m"] == [.6, .6]
     assert table["footprint_is_visible_extent"] is False
@@ -828,3 +834,28 @@ def test_handle_to_push_handoff_requests_post_contact_refresh(tmp_path, monkeypa
         max_start_error_rad=.02,max_gripper_width_error_m=.005,max_door_angle_error_rad=.05)
     assert result["success"]
     assert events == ["post_contact"]
+
+
+def test_operation_normalizes_symmetric_handle_before_fixed_cabinet_check(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    from dataclasses import replace
+    _, record = prepared_no_knob
+    operation = OperationPerception(record)
+    operation.begin_operation("plan_only")
+    frame = observed(record)
+    turn = np.array(record["microwave_pose_disambiguation"]["T_mesh_equivalent_halfturn"])
+    raw = frame.object_poses_sdk[setup.MICROWAVE] @ turn
+    frame = replace(frame, object_poses_sdk={**frame.object_poses_sdk, setup.MICROWAVE: raw})
+    result, angles, anchor = operation.consume(frame)
+    np.testing.assert_allclose(result.object_poses_sdk[setup.MICROWAVE], record["closed_reference_poses_sdk"][setup.MICROWAVE], atol=1e-12)
+    assert result.perception_refresh["pose_frame_disambiguation"]["selected_equivalent_branch"] == 1
+    assert angles["door"]["angle_rad"] == pytest.approx(0, abs=1e-12)
+    np.testing.assert_allclose(np.array(anchor["T_world_scene_asset"])[:3,:3],np.eye(3),atol=1e-12)
+
+
+def test_old_geometry_record_requires_new_preparation(prepared_no_knob):
+    path, record = prepared_no_knob
+    record.pop("geometry_contract_version")
+    setup.save_json(path, record)
+    with pytest.raises(ValueError, match="旧准备记录"):
+        setup.load_perception_setup(path)

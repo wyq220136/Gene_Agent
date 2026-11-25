@@ -124,7 +124,10 @@ class RealworldRunDiagnostics:
         try:
             write_json(self.root / "diagnostic_manifest.json", dict(schema_version=1,
                 options=self.options, metadata=self.metadata,
-                initial_scene_ref="initial_scene/manifest.json", events_ref="events.jsonl"))
+                initial_scene_ref="initial_scene/manifest.json", events_ref="events.jsonl",
+                scene_viewer=dict(entrypoint="tools/viewers/view_realworld_scene.py",
+                    argv=["--run", str(self.root), "--host", "127.0.0.1", "--port", "8120"],
+                    read_only=True, source="initial_scene/manifest.json")))
         except Exception:
             self.stack.close()
             raise

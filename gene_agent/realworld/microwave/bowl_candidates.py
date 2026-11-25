@@ -52,7 +52,8 @@ def observed_bowl_candidates(collision_scene, bowl_pose_world, *, pose_source):
             collision_snapshot_sha256=collision_scene["snapshot"].get("snapshot_sha256"),
             source_paths=provenance.get("source_paths", {}))
         raise
-    table_height = float((sdk_table @ np.array([0., 0., thickness / 2., 1.]))[2])
+    from .geometry_alignment import table_top_z_at_xy
+    table_height = table_top_z_at_xy(sdk_table, thickness, sdk_table[:2, 3])
     depths = np.asarray(profile["depths_m"], dtype=float)
     if depths.ndim != 1 or not len(depths) or not np.isfinite(depths).all():
         raise ValueError("真机 Bowl 抓取深度列表必须非空且有限")
@@ -81,7 +82,8 @@ def observed_bowl_candidates(collision_scene, bowl_pose_world, *, pose_source):
         candidate = by_id[proposal.candidate_id]
         original = np.asarray(candidate["T_world_tcp"], dtype=float)
         target = original.copy()
-        target[2, 3] = np.clip(target[2, 3], table_height + clearance[0], table_height + clearance[1])
+        local_table_height = table_top_z_at_xy(sdk_table, thickness, target[:2, 3])
+        target[2, 3] = np.clip(target[2, 3], local_table_height + clearance[0], local_table_height + clearance[1])
         world_tcp = world_sdk @ target
         object_tcp = bowl_world @ world_tcp
         # 同步更新每层 pose；T_primitive_tcp_raw 保留未偏移、未限高的原始局部候选。
@@ -95,6 +97,7 @@ def observed_bowl_candidates(collision_scene, bowl_pose_world, *, pose_source):
         adjustments.append({"candidate_id": proposal.candidate_id,
                             "T_sdk_tcp_before_table_clamp": original.tolist(),
                             "T_world_tcp": world_tcp.tolist(),
+                            "table_height_at_candidate_sdk_m": local_table_height,
                             "table_clamp_delta_sdk_z_m": float(target[2, 3] - original[2, 3])})
     return tuple(candidates), {
         "pose_table_consistency": pose_consistency,

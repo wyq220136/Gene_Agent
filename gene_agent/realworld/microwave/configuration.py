@@ -104,7 +104,7 @@ def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str
             "accepted_support_center_xy_local_m": assets["support"]["center_xy_local_m"],
             "active_group": "right"},
         "runtime": {"max_start_error_rad": .02,
-                    "min_tcp_z_m": float(table_pose[2, 3] + assets["table_thickness_m"] / 2 + .02),
+                    "min_tcp_z_m": float(table_pose[2, 3] + table_pose[2, 2] * assets["table_thickness_m"] / 2 + .02),
                     "motion_speed_scale": speed_scale, "max_tcp_speed_mps": .1,
                     "canfd_frequency_hz": 100.},
         "subtask_options": options, "include_knob": not no_knob,
