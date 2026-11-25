@@ -18,6 +18,12 @@ data/*
 data/calibration/*
 !data/calibration/runs/*
 !data/calibration/README.md
+!data/calibration/runs/
+data/calibration/runs/*
+!data/calibration/runs/manual/
+data/calibration/runs/manual/*
+!data/calibration/runs/manual/microwave_third_view_20261125_yz_rx180/
+!data/calibration/runs/manual/microwave_third_view_20261125_yz_rx180/**
 !data/task_1/
 data/task_1/*
 !data/task_1/readme.md
