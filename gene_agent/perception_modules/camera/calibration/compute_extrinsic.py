@@ -298,6 +298,11 @@ def compute_extrinsic(data_dir: str) -> dict:
         board_tcp_rotation=btr_data.get("board_tcp_rotation"),
         board_axes_aligned_to_sdk=btr_data.get("board_axes_aligned_to_sdk") is True,
     )
+    # 候选微调是 SDK 中的附加平移；每次先由原始测量重建，再应用一次，避免重复叠加。
+    adjustment = np.asarray(btr_data.get("translation_refinement_sdk_m", [0., 0., 0.]), dtype=float)
+    if adjustment.shape != (3,) or not np.isfinite(adjustment).all() or adjustment[1] != 0:
+        raise ValueError("translation_refinement_sdk_m 只允许有限 SDK X/Z 偏移，Y 必须为零")
+    board_to_robot[:3, 3] += adjustment
     btr_data["board_to_robot"] = board_to_robot.tolist()
     btr_data["robot_to_board"] = np.linalg.inv(board_to_robot).tolist()
     btr_data["board_tcp_position"] = new_board_tcp_position.tolist()

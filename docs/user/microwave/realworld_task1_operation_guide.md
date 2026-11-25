@@ -153,6 +153,33 @@ CAMERA_PARAMS="$PWD/data/calibration/runs/manual/microwave_third_view_20261125_y
 随后按 §5 在**新目录**生成 `$PERCEPTION`，完成后按 §7 **重新定义 `COMMON` 数组**。
 已展开的 Bash 数组不会因修改 `$PERCEPTION` 自动更新；不能复用旧数组、旧感知记录或旧 `$OUT`。
 
+### 4.2 只调整 base 到棋盘格的 SDK X/Z 平移
+
+可以保持板轴旋转、SDK Y、相机内参、机器人安装和原始测量输入不变，单独修正 SDK X/Z 平移。
+本轮自动拟合各连杆给出的量不一致，尚不能确定唯一可靠修正；不把拟合结果覆盖到正式外参。
+可使用下面的专用 Viser 面板在冻结数据上核对（不连接设备、不重新规划）：
+
+```bash
+# OUT 为已有日志；不要求重新跑真机。CAMERA_PARAMS 使用 §4.1 当前文件。
+CANDIDATE="data/calibration/diagnostics/xz_candidate_$(date +%Y%m%d_%H%M%S)"
+"$PY" "$PWD/tools/diagnostics/tune_camera_translation.py" \
+  --run "$OUT" --camera-params "$CAMERA_PARAMS" \
+  --output "$CANDIDATE" --host 127.0.0.1 --port 8121
+```
+
+本机建立隧道：`ssh -N -L 8121:127.0.0.1:8121 -p 23400 yuquan@58.220.16.98`，
+浏览器打开 `http://127.0.0.1:8121`。
+机器人 mesh 来自日志里的实测关节，保持固定。仅拖动 `SDK ΔX (mm)`、`SDK ΔZ (mm)`；
+正值表示给 `T_sdk_camera` 和 `T_sdk_board` 的对应 SDK 平移分量加上该值。
+同时检查腕部、上臂和固定安装部位；不能只贴合夹爪或将图像横/竖方向当作 SDK X/Z。
+面板只显示机器人和原始点云，不显示旧日志里可能过时的操作物体和桌面代理。
+
+点击“另存平移候选”才写文件，且输出目录必须不存在。保存为 `$CANDIDATE/cam_param.json`，
+同步更新两份相机外参和板到 SDK 变换，原始测量值及旧文件保持不变。
+修正量单独保存在 `translation_refinement_sdk_m`；重新合并标定时只应用一次，不反复累加。
+候选仍需以独立 SDK 参考点或多组姿态检查，不能仅凭单帧最近点拟合当作精确标定。
+确认候选后设置 `CAMERA_PARAMS="$CANDIDATE/cam_param.json"`，按 §5 生成新 PERCEPTION，再重建 COMMON 和 OUT。
+
 ## 5. 自动准备感知
 
 将碗、微波炉和机械臂摆到本次初始位置，把门关紧；无需旋钮置零。
