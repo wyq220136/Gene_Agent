@@ -30,13 +30,13 @@
       -0.5575397997566315,
       0.48112972611036703,
       -0.6765083579234623,
-      0.7312165739954877
+      1.0712165739954878
     ],
     [
       0.10156175288568263,
       -0.769268633939911,
       -0.6308018541404359,
-      0.8340655195268843
+      0.5840655195268843
     ],
     [
       0.0,
@@ -82,13 +82,13 @@
       -4.815046622484985e-18,
       -1.0,
       -3.4861754390715803e-19,
-      0.08182872870936986
+      0.42182872870936994
     ],
     [
       2.314492195966116e-19,
       2.9867543908947267e-18,
       -1.0,
-      -0.016450539231300354
+      -0.26645053923130035
     ],
     [
       0.0,
@@ -97,7 +97,7 @@
       1.0
     ]
   ],
-  "note": "T_sdk_camera = T_sdk_board @ T_board_camera; board YZ measurement signs and Rx180 relation corrected from explicit user confirmation; original capture and SDK anchor retained",
+  "note": "Rotation-only board-axis correction Rx180 with original board TCP measurement [0,+0.17,-0.125] m; translation recomputed using original SDK TCP anchor; previous measurement sign edit reverted",
   "right_extrinsic_matrix": [
     [
       -0.8239141836612133,
@@ -109,13 +109,13 @@
       -0.5575397997566315,
       0.48112972611036703,
       -0.6765083579234623,
-      0.7312165739954877
+      1.0712165739954878
     ],
     [
       0.10156175288568263,
       -0.769268633939911,
       -0.6308018541404359,
-      0.8340655195268843
+      0.5840655195268843
     ],
     [
       0.0,
@@ -129,7 +129,8 @@
     "report_ref": "correction_report.json",
     "source_directory": "/data1/yuquan/Gene_agent/data/calibration/runs/manual/microwave_third_view_20261112-161501",
     "source_sha256": "eee667939c8ee0564f75232bd0d33900bd6d9cb06669334dd72ce66c760396a7",
-    "orientation_source": "user confirmation in this conversation, not estimated from a single point",
-    "realworld_validation": "pending"
+    "measurement_sign_correction_applied": false,
+    "orientation_source": "explicit user confirmation",
+    "realworld_validation": "frozen mesh/pointcloud checked; robot residual remains; new realworld validation pending"
   }
 }

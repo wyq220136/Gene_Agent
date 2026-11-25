@@ -10,13 +10,13 @@
       -4.815046622484985e-18,
       -1.0,
       -3.4861754390715803e-19,
-      0.08182872870936986
+      0.42182872870936994
     ],
     [
       2.314492195966116e-19,
       2.9867543908947267e-18,
       -1.0,
-      -0.016450539231300354
+      -0.26645053923130035
     ],
     [
       0.0,
@@ -36,13 +36,13 @@
       -4.815046622484985e-18,
       -1.0,
       3.4861754390715803e-19,
-      0.08182872870936986
+      0.42182872870936994
     ],
     [
       2.314492195966116e-19,
       -2.9867543908947267e-18,
       -1.0,
-      -0.016450539231300354
+      -0.26645053923130035
     ],
     [
       0.0,
@@ -58,8 +58,8 @@
   ],
   "board_tcp_position": [
     0.0,
-    -0.17,
-    0.125
+    0.17,
+    -0.125
   ],
   "board_axes_aligned_to_sdk": false,
   "camera_board_captured_at_ns": 1794472827259537272,
@@ -107,19 +107,15 @@
       0.9995299577713013
     ]
   ],
-  "board_orientation_source": "user_confirmed_20261125: board/PnP YZ axes opposite SDK; Rx(180deg)",
-  "board_tcp_rotation_source": "derived from recorded SDK TCP rotation and user-confirmed T_sdk_board rotation",
+  "board_orientation_source": "user confirmed Rx180; original measured offsets restored unchanged",
+  "board_tcp_rotation_source": "derived from recorded SDK TCP rotation and explicit board-to-SDK rotation",
   "measurement_correction": {
-    "previous_board_tcp_position_m": [
+    "applied": false,
+    "board_tcp_position_m": [
       0.0,
       0.17,
       -0.125
     ],
-    "corrected_board_tcp_position_m": [
-      0.0,
-      -0.17,
-      0.125
-    ],
-    "source": "user_confirmed_yz_measurement_sign_correction"
+    "reason": "user explicitly revoked previous Y/Z measurement sign correction"
   }
 }

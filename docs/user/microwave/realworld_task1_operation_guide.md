@@ -119,9 +119,11 @@ CAMERA_PARAMS="$CALIB_OUT/cam_param.json"
 向导读取 SDK TCP 并指导采样；先完成标定流程和结果检查，再进入下一步。
 已有标定时只需将 `CAMERA_PARAMS` 指向输出文件。移动或更换相机、改变分辨率后重新标定。
 
-### 4.1 本轮 Y/Z 测量符号与绕 X 半转修正版
+### 4.1 本轮绕 X 半转修正版（保留原始测量偏移）
 
-2026-11-25 根据操作者明确确认，已在 **58.220.16.98** 另存本轮修正版：
+2026-11-25 按操作者最新要求，已撤销此前对测量 Y/Z 数值符号的修改，
+保留原始板中 TCP 测量值 **`[0,+0.17,-0.125] m`**，仅保留板到 SDK 的轴向关系
+**`R_sdk_board=diag(1,-1,-1)`**。现有修正版路径已同步更新，无需更换文件名：
 
 ```bash
 cd /data1/yuquan/Gene_agent
@@ -129,19 +131,27 @@ PY=/data1/yuquan/miniconda3/envs/gene_agent/bin/python
 CAMERA_PARAMS="$PWD/data/calibration/runs/manual/microwave_third_view_20261125_yz_rx180/cam_param.json"
 ```
 
-两项一起应用：板中 TCP 测量值 `[0,+0.17,-0.125]` 改为 `[0,-0.17,+0.125] m`；
-`R_sdk_board=diag(1,-1,-1)`。使用原 SDK TCP 实测点重算
+使用原 SDK TCP 实测点重算
 `t_sdk_board = p_sdk_tcp - R_sdk_board @ p_board_tcp`，再计算
 `T_sdk_camera = T_sdk_board @ T_board_camera`。
-不能直接绕 SDK 原点左乘一个无平移的半转，也不能再叠加此前仅改偏移符号时得到的平移量。
+“只保留旋转修正”表示不改测量数值；外参中的平移仍须按上述锚点公式一致地重算，
+不能只改旋转块而把属于另一板轴定义的平移块原样拼接。
 
-修正后相机在右臂 SDK 中的位置约为 `[0.023422, 0.731217, 0.834066] m`。
-SDK TCP 锚点误差为零，`extrinsic_matrix` 与 `right_extrinsic_matrix` 同步更新，
-重新合并也保留显式板轴关系。原目录未改动；来源及几何核对在同目录 `correction_report.json`。
-仅做原冻结帧的几何检查，未执行新感知、规划或真机动作。
+当前板中 TCP 输入为 `[0,0.17,-0.125] m`，相机在右臂 SDK 中的位置约为
+`[0.023422,1.071217,0.584066] m`。`extrinsic_matrix` 和 `right_extrinsic_matrix` 同步更新，
+重新合并也保留显式板轴关系。原始 11-12 标定目录未改动；
+前一版“测量符号也修改”的内容备份在修正版目录的 `revisions/before_restore_original_measurement/`。
+来源、锚点检查和点云/mesh 核对结果见当前目录 `correction_report.json`。
 
-然后按 §5 在**新目录**生成 `$PERCEPTION`，完成后按 §7 **重新定义 `COMMON` 数组**。
-已经展开的 Bash 数组不会因修改 `$PERCEPTION` 自动更新；不能继续复用旧数组或旧感知记录。
+物体 mesh 与点云一起使用同一外参变换，其相对贴合不变，不能单凭碗/把手贴合证明外参平移正确。
+应同时查看实测关节状态得到的机器人 mesh 与真实点云是否重合。
+同一冻结帧的检查结果：右臂 mesh 朝相机的采样点到点云最近距离中位数，
+本版约 `31 mm`，上一版同时修改偏移符号时约 `108 mm`；包含遮挡和 CAD 差异，不能当作标定精度。
+碗/把手约 `4.4/4.9 mm`，消歧后的门板约 `9.5 mm`。整体改善，但机器人仍有残差，不能认定完全对齐。
+尚未做新的现场采集或真机动作验证。
+
+随后按 §5 在**新目录**生成 `$PERCEPTION`，完成后按 §7 **重新定义 `COMMON` 数组**。
+已展开的 Bash 数组不会因修改 `$PERCEPTION` 自动更新；不能复用旧数组、旧感知记录或旧 `$OUT`。
 
 ## 5. 自动准备感知
 

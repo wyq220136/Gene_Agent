@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source_directory": "/data1/yuquan/Gene_agent/data/calibration/runs/manual/microwave_third_view_20261112-161501",
   "source_sha256": {
     "board_to_robot.json": "145d86747ad89d3dd8f5a93ab3b6bb4235d5f434b546942b22e4bb9f6878c58a",
@@ -7,17 +7,12 @@
     "cam_param.json": "eee667939c8ee0564f75232bd0d33900bd6d9cb06669334dd72ce66c760396a7",
     "sdk_tcp_reading.json": "71073da4cfe4e1f2efdff04153663a1fbf7da49e9695fc5a33e46f4f7e2f38ec"
   },
-  "correction": "measurement Y/Z signs + explicit Rx(180deg) board-to-SDK relation; anchored at original measured SDK TCP",
-  "orientation_source": "user confirmation in this conversation, not estimated from a single point",
-  "old_board_tcp_position_m": [
+  "correction": "Rx180 board-to-SDK rotation only; original measurement unchanged",
+  "measurement_sign_correction_applied": false,
+  "board_tcp_position_m": [
     0.0,
     0.17,
     -0.125
-  ],
-  "corrected_board_tcp_position_m": [
-    0.0,
-    -0.17,
-    0.125
   ],
   "T_sdk_board": [
     [
@@ -30,13 +25,13 @@
       0.0,
       -1.0,
       0.0,
-      0.08182872870936989
+      0.42182872870936994
     ],
     [
       0.0,
       0.0,
       -1.0,
-      -0.016450539231300354
+      -0.26645053923130035
     ],
     [
       0.0,
@@ -56,39 +51,13 @@
       -0.5575397997566315,
       0.48112972611036703,
       -0.6765083579234623,
-      0.7312165739954877
+      1.0712165739954878
     ],
     [
       0.10156175288568263,
       -0.769268633939911,
       -0.6308018541404359,
-      0.8340655195268843
-    ],
-    [
-      0.0,
-      0.0,
-      0.0,
-      1.0
-    ]
-  ],
-  "T_corrected_sdk_from_old_sdk": [
-    [
-      0.9999999999999999,
-      -2.729416697999106e-17,
-      1.6702066240559976e-18,
-      1.734723475976807e-17
-    ],
-    [
-      8.78900196774207e-17,
-      -0.9999999999999999,
-      -1.6104146622397714e-17,
-      0.16365745741873983
-    ],
-    [
-      5.3064499687877615e-17,
-      2.3482279896877783e-17,
-      -1.0,
-      -0.03290107846260071
+      0.5840655195268843
     ],
     [
       0.0,
@@ -100,25 +69,40 @@
   "anchor_position_residual_m": 0.0,
   "camera_position_sdk_m": [
     0.02342152024455163,
-    0.7312165739954877,
-    0.8340655195268843
+    1.0712165739954878,
+    0.5840655195268843
   ],
+  "previous_revision_backup": "/data1/yuquan/Gene_agent/data/calibration/runs/manual/microwave_third_view_20261125_yz_rx180/revisions/before_restore_original_measurement",
   "original_directory_preserved": true,
-  "calibration_only": true,
-  "robot_or_camera_connected": false,
-  "realworld_validation": "pending: inspect new perception and Viser; no physical motion run",
-  "offline_geometry_check": {
+  "hardware_connected": false,
+  "geometry_check": {
     "source_frame": 267937,
     "new_capture": false,
-    "hardware_motion": false,
+    "attachment_uploaded": false,
+    "physics_stepped": false,
+    "ICP_applied": false,
+    "robot_independent_reference": "archived URDF + measured joints/widths; FK parity to frozen convex surfaces below 0.00001 mm",
+    "right_robot_cloud_nearest_distance_median_mm": 31.33654759674545,
+    "previous_measurement_sign_edit_right_robot_median_mm": 107.67328208461647,
+    "original_calibration_right_robot_median_mm": 121.42360724526324,
+    "right_robot_cloud_nearest_within_15mm_fraction": 0.2458150769576452,
+    "registered_bowl_cloud_median_mm": 4.4045031901551175,
+    "registered_handle_cloud_median_mm": 4.907123454101068,
+    "door_original_branch_cloud_median_mm": 36.729788176232766,
+    "door_disambiguated_cloud_median_mm": 9.519281960932023,
     "table_normal_sdk": [
-      0.045887565210154566,
-      0.08562488437833314,
-      0.9952701696194259
+      0.04153666746425864,
+      0.08970307097877009,
+      0.9951020371363639
     ],
-    "table_rms_mm": 2.140309451263939,
-    "bowl_open_dot_table_up": 0.9999482634332658,
-    "bowl_origin_height_above_observed_table_mm": 44.22667888280661,
-    "source": "read-only local attachment analysis using the corrected remote matrix; attachment not uploaded"
+    "table_rms_mm": 2.293315781888631,
+    "conclusion": "Restoring original offsets materially improves independent robot alignment. Object meshes approximately fit observed cloud, robot alignment is not yet precise.",
+    "limitations": [
+      "Object mesh/cloud joint rigid transformation cannot verify extrinsic translation.",
+      "Robot metric uses front-facing model samples within the image, includes occlusions and CAD differences; not calibration accuracy.",
+      "Left robot has very limited visible support and is not accepted as aligned.",
+      "No new camera capture or robot motion."
+    ],
+    "visual_check": "RGB projection overlays inspected locally; image contains attachment RGB and was not uploaded"
   }
 }
