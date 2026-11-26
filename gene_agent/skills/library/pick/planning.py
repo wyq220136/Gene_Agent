@@ -9,7 +9,7 @@ from scipy.spatial.transform import Rotation
 
 from gene_agent.knowledge.grasp.model import GraspProposal
 from gene_agent.motion.model import (
-    CollisionAllowance, CollisionPolicy, MotionFailureKind, MotionOperation,
+    CollisionAllowance, CollisionPolicy, JointState, MotionFailureKind, MotionOperation,
     MotionRequest, PlanningSceneRef, PoseTarget,
 )
 from gene_agent.motion.planner import MotionPlanner
@@ -21,13 +21,15 @@ from gene_agent.skills.runtime.poses import offset_along_tcp_z
 
 
 _LEGACY_ROTATIONS_DEG = (5.0, -5.0, 10.0, -10.0, 15.0, -15.0, 20.0, -20.0)
+_PREGRASP_WRIST_ROLLS_DEG = (30.0, -30.0, 60.0, -60.0, 90.0, -90.0)
 
 
 def _legacy_pregrasp_targets(final: PoseTarget, distance_m: float) -> tuple[PoseTarget, ...]:
-    """照搬旧 GraspSkill 的 0°、局部 X 和局部 Y 姿态候选及顺序。"""
+    """保留旧 X/Y 分支，并补充不改变接近轴的 wrist-roll 分支。"""
     targets: list[PoseTarget] = []
     for axis, angle in ((None, 0.0), *(("x", v) for v in _LEGACY_ROTATIONS_DEG),
-                        *(("y", v) for v in _LEGACY_ROTATIONS_DEG)):
+                        *(("y", v) for v in _LEGACY_ROTATIONS_DEG),
+                        *(("z", v) for v in _PREGRASP_WRIST_ROLLS_DEG)):
         pose = np.array(final.matrix, copy=True)
         if axis is not None:
             pose[:3, :3] = final.matrix[:3, :3] @ Rotation.from_euler(
@@ -58,6 +60,8 @@ def _joint_travel_check(
     per_joint = np.max(delta, axis=0)
     index = int(np.argmax(per_joint))
     maximum = float(per_joint[index])
+    l2 = float(np.linalg.norm(per_joint))
+    total = float(np.sum(per_joint))
     return {
         "success": bool(maximum <= limit_rad + 1e-12),
         "enabled": True,
@@ -65,6 +69,8 @@ def _joint_travel_check(
         "maximum_joint_travel_rad": maximum,
         "maximum_joint_travel_deg": float(np.rad2deg(maximum)),
         "maximum_joint_name": names[index],
+        "joint_travel_l2_rad": l2,
+        "joint_travel_sum_rad": total,
         "per_joint_travel_rad": {
             name: float(value) for name, value in zip(names, per_joint)
         },
@@ -117,6 +123,9 @@ class GraspSkill:
         *,
         contact_planner: MotionPlanner | None = None,
         contact_scene: PlanningSceneRef | None = None,
+        pregrasp_target_generator=None,
+        candidate_postcheck=None,
+        final_ik_evidence=None,
     ) -> SkillPlan:
         """按配置筛抓取候选；真机按需寻找首条有效完整抓取前缀。"""
         if (contact_planner is None) != (contact_scene is None):
@@ -136,7 +145,15 @@ class GraspSkill:
                 CollisionPolicy(), seed=context.seed,
             ) for item in selected
         )
-        results = grasp_planner.evaluate_candidates(requests)
+        if final_ik_evidence is None:
+            results = grasp_planner.evaluate_candidates(requests)
+        else:
+            evidence = tuple(final_ik_evidence)
+            if (len(evidence) != len(requests) or any(
+                    old_request.to_dict() != request.to_dict()
+                    for (old_request, _), request in zip(evidence, requests))):
+                raise ValueError("复用最终IK证据的请求与当前场景/起点/目标不一致")
+            results = tuple(result for _, result in evidence)
         if len(results) != len(requests):
             raise RuntimeError("planner 返回的 IK 结果数量与候选不一致")
         attempts: list[dict] = []
@@ -154,31 +171,37 @@ class GraspSkill:
         pregrasp_cache = (PregraspRequestCache(planner)
                           if settings.pregrasp_search == "first_valid_prefix" else None)
         if pregrasp_cache is not None:
-            candidates_to_plan = _first_valid_pregrasps(
-                eligible, context, settings, pregrasp_cache, attempts,
+            candidates_to_plan = (
+                (*row, None) for row in _first_valid_pregrasps(
+                    eligible, context, settings, pregrasp_cache, attempts,
+                )
             )
         elif settings.candidate_selection == "legacy_ik":
             # 旧 Viser 先按顺序为所有最终 IK 可达的 grasp 生成 17 个
             # pregrasp，再以 128 为一批做 IK；第一个成功批次中的首个可达
             # 候选就是最终选项。随后执行阶段若路径失败，不偷偷换 grasp。
             records = tuple(
-                (item, final, pregrasp, MotionRequest(
+                (item, final, pregrasp, index, MotionRequest(
                     f"{item.candidate_id}:pregrasp_ik_{index:02d}",
                     MotionOperation.IK, context.group, context.start,
                     pregrasp, context.scene, CollisionPolicy(), seed=context.seed,
                 ))
                 for item, final in eligible
                 for index, pregrasp in enumerate(
-                    _legacy_pregrasp_targets(final, settings.approach_distance_m)
+                    (pregrasp_target_generator or _legacy_pregrasp_targets)(
+                        final, settings.approach_distance_m,
+                    )
                 )
             )
-            viable: list[tuple[GraspProposal, PoseTarget, PoseTarget, float]] = []
+            viable: list[tuple[
+                GraspProposal, PoseTarget, PoseTarget, float, float, float, int, JointState,
+            ]] = []
             for offset in range(0, len(records), 128):
                 batch = records[offset:offset + 128]
-                prechecks = planner.evaluate_candidates(tuple(row[3] for row in batch))
+                prechecks = planner.evaluate_candidates(tuple(row[4] for row in batch))
                 if len(prechecks) != len(batch):
                     raise RuntimeError("planner 返回的 pregrasp IK 数量与候选不一致")
-                for (item, final, pregrasp, request), result in zip(batch, prechecks):
+                for (item, final, pregrasp, branch_index, request), result in zip(batch, prechecks):
                     if result.request_id != request.request_id or result.operation is not MotionOperation.IK:
                         raise RuntimeError("planner 的 pregrasp IK 结果顺序或 operation 不匹配")
                     attempts.append({
@@ -204,33 +227,54 @@ class GraspSkill:
                     viable.append((
                         item, final, pregrasp,
                         float(posture.get("maximum_joint_travel_rad", 0.)),
+                        float(posture.get("joint_travel_l2_rad", 0.)),
+                        float(posture.get("joint_travel_sum_rad", 0.)),
+                        branch_index, result.goal_state,
                     ))
                 # 未启用姿态连续性约束时严格保留旧版“第一个 IK 成功即停”。
                 if viable and settings.max_pregrasp_joint_travel_rad is None:
                     break
             if settings.max_pregrasp_joint_travel_rad is not None:
-                # 保留抓取候选的外沿/基座侧优先级，只在同一候选内部优先
-                # 尝试关节行程更小的 pregrasp 分支，减少腕部反扭。
                 candidate_rank = {
                     item.candidate_id: index for index, item in enumerate(selected)
                 }
                 viable.sort(key=lambda row: (
-                    candidate_rank[row[0].candidate_id], row[3],
+                    row[3], row[4], row[5],
+                    candidate_rank[row[0].candidate_id], row[6],
                 ))
-                candidates_to_plan = tuple(row[:3] for row in viable)
+                attempts.append({
+                    "stage": "candidate_joint_state_ranking",
+                    "source": "current_executed_joint_state",
+                    "ranking_keys": [
+                        "maximum_joint_travel_rad", "joint_travel_l2_rad",
+                        "joint_travel_sum_rad", "knowledge_candidate_rank",
+                        "pregrasp_branch_index",
+                    ],
+                    "candidates": [{
+                        "candidate_id": row[0].candidate_id,
+                        "maximum_joint_travel_rad": row[3],
+                        "joint_travel_l2_rad": row[4],
+                        "joint_travel_sum_rad": row[5],
+                        "knowledge_candidate_rank": candidate_rank[row[0].candidate_id],
+                        "pregrasp_branch_index": row[6],
+                    } for row in viable],
+                })
+                candidates_to_plan = tuple((*row[:3], row[7]) for row in viable)
             else:
-                candidates_to_plan = tuple(row[:3] for row in viable[:1])
+                candidates_to_plan = tuple((*row[:3], None) for row in viable[:1])
         else:
             candidates_to_plan = tuple(
-                (item, final, offset_along_tcp_z(final, -settings.approach_distance_m))
+                (item, final, offset_along_tcp_z(final, -settings.approach_distance_m), None)
                 for item, final in eligible
             )
 
-        for item, final, pregrasp in candidates_to_plan:
+        for item, final, pregrasp, screened_joint_state in candidates_to_plan:
             pre_request = MotionRequest(
                 f"{item.candidate_id}:pregrasp", MotionOperation.PLAN, context.group,
                 context.start, pregrasp, context.scene, CollisionPolicy(), seed=context.seed,
-                approximate_ik_budget=settings.pregrasp_approximate_ik_budget,
+                approximate_ik_budget=(settings.pregrasp_approximate_ik_budget
+                                       if screened_joint_state is None else None),
+                joint_target=screened_joint_state,
             )
             pre_result = (pregrasp_cache.plan(pre_request) if pregrasp_cache is not None
                           else planner.plan(pre_request))
@@ -279,12 +323,26 @@ class GraspSkill:
                 context.group, pre_result.goal_state, final, grasp_scene,
                 approach_policy, seed=context.seed,
             )
-            approach_result = grasp_planner.plan(approach_request)
-            if (approach_result.request_id != approach_request.request_id
-                    or approach_result.operation is not MotionOperation.LINEAR_TCP):
-                raise RuntimeError("planner 返回的 approach 结果与请求不匹配")
-            attempts.append({"candidate_id": item.candidate_id, "stage": "approach",
-                             "request": approach_request.to_dict(), "result": approach_result.to_dict()})
+            approach_details = {}
+            approach_stage_request = approach_request
+            if settings.align_before_approach:
+                from .approach import plan_aligned_approach
+                approach_result, approach_details, segments = plan_aligned_approach(
+                    planner, grasp_planner, approach_request, context.scene,
+                )
+                attempts.extend({"candidate_id": item.candidate_id, **row} for row in segments)
+                attempts.append({"candidate_id": item.candidate_id, "stage": "approach",
+                                 "composition": approach_details,
+                                 "result": approach_result.to_dict()})
+                approach_stage_request = None
+            else:
+                approach_result = grasp_planner.plan(approach_request)
+                if (approach_result.request_id != approach_request.request_id
+                        or approach_result.operation is not MotionOperation.LINEAR_TCP):
+                    raise RuntimeError("planner 返回的 approach 结果与请求不匹配")
+                attempts.append({"candidate_id": item.candidate_id, "stage": "approach",
+                                 "request": approach_request.to_dict(),
+                                 "result": approach_result.to_dict()})
             if approach_result.success and approach_result.trajectory is None:
                 raise RuntimeError("直线接近成功结果必须包含轨迹")
             if approach_result.success:
@@ -318,6 +376,14 @@ class GraspSkill:
                          or settings.max_pregrasp_joint_travel_rad is not None
                          or settings.max_approach_joint_travel_rad is not None)):
                 continue
+            if approach_status == "planned" and candidate_postcheck is not None:
+                downstream = candidate_postcheck(item, pre_result, approach_result)
+                if not isinstance(downstream, dict) or type(downstream.get("success")) is not bool:
+                    raise ValueError("候选后续检查必须返回含bool success的证据")
+                attempts.append({"candidate_id": item.candidate_id,
+                                 "stage": "postgrasp_feasibility", "result": downstream})
+                if not downstream["success"]:
+                    continue
             later = "planned" if approach_result.success else "not_executed"
             # 旧版 GraspSkill 优先执行候选自带的预抓取开口，接触后再按
             # 该候选的 closing width 闭合。这里不能用任务默认开口覆盖
@@ -330,7 +396,8 @@ class GraspSkill:
             stages = (
                 SkillStage("open", "planned", details={"width_m": pregrasp_width}),
                 SkillStage("pregrasp", "planned", pregrasp, pre_request, pre_result),
-                SkillStage("approach", approach_status, final, approach_request, approach_result),
+                SkillStage("approach", approach_status, final, approach_stage_request,
+                           approach_result, details=approach_details),
                 SkillStage("close", later, details={
                     "width_m": item.closing_width_m,
                     "candidate_nominal_closing_width_m": item.closing_width_m,
@@ -400,10 +467,16 @@ class PickSkill:
         *,
         contact_planner: MotionPlanner | None = None,
         contact_scene: PlanningSceneRef | None = None,
+        pregrasp_target_generator=None,
+        candidate_postcheck=None,
+        final_ik_evidence=None,
     ) -> SkillPlan:
         grasp = GraspSkill().plan(
             planner, proposals, context, settings,
             contact_planner=contact_planner, contact_scene=contact_scene,
+            pregrasp_target_generator=pregrasp_target_generator,
+            candidate_postcheck=candidate_postcheck,
+            final_ik_evidence=final_ik_evidence,
         )
         # 抬升目标必须从闭爪后的实际 TCP 状态生成；静态规划在此只记录
         # 阶段契约，物体附着代理由执行时已验证的双指接触建立。
@@ -426,13 +499,15 @@ class PickSkill:
         initial: SkillPlan,
         attached: SkillContext,
         settings: GraspSettings,
+        *,
+        candidate_poses: Sequence[np.ndarray] | None = None,
     ) -> SkillPlan:
-        """按旧 PickSkill 的候选顺序筛选 post-pick，再做 TCP 直线规划。
+        """按候选顺序直接筛选 post-pick TCP 直线轨迹。
 
         调用方必须在 approach 成功且闭爪后建立新的 attach 碰撞快照。
         撤离方向取已选 pregrasp 减去 grasp；局部姿态依次为 0°、
-        X ±5/10/15/20°、Y ±5/10/15/20°。候选路径筛选与最终直线
-        规划是两个独立事实：最终直线失败时不得悄悄换成下一候选。
+        X ±5/10/15/20°、Y ±5/10/15/20°。每个候选都使用最终实际执行的
+        LINEAR_TCP 合同筛选；首条成功轨迹直接复用。
         """
         approach = initial.stage("approach")
         pregrasp = initial.stage("pregrasp")
@@ -444,24 +519,23 @@ class PickSkill:
         if attached.start != approach.result.goal_state:
             raise ValueError("attach 后的规划起点必须是 approach 的实际终点")
 
-        candidates = tuple(PoseTarget(approach.target.frame, pose) for pose in
-                           make_postpick_candidates(
-                               approach.target.matrix, pregrasp.target.matrix,
-                               settings.lift_distance_m,
-                           ))
+        poses = (make_postpick_candidates(
+            approach.target.matrix, pregrasp.target.matrix,
+            settings.lift_distance_m,
+        ) if candidate_poses is None else tuple(candidate_poses))
+        candidates = tuple(PoseTarget(approach.target.frame, pose) for pose in poses)
 
         attempts = list(initial.attempts)
-        selected: tuple[int, PoseTarget] | None = None
-        # 旧版优先使用小 batch 完整轨迹筛选；当前抽象尚无 batch PLAN
-        # 接口，故按完全相同的顺序逐个筛，不能把 IK 成功当成路径成功。
+        selected: tuple[int, PoseTarget, MotionRequest, object] | None = None
         for index, target in enumerate(candidates):
             request = MotionRequest(
                 f"{initial.selected_candidate_id}:postpick_screen_{index:02d}",
-                MotionOperation.PLAN, attached.group, attached.start, target,
+                MotionOperation.LINEAR_TCP, attached.group, attached.start, target,
                 attached.scene, CollisionPolicy(), seed=attached.seed,
             )
             result = planner.plan(request)
-            if result.request_id != request.request_id or result.operation is not MotionOperation.PLAN:
+            if (result.request_id != request.request_id
+                    or result.operation is not MotionOperation.LINEAR_TCP):
                 raise RuntimeError("planner 返回的 post-pick 筛选结果与请求不匹配")
             attempts.append({
                 "candidate_id": initial.selected_candidate_id,
@@ -469,7 +543,7 @@ class PickSkill:
                 "request": request.to_dict(), "result": result.to_dict(),
             })
             if result.success and result.trajectory is not None:
-                selected = (index, target)
+                selected = (index, target, request, result)
                 break
 
         hold = SkillStage("hold", "not_executed", details={
@@ -481,29 +555,15 @@ class PickSkill:
                 "candidates_checked": len(candidates),
             })
         else:
-            index, target = selected
-            request = MotionRequest(
-                f"{initial.selected_candidate_id}:postpick_linear",
-                MotionOperation.LINEAR_TCP, attached.group, attached.start,
-                target, attached.scene, CollisionPolicy(), seed=attached.seed,
+            index, target, request, result = selected
+            lift = SkillStage(
+                "lift", "planned", target, request, result,
+                {"screened_candidate_index": index, "path_kind": "linear_tcp",
+                 "candidate_screen_trajectory_reused": True},
             )
-            result = planner.plan(request)
-            if result.request_id != request.request_id or result.operation is not MotionOperation.LINEAR_TCP:
-                raise RuntimeError("planner 返回的 post-pick 直线结果与请求不匹配")
-            attempts.append({
-                "candidate_id": initial.selected_candidate_id,
-                "stage": "postpick_linear", "index": index,
-                "request": request.to_dict(), "result": result.to_dict(),
+            hold = SkillStage("hold", "planned", details={
+                "duration_s": settings.hold_duration_s,
             })
-            if result.success and result.trajectory is None:
-                raise RuntimeError("post-pick 直线成功结果必须包含轨迹")
-            lift = SkillStage("lift", "planned" if result.success else "failed",
-                              target, request, result,
-                              {"screened_candidate_index": index, "path_kind": "linear_tcp"})
-            if result.success:
-                hold = SkillStage("hold", "planned", details={
-                    "duration_s": settings.hold_duration_s,
-                })
         stages = initial.stages[:4] + (lift, hold)
         assert tuple(stage.name for stage in stages) == PICK_STAGE_ORDER
         return SkillPlan("pick", initial.selected_candidate_id, stages, tuple(attempts))

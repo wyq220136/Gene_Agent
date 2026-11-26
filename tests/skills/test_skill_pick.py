@@ -342,7 +342,7 @@ def test_legacy_visual_selects_rotated_pregrasp_by_ik_before_planning_path():
         MotionOperation.IK, MotionOperation.IK,
     ]
     prechecks = [request for request in planner.requests if "pregrasp_ik" in request.request_id]
-    assert len(prechecks) == 34  # 两个 final IK 候选各 17 个原版局部姿态。
+    assert len(prechecks) == 46  # 两个候选各 17 个 X/Y 分支和 6 个 wrist-roll 分支。
     assert all(request.operation is MotionOperation.IK for request in prechecks)
     assert [request.operation for request in planner.requests[-2:]] == [
         MotionOperation.PLAN, MotionOperation.LINEAR_TCP,
@@ -387,7 +387,7 @@ def test_visual_retreat_uses_attached_scene_and_previous_approach_endpoint():
     result = PickSkill().plan_visual_retreat(planner, initial, attached, settings)
     retreat_requests = planner.requests[before:]
     assert [request.operation for request in retreat_requests] == [
-        MotionOperation.PLAN, MotionOperation.LINEAR_TCP,
+        MotionOperation.LINEAR_TCP,
     ]
     assert all(request.start == approach_end and request.scene == attached.scene
                for request in retreat_requests)
@@ -397,7 +397,7 @@ def test_visual_retreat_uses_attached_scene_and_previous_approach_endpoint():
     assert result.stage("lift").result.trajectory is not None
 
 
-def test_visual_retreat_keeps_old_first_feasible_target_when_linear_path_fails():
+def test_visual_retreat_checks_all_linear_candidates_when_paths_fail():
     planner = Planner(linear_success=False)
     settings = GraspSettings()
     # 前四段需要已有直线轨迹；只在 post-pick 阶段令直线规划失败。
@@ -411,8 +411,8 @@ def test_visual_retreat_keeps_old_first_feasible_target_when_linear_path_fails()
     assert result.stage("lift").status == "failed"
     assert result.stage("hold").status == "not_executed"
     assert [request.operation for request in planner.requests[before:]] == [
-        MotionOperation.PLAN, MotionOperation.LINEAR_TCP,
-    ]
+        MotionOperation.LINEAR_TCP,
+    ] * 17
 
 
 def test_postpick_candidates_keep_old_pregrasp_direction_and_local_rotation_order():

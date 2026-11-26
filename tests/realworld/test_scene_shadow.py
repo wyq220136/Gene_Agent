@@ -288,6 +288,7 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
 
     class StubPlan:
         selected_candidate_id = "real_d00_bowl_ring_02_00"
+        attempts = ()
 
         def stage(self, name):
             return SimpleNamespace(status="planned" if name in {
@@ -300,13 +301,14 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
                                for name in ("open", "pregrasp", "approach", "close", "lift", "hold")]}
 
     def old_selection(case, settings, *, seed, enforce_table_angle, proposals):
-        assert enforce_table_angle is False
+        assert enforce_table_angle is True
         seen["seed"] = seed
         seen["settings"] = settings
         seen["case"] = case
-        assert len(case.candidates) == len(proposals) == settings.max_grasp_candidates == 160
+        assert len(case.candidates) == settings.max_grasp_candidates == 160
+        assert len(proposals) == 32
         assert {item["parameters"]["depth_m"] for item in case.candidates} == {.015, .025, .028, .03}
-        assert [item.candidate_id for item in proposals] == [item["candidate_id"] for item in case.candidates]
+        assert {item.parameters["depth_m"] for item in proposals} == {.015, .025, .028, .03}
         assert case.candidates[0]["parameters"]["radial_offset_m"] == pytest.approx(0.)
         assert len(case.candidates[0]["parameters"]["tip_y_rad"]) == 5
         np.testing.assert_allclose(case.candidates[0]["parameters"]["tilt_pivot_tcp_m"], 0.)
@@ -327,6 +329,8 @@ def test_observed_bowl_plan_only_calls_original_pick_skill_selection(tmp_path, m
     assert seen["seed"] == 321
     assert seen["settings"].approach_distance_m == pytest.approx(0.05)
     assert seen["settings"].candidate_selection == "legacy_ik"
+    assert seen["settings"].pregrasp_search == "batch_all"
+    assert seen["settings"].align_before_approach is True
     assert report["grasp_prefix_planned"] is True
     assert report["physical_pick_success"] is False
     assert report["stage_collision_snapshot_sha256"] == {
@@ -394,6 +398,11 @@ def test_observed_bowl_stage_real_export_and_motion_adapter_without_gpu(tmp_path
             scene_scope = kwargs["scene_scope"]
             scene_snapshot_sha256 = kwargs["scene_snapshot_sha256"]
             joint_names = tuple(kwargs["joint_names"])
+
+            def fk(self, request_names, q):
+                pose = np.eye(4)
+                pose[2, 3] = (float(q[0]) - float(joints["right"][0])) * 50. - .05
+                return pose
 
             def plan_linear_tcp(self, request_names, q, target, *, target_frame):
                 calls.append((tuple(request_names), tuple(q), target_frame))

@@ -18,9 +18,12 @@ from gene_agent.motion import (
     CuroboPlannerAdapter, JointState, PlannerMode, PlanningSceneRef,
     SynchronousPlanner, load_realman_motion_config,
 )
+from gene_agent.motion.model import MotionFailure, MotionFailureKind, MotionOperation, PoseTarget
 from gene_agent.skills import PickSkill, SkillContext, load_grasp_settings
 from gene_agent.skills.runtime.planning import SkillPlan
-from gene_agent.simulation.planned_contact import validate_planned_target_contacts
+from gene_agent.simulation.planned_contact import (
+    validate_planned_target_contacts, validate_planned_active_arm_contacts,
+)
 
 from gene_agent.tasks.policies.microwave_task.planning.attachment import build_bowl_attachment_snapshot
 from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase, prepare_grasp_stage_snapshots, tcp_path_for_positions
@@ -178,8 +181,8 @@ def base_side_bowl_proposals(
             or not 0.0 < lower <= preferred <= upper < 90.0
             or not -1.0 <= minimum_alignment <= 1.0):
         raise ValueError("Bowl 桌面抓取角或近右臂基座侧阈值非法")
-    if not 0.0 <= minimum_external <= 1.0:
-        raise ValueError("Bowl 外侧接近阈值必须位于 [0, 1]")
+    if not -1.0 <= minimum_external <= 1.0:
+        raise ValueError("Bowl 外侧接近阈值必须位于 [-1, 1]")
     if radial_tolerance < 0.0 or height_tolerance < 0.0:
         raise ValueError("Bowl 碗沿容差不能为负")
 
@@ -352,6 +355,66 @@ def active_arm_base_reference(case: PickBowlCase, group: str = "right") -> tuple
     return body_name, position
 
 
+class _BowlGeometryCheckedAdapter(CuroboPlannerAdapter):
+    """候选循环内补验实际碰撞 geom；通用 Skill 仍不依赖 MuJoCo。"""
+
+    def __init__(self, planner, *, case, stage_snapshot, contact_stage):
+        super().__init__(planner, group="right", scene_revision=case.revision)
+        import mujoco
+        self.case = case
+        self.contact_stage = bool(contact_stage)
+        self.geometry_data = mujoco.MjData(case.model)
+        mujoco.mj_copyData(self.geometry_data, case.model, case.data)
+        self.geometry_data.qpos[:] = stage_snapshot["qpos_snapshot"]
+        mujoco.mj_forward(case.model, self.geometry_data)
+
+    def plan(self, request):
+        result = super().plan(request)
+        if (not result.success or result.trajectory is None
+                or resolve_collision_mode() is not CollisionMode.FULL):
+            return result
+        allow_pads = (self.contact_stage and request.operation is MotionOperation.LINEAR_TCP
+                      and request.collision_policy.policy_id == "finger_object_contact"
+                      and any(a.first == "gripper_fingers" and a.second == "bowl"
+                              for a in request.collision_policy.allowances))
+        check = validate_planned_active_arm_contacts(
+            self.case.model, self.geometry_data, self.case.metadata["robot"],
+            group="right", trajectory=result.trajectory,
+            allowed_target_body="bowl" if allow_pads else None,
+            allowed_target_geom_names=(
+                self.case.metadata["robot"]["grippers"]["right"]["pad_geom_names"]
+                if allow_pads else ()
+            ),
+        )
+        metrics = {**result.metrics, "actual_geometry_postcheck": check,
+                   "backend_plan_success_before_geometry_postcheck": True}
+        if check["success"]:
+            return replace(result, metrics=metrics)
+        return replace(result, success=False, metrics=metrics, failure=MotionFailure(
+            MotionFailureKind.PATH_COLLISION,
+            "实际MuJoCo几何在候选路径出现非允许活动臂穿入",
+            details={"actual_geometry_postcheck": check},
+        ))
+
+
+def make_bowl_pregrasp_targets(final: PoseTarget, distance_m: float) -> tuple[PoseTarget, ...]:
+    """原 23 个入口均失败时补充 5 个水平入口。"""
+    from scipy.spatial.transform import Rotation
+    outward = -np.asarray(final.matrix[:3, 2], dtype=float).copy()
+    outward[2] = 0.0
+    length = float(np.linalg.norm(outward))
+    if length <= 1e-9:
+        return ()
+    outward /= length
+    targets = []
+    for angle in (0.0, -22.5, 22.5, -45.0, 45.0):
+        pose = np.array(final.matrix, copy=True)
+        direction = Rotation.from_euler("z", angle, degrees=True).apply(outward)
+        pose[:3, 3] += direction * distance_m
+        targets.append(PoseTarget(final.frame, pose))
+    return tuple(targets)
+
+
 def plan_bowl_grasp_stages(
     case: PickBowlCase, profile, *, seed: int = 123,
     enforce_table_angle: bool = True,
@@ -392,7 +455,7 @@ def plan_bowl_grasp_stages(
         case, openings.pop(), group="right",
     )
 
-    def stage_adapter(stage_snapshot: dict[str, Any]) -> CuroboPlannerAdapter:
+    def stage_adapter(stage_snapshot: dict[str, Any], *, contact_stage=False) -> CuroboPlannerAdapter:
         settings = load_realman_motion_config(
             "right", robot, gripper_snapshot=stage_snapshot.get("gripper_snapshot"),
         )
@@ -402,12 +465,13 @@ def plan_bowl_grasp_stages(
             planner_mode=PlannerMode.CUDA_GRAPH_BENCHMARK, random_seed=seed,
         )
         planner.diagnostic_snapshot = stage_snapshot
-        return CuroboPlannerAdapter(
-            planner, group="right", scene_revision=case.revision,
+        return _BowlGeometryCheckedAdapter(
+            planner, case=case, stage_snapshot=stage_snapshot,
+            contact_stage=contact_stage,
         )
 
     adapter = stage_adapter(strict_snapshot)
-    contact_adapter = stage_adapter(contact_snapshot)
+    contact_adapter = stage_adapter(contact_snapshot, contact_stage=True)
     context = SkillContext(
         group="right", start=start,
         scene=PlanningSceneRef(
@@ -418,10 +482,56 @@ def plan_bowl_grasp_stages(
     contact_scene = PlanningSceneRef(
         case.revision, contact_snapshot["snapshot_sha256"], contact_snapshot["scope"],
     )
-    result = PickSkill().plan(
-        adapter, proposals, context, profile,
-        contact_planner=contact_adapter, contact_scene=contact_scene,
-    )
+    from gene_agent.motion.curobo.session import CuroboPlannerPool
+    from .bowl_lift_screen import screen_bowl_lift
+    lift_pool = CuroboPlannerPool(planner_factory=SynchronousPlanner, max_entries=1)
+    attachment_profile = json.loads(
+        (ROOT / "data/task_1/skills/skill_profiles.json").read_text(encoding="utf8")
+    )["pick_bowl_attachment_proxy"]
+    check_index = 0
+
+    def postgrasp_check(proposal, pre_result, approach_result):
+        nonlocal check_index
+        check_index += 1
+        return screen_bowl_lift(
+            case, proposal, approach_result, fk=adapter.fk,
+            distance_m=profile.lift_distance_m,
+            base_position_world=base_position,
+            attachment_profile=attachment_profile, pool=lift_pool, seed=seed,
+            output=case.output_dir / "predicted_lift" / f"{check_index:03d}_{proposal.candidate_id}",
+        )
+
+    try:
+        result = PickSkill().plan(
+            adapter, proposals, context, profile,
+            contact_planner=contact_adapter, contact_scene=contact_scene,
+            candidate_postcheck=postgrasp_check if profile.align_before_approach else None,
+        )
+        if (profile.align_before_approach and result.selected_candidate_id is None
+                and any(row["stage"] == "final_grasp_ik" and row["result"]["success"]
+                        for row in result.attempts)):
+            from gene_agent.motion.model import motion_request_from_dict, motion_result_from_dict
+            evidence = tuple(
+                (motion_request_from_dict(row["request"]), motion_result_from_dict(row["result"]))
+                for row in result.attempts if row["stage"] == "final_grasp_ik"
+            )
+            alternative = PickSkill().plan(
+                adapter, proposals, context, profile,
+                contact_planner=contact_adapter, contact_scene=contact_scene,
+                pregrasp_target_generator=make_bowl_pregrasp_targets,
+                candidate_postcheck=postgrasp_check,
+                final_ik_evidence=evidence,
+            )
+            result = replace(alternative, attempts=(
+                *result.attempts,
+                {"stage": "pregrasp_geometry_fallback",
+                 "source": "original_23_prefixes_exhausted",
+                 "geometry": "5_horizontal_entries_with_final_grasp_orientation",
+                 "final_ik_reused_without_new_search": True},
+                *(row for row in alternative.attempts if row["stage"] != "final_grasp_ik"),
+            ))
+    finally:
+        lift_pool.clear()
     return BowlGraspStageSelection(
         result, adapter, context, proposals, strict_snapshot, contact_snapshot,
     )

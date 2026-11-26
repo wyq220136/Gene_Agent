@@ -596,7 +596,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         diagnostics = stack.enter_context(RealworldRunDiagnostics(
             output, perception_paths=(source.parent if setup is not None else source,
                                       output / "observations" / "0000"),
-            options=config.get("diagnostics"),
+            options=config.get("diagnostics"), failure_only=True,
             metadata={"subtask": subtask, "execute": bool(execute),
                       "plan_only": bool(plan_only), "active_group": config["active_group"],
                       "motion": current_motion_config().to_dict()}))
@@ -698,16 +698,16 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                         initial_scene, perception_dir=source.parent, setup=setup,
                         output_dir=output / "observed_geometry",
                         T_world_sdk=config["scene_parameters"]["T_world_sdk"])
-                return plan_microwave_task1(
+                return diagnostics.finish(plan_microwave_task1(
                     initial_scene, planner_pool=pool, output_dir=output,
-                    subtask_options=options, include_knob=config.get("include_knob", False))
+                    subtask_options=options, include_knob=config.get("include_knob", False)))
             if subtask == "all":
-                return run_observed_microwave_task1(
+                return diagnostics.finish(run_observed_microwave_task1(
                     observe_collision_scene=observer, make_runtime=make_runtime,
                     planner_pool=pool, output_dir=output, subtask_options=options,
                     execute=execute, scene_drift_limits=config["scene_drift_limits"],
                     include_knob=config.get("include_knob", False),
-                )
+                ))
             hold = config.get("prepared_hold_report")
             prepared = None if hold is None else json.loads(hold.read_text(encoding="utf-8"))
             if prepare_held_bowl:
@@ -731,13 +731,13 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                 from gene_agent.realworld.microwave.operation_perception import forward_observation_hooks
                 forward_observation_hooks(live_observer, observe_first_then_live)
                 observer = observe_first_then_live
-            return run_observed_microwave_subtask(
+            return diagnostics.finish(run_observed_microwave_subtask(
                 name=subtask, observe_collision_scene=observer,
                 make_runtime=make_runtime, planner_pool=pool,
                 output_dir=output, options=options if subtask in _COMBO_KINDS else options[_OPTION_KEY[subtask]],
                 execute=execute, prepared_hold_report=prepared,
                 scene_drift_limits=config["scene_drift_limits"],
-            )
+            ))
         finally:
             pool.clear()
 

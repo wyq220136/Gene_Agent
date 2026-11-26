@@ -215,6 +215,7 @@ class MotionRequest:
     planner_mode: PlannerMode = PlannerMode.CUDA_GRAPH_BENCHMARK
     approximate_ik_budget: Mapping[str, float] | None = None
     pivot_limits: PivotLimits | None = None
+    joint_target: JointState | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", _nonempty(self.request_id, name="request ID"))
@@ -230,6 +231,15 @@ class MotionRequest:
             raise TypeError("scene 必须是 PlanningSceneRef")
         if not isinstance(self.collision_policy, CollisionPolicy):
             raise TypeError("collision_policy 必须是 CollisionPolicy")
+        if self.joint_target is not None:
+            if self.operation is not MotionOperation.PLAN:
+                raise ValueError("joint_target 只适用于普通 PLAN")
+            if not isinstance(self.joint_target, JointState):
+                raise TypeError("joint_target 必须是 JointState")
+            if self.joint_target.joint_names != self.start.joint_names:
+                raise ValueError("joint_target 与 start 的关节名称和顺序必须一致")
+            if self.approximate_ik_budget is not None:
+                raise ValueError("显式 joint_target 不能再由近似 IK 替换")
         if self.operation is MotionOperation.PIVOT_TCP:
             if not isinstance(self.pivot_limits, PivotLimits):
                 raise ValueError("pivot_tcp必须显式提供PivotLimits")
@@ -259,6 +269,8 @@ class MotionRequest:
         }
         if self.pivot_limits is not None:
             result["pivot_limits"] = self.pivot_limits.to_dict()
+        if self.joint_target is not None:
+            result["joint_target"] = self.joint_target.to_dict()
         return result
 
 
@@ -425,6 +437,9 @@ def motion_request_from_dict(value: Mapping[str, Any]) -> MotionRequest:
         approximate_ik_budget=value.get("approximate_ik_budget"),
         pivot_limits=(None if value.get("pivot_limits") is None
                       else PivotLimits(**value["pivot_limits"])),
+        joint_target=(None if value.get("joint_target") is None else JointState(
+            tuple(value["joint_target"]["joint_names"]),
+            tuple(value["joint_target"]["positions_rad"]))),
     )
 
 

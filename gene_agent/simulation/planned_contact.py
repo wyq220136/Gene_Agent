@@ -149,3 +149,83 @@ def validate_planned_target_contacts(
         "source": "mujoco_contact_geometry_at_planned_waypoints",
         "limitation": "离散路点复核；执行时仍需检查实际接触、运动连续段和夹持力",
     }
+
+
+def validate_planned_active_arm_contacts(
+    model: mujoco.MjModel, data: mujoco.MjData, robot_metadata: Mapping,
+    *, group: str, trajectory: JointTrajectory,
+    allowed_target_body: str | None = None,
+    allowed_target_geom_names: Sequence[str] = (),
+) -> dict:
+    """用实际已启用 geom 拒绝活动臂路径穿入，保留明确允许的接触对。"""
+    if not isinstance(trajectory, JointTrajectory):
+        raise TypeError("trajectory 必须是 JointTrajectory")
+    active_root = model.body(robot_metadata["group_root_bodies"][group]).id
+
+    def descendant(body_id, root_id):
+        while body_id:
+            if body_id == root_id:
+                return True
+            body_id = int(model.body_parentid[body_id])
+        return root_id == 0
+
+    active = {i for i in range(model.nbody) if descendant(i, active_root)}
+    mounting = robot_metadata.get("mounting_contact_exceptions", {})
+    mount_bodies = {model.body(f"{group}_{link}").id
+                    for link in mounting.get("robot_links", ())}
+    if not mount_bodies <= active:
+        raise ValueError("安装接触允许body必须属于活动机械臂")
+    mount_geoms = {model.geom(name).id for name in mounting.get("source_geom_names", ())}
+    pads = {model.geom(name).id for name in allowed_target_geom_names}
+    if pads and allowed_target_body is None:
+        raise ValueError("允许指垫接触必须明确指定目标body")
+    if any(int(model.geom_bodyid[g]) not in active for g in pads):
+        raise ValueError("允许接触的指垫必须属于活动机械臂")
+    target_root = model.body(allowed_target_body).id if allowed_target_body is not None else None
+    frozen = mujoco.MjData(model)
+    mujoco.mj_copyData(frozen, model, data)
+    qaddrs = [int(model.joint(name).qposadr[0]) for name in trajectory.joint_names]
+    forbidden, forbidden_count, allowed_count, margin_count = [], 0, 0, 0
+    for index, positions in enumerate(trajectory.positions_rad):
+        frozen.qpos[qaddrs] = positions
+        mujoco.mj_forward(model, frozen)
+        for contact in frozen.contact:
+            g0, g1 = int(contact.geom1), int(contact.geom2)
+            b0, b1 = int(model.geom_bodyid[g0]), int(model.geom_bodyid[g1])
+            if b0 not in active and b1 not in active:
+                continue
+            distance = float(contact.dist)
+            if distance >= 0.:
+                margin_count += 1
+                continue
+            mount_allowed = ((b0 in mount_bodies and g1 in mount_geoms)
+                             or (b1 in mount_bodies and g0 in mount_geoms))
+            pad_allowed = target_root is not None and (
+                (g0 in pads and descendant(b1, target_root))
+                or (g1 in pads and descendant(b0, target_root)))
+            if mount_allowed or pad_allowed:
+                allowed_count += 1
+                continue
+            forbidden_count += 1
+            if len(forbidden) < 30:
+                forbidden.append({
+                    "waypoint_index": index,
+                    "geom_names": [model.geom(g0).name, model.geom(g1).name],
+                    "body_names": [model.body(b0).name, model.body(b1).name],
+                    "distance_m": distance, "penetration_m": -distance,
+                    "joint_positions_rad": list(positions),
+                })
+    return {
+        "success": forbidden_count == 0,
+        "checked_waypoints": len(trajectory.positions_rad),
+        "forbidden_contact_count": forbidden_count,
+        "forbidden_contacts": forbidden,
+        "allowed_contact_count": allowed_count,
+        "nonpenetrating_margin_contact_count": margin_count,
+        "mounting_contact_policy": dict(mounting),
+        "allowed_target_body": allowed_target_body,
+        "allowed_target_geom_names": list(allowed_target_geom_names),
+        "source": "mujoco_enabled_active_arm_geometry_at_planned_waypoints",
+        "rule": "negative contact.dist only; explicit mounting and target-pad pairs",
+        "limitation": "离散路点几何复核；不代表连续扫掠、实际跟踪或夹持成功",
+    }

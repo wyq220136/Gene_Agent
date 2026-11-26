@@ -76,7 +76,7 @@ def test_first_complete_prefix_stops_before_other_pregrasp_candidates():
     assert plan.selected_candidate_id == "a"
     assert plan.stage("approach").status == "planned"
     batches = [batch for kind, batch in planner.calls if kind == "batch"]
-    assert [len(b) for b in batches] == [2, 17]  # 最终 IK 批筛，随后仅首个 grasp。
+    assert [len(b) for b in batches] == [2, 23]  # 最终 IK 批筛，随后仅首个 grasp。
     assert all(r.request_id.startswith("a:") for r in batches[1])
     assert len(requests(planner, MotionOperation.PLAN)) == 1
     assert len(requests(planner, MotionOperation.LINEAR_TCP)) == 1
@@ -103,7 +103,7 @@ def test_failed_duplicate_requests_reused_before_backend(failure, operation):
     assert plan.selected_candidate_id == "c"
     duplicates = [a for a in plan.attempts if a["candidate_id"] == "b"
                   and a["stage"] == ("pregrasp_ik" if failure == "ik" else "pregrasp")]
-    assert len(duplicates) == 17
+    assert len(duplicates) == 23
     assert all(not a["result"]["success"] and a["result"]["duration_s"] == 0 for a in duplicates)
     assert all(a["result"]["metrics"]["request_reuse"]["source_request_id"].startswith("a:")
                for a in duplicates)
@@ -122,7 +122,7 @@ def test_successful_duplicate_ik_and_path_reused_but_approach_checked_for_new_gr
     planner.result = result
     plan = solve(planner, (proposal("a"), proposal("b"), proposal("c", .5)))
     assert plan.selected_candidate_id == "b"
-    assert len(requests(planner, MotionOperation.PLAN)) == 17
+    assert len(requests(planner, MotionOperation.PLAN)) == 23
     pre = plan.stage("pregrasp").result
     assert pre.success and pre.request_id == "b:pregrasp" and pre.duration_s == 0
     assert pre.metrics["request_reuse"]["source_request_id"] == "a:pregrasp"

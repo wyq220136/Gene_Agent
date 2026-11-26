@@ -25,8 +25,11 @@ class GraspSettings:
     max_pregrasp_joint_travel_rad: float | None = None
     max_approach_joint_travel_rad: float | None = None
     pregrasp_search: str = "batch_all"
+    align_before_approach: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.align_before_approach) is not bool:
+            raise ValueError("align_before_approach 必须为 bool")
         values = (self.approach_distance_m, self.lift_distance_m, self.open_width_m,
                   self.hold_duration_s)
         if any(not np.isfinite(value) or value <= 0 for value in values):

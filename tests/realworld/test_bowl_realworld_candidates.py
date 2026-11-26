@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation
 from gene_agent.knowledge import bowl_grasp_candidates
 from gene_agent.knowledge.geometry import load_concept
 from gene_agent.realworld.microwave.bowl_candidates import observed_bowl_candidates
+from gene_agent.realworld.microwave.bowl_pose_check import BowlPoseTableError
 from gene_agent.tasks.policies.microwave_task.planning import grasp
 
 
@@ -36,7 +37,7 @@ def _scene(world_sdk=None):
 
 
 @pytest.mark.parametrize("bowl", FAILURE_BOWL_POSES)
-def test_old_geometry_has_no_candidates_but_real_afford_keeps_all(bowl):
+def test_old_geometry_failure_does_not_remove_afford_depth_candidates(bowl):
     bowl = np.asarray(bowl)
     # 冻结旧自动参数；实测支点近似值只用于说明高度筛选根因，不参与新策略。
     old = bowl_grasp_candidates(bowl, parameters={
@@ -53,7 +54,15 @@ def test_old_geometry_has_no_candidates_but_real_afford_keeps_all(bowl):
             old, object_pose_world=bowl, base_position_world=np.zeros(3),
             enforce_table_angle=False,
         )
-    candidates, evidence = observed_bowl_candidates(_scene(), bowl, pose_source="frozen_observation")
+    try:
+        candidates, evidence = observed_bowl_candidates(
+            _scene(), bowl, pose_source="frozen_observation",
+        )
+    except BowlPoseTableError:
+        # 第一份历史输入已被同帧桌面一致性检查确认上下颠倒；候选策略
+        # 不得绕过该感知错误继续生成动作。
+        assert np.allclose(bowl, np.asarray(FAILURE_BOWL_POSES[0]))
+        return
     assert len(candidates) == len(evidence["candidate_targets"]) == 160
     assert {c["parameters"]["depth_m"] for c in candidates} == {.015, .025, .028, .03}
     table_z = evidence["table_height_sdk_m"]

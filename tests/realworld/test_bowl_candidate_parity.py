@@ -1,9 +1,8 @@
-"""冻结同一场景，仿真保留接触筛选，真机使用 AffordToolAct 候选；不执行设备。"""
+"""冻结同一场景：真机保留 AffordToolAct 生成，并复用仿真后续筛选。"""
 
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from dataclasses import replace
 
 import mujoco
 import numpy as np
@@ -21,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("dx,dy,yaw_deg", [(0., 0., 0.), (.07, -.03, 35.), (-.03, .06, -60.)])
-def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, dx, dy, yaw_deg):
+def test_real_afford_generation_then_simulation_geometry_filter(tmp_path, monkeypatch, dx, dy, yaw_deg):
     config = json.loads((ROOT / "config/scenes/task_1.json").read_text())
     bowl = np.array(config["objects"]["bowl"]["simulation_nominal_pose"], dtype=float)
     bowl[:2, 3] += [dx, dy]
@@ -51,6 +50,7 @@ def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, 
 
     class UnselectedPlan:
         selected_candidate_id = None
+        attempts = ()
 
         def stage(self, name):
             return SimpleNamespace(status="failed")
@@ -61,7 +61,7 @@ def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, 
     def select(current, settings, *, seed, enforce_table_angle=True, proposals=None):
         _, base = grasp.active_arm_base_reference(current)
         if proposals is None:
-            assert len(seen) == 0  # 只有仿真调用严格接触筛选。
+            assert len(seen) == 0
             proposals = grasp.base_side_bowl_proposals(
                 current.candidates, object_pose_world=current.bowl_pose,
                 base_position_world=base,
@@ -69,8 +69,9 @@ def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, 
                 enforce_table_angle=enforce_table_angle,
             )
         else:
-            assert len(proposals) == len(current.candidates) == 160
-        assert enforce_table_angle is (len(seen) == 0)
+            assert len(current.candidates) == 160
+            assert len(proposals) == 32
+        assert enforce_table_angle is True
         seen.append((current.candidates, proposals, settings, seed))
         return SimpleNamespace(
             plan=UnselectedPlan(), proposals=proposals,
@@ -92,7 +93,8 @@ def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, 
     sim_candidates, sim_proposals, sim_settings, sim_seed = seen[0]
     real_candidates, real_proposals, real_settings, real_seed = seen[1]
     assert len(sim_candidates) == len(case.candidates) == 48
-    assert len(real_candidates) == len(real_proposals) == 160
+    assert len(real_candidates) == 160
+    assert len(real_proposals) == 32
     reopened = load_pick_bowl_case(case.output_dir)
     for expected, displayed, loaded in zip(sim_candidates, case.candidates, reopened.candidates):
         assert displayed["candidate_id"] == loaded["candidate_id"] == expected["candidate_id"]
@@ -110,13 +112,23 @@ def test_real_afford_candidates_do_not_change_simulation(tmp_path, monkeypatch, 
     displayed = real.build_observed_bowl_grasp_proposals(scene)["proposals"]
     assert [p.candidate_id for p in displayed] == [p.candidate_id for p in real_proposals]
     assert real_settings.max_grasp_candidates == 160
-    assert replace(real_settings, max_grasp_candidates=sim_settings.max_grasp_candidates) == sim_settings
+    assert real_settings.pregrasp_search == "batch_all"
+    assert real_settings.align_before_approach is True
     assert real_seed == sim_seed == 123
     assert report["generated_candidate_count"] == 160
-    assert report["grasp_table_angle_constraint_enabled"] is False
-    assert report["grasp_table_angle_allowed_deg"] is None
-    assert report["grasp_table_angle_preferred_deg"] is None
-    assert report["simulation_geometry_pruning_enabled"] is False
+    assert report["geometry_filtered_candidate_count"] == 32
+    assert report["grasp_table_angle_constraint_enabled"] is True
+    assert report["grasp_table_angle_allowed_deg"] == [45., 70.]
+    assert report["grasp_table_angle_preferred_deg"] == 55.
+    assert report["simulation_geometry_pruning_enabled"] is True
+    assert {item.parameters["depth_m"] for item in real_proposals} == {.015, .025, .028, .03}
+    for item in real_proposals:
+        metrics = grasp.bowl_grasp_geometry_metrics(
+            item, object_pose_world=case.bowl_pose,
+            base_position_world=grasp.active_arm_base_reference(case)[1],
+            table_normal_world=case.data.geom("scene_table").xmat.reshape(3, 3)[:, 2],
+        )
+        assert 45. - 1e-9 <= metrics["table_angle_deg"] <= 70. + 1e-9
     assert len(report["candidate_parameters"]["candidate_targets"]) == 160
     assert len(report["candidate_parameters"]["profile_sha256"]) == 64
     np.testing.assert_array_equal(case.data.qpos, frozen_qpos)

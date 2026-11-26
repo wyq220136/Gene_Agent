@@ -1596,7 +1596,7 @@ class SynchronousPlanner:
                     with optimizer_mounting_mask(self._planner.kinematics, self.mounting_contact_policy) if self._validator else nullcontext():
                         cspace_goal = getattr(self, "_cspace_goal_positions", None)
                         if cspace_goal is not None:
-                            raw = self._planner.plan_cspace(
+                            raw = self._plan_cspace(
                                 self._state(self.joint_names, cspace_goal),
                                 start, max_attempts=max_attempts,
                             )
@@ -1619,6 +1619,30 @@ class SynchronousPlanner:
                     duration_s=time.perf_counter()-started, timing=phase_timing,
                     start_state_check=start_check,
                 )
+                if getattr(self, "_cspace_goal_positions", None) is not None:
+                    empty.update(
+                        status="joint_target_path_not_found",
+                        failure_category="path_not_found",
+                        message="cuRobo 未返回到指定关节目标的路径（有限搜索）",
+                        joint_target_initialization=(
+                            "existing_curobo_prm_first_attempt"
+                            if getattr(self, "_cspace_use_graph_seed", False)
+                            else "backend_default"
+                        ),
+                        target_positions_rad=self._cspace_goal_positions.tolist(),
+                        failure_detail={
+                            "stage": "trajectory",
+                            "reason_code": "joint_target_path_not_found",
+                            "human_summary": "有限搜索未找到到指定关节目标的路径",
+                            "evidence_strength": "limited_search",
+                            "collision_confirmed": False,
+                            "finite_search_not_global_proof": True,
+                        },
+                        failure_visualization_error=(
+                            "cuRobo returned no trajectory for the explicit joint goal"
+                        ),
+                    )
+                    return empty
                 options = getattr(self, 'diagnostic_options', None)
                 budget = None
                 if options is not None and options.mode == 'on_failure':
@@ -1937,9 +1961,34 @@ class SynchronousPlanner:
                            non_terminal_scale=non_terminal_scale,
                            diagnostic_label=diagnostic_label)
 
+    def _plan_cspace(self, goal, start, *, max_attempts):
+        """显式筛选构型使用已有 PRM 初值；不增加优化次数或种子数。"""
+        if not getattr(self, "_cspace_use_graph_seed", False):
+            return self._planner.plan_cspace(goal, start, max_attempts=max_attempts)
+        from contextlib import ExitStack
+        from ..collision import optimizer_mounting_mask
+
+        graph = self._planner.graph_planner
+        if graph is None:
+            raise RuntimeError("显式关节目标需要已配置的 cuRobo PRM 初始化器")
+        with ExitStack() as contexts:
+            if self._validator:
+                seen = set()
+                for rollout in graph.get_all_rollout_instances():
+                    kinematics = rollout.transition_model.robot_model
+                    if id(kinematics) not in seen:
+                        seen.add(id(kinematics))
+                        contexts.enter_context(optimizer_mounting_mask(
+                            kinematics, self.mounting_contact_policy,
+                        ))
+            return self._planner.plan_cspace(
+                goal, start, max_attempts=max_attempts, enable_graph_attempt=0,
+            )
+
     def plan_joint_target(self, joint_names, positions, target_positions,
                           target_pose, *, target_frame="world_tcp",
-                          max_attempts: int = 1,
+                          max_attempts: int = 1, verify_target_pose: bool = False,
+                          use_graph_seed: bool = False,
                           diagnostic_label: str | None = None):
         """规划到显式关节目标，同时保留该阶段的位姿和碰撞审计记录.
 
@@ -1950,12 +1999,51 @@ class SynchronousPlanner:
         if goal.shape != (len(self.joint_names),) or not np.isfinite(goal).all():
             raise ValueError("关节目标必须是与规划关节同长度的有限向量")
         self._cspace_goal_positions = goal.copy()
+        self._cspace_use_graph_seed = bool(use_graph_seed)
         try:
-            return self._solve("plan", joint_names, positions, target_pose,
-                               target_frame, max_attempts=max_attempts,
-                               diagnostic_label=diagnostic_label)
+            result = self._solve(
+                "plan", joint_names, positions, target_pose, target_frame,
+                max_attempts=max_attempts, diagnostic_label=diagnostic_label,
+            )
+            result["joint_target_initialization"] = (
+                "existing_curobo_prm_first_attempt" if use_graph_seed
+                else "backend_default"
+            )
+            if result.get("success") and verify_target_pose:
+                from .approximate import _pose_error
+                endpoint = self.fk(self.joint_names, result["positions_rad"][-1])
+                expected = np.asarray(target_pose, dtype=float)
+                if target_frame != "world_tcp":
+                    raise ValueError("关节目标位姿复核只支持 world_tcp")
+                config = self._planner.trajopt_solver.config
+                position_limit = float(config.position_tolerance)
+                rotation_limit = float(config.orientation_tolerance)
+                position_error, rotation_error = _pose_error(expected, endpoint)
+                valid = (position_error < position_limit
+                         and rotation_error < rotation_limit)
+                result["joint_target_validation"] = {
+                    "valid": bool(valid),
+                    "target_positions_rad": goal.tolist(),
+                    "endpoint_max_joint_error_rad": float(np.max(np.abs(
+                        np.asarray(result["positions_rad"][-1]) - goal,
+                    ))),
+                    "endpoint_tcp_pose_world": endpoint.tolist(),
+                    "position_error_m": position_error,
+                    "rotation_error_rad": rotation_error,
+                    "position_tolerance_m": position_limit,
+                    "rotation_tolerance_rad": rotation_limit,
+                    "source": "cspace_endpoint_fk_against_original_pose",
+                }
+                if not valid:
+                    result.update(
+                        success=False, status="joint_target_pose_rejected",
+                        failure_category="constraint_violation",
+                        message="C-space 终点 FK 未满足原始位姿请求",
+                    )
+            return result
         finally:
             self._cspace_goal_positions = None
+            self._cspace_use_graph_seed = False
 
     def plan_pivot_tcp(self, joint_names, positions, target, *, target_frame="world_tcp",
                        max_attempts: int = 1, max_tcp_excursion_m: float,

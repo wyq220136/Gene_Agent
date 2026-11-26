@@ -23,3 +23,5 @@
 - `inspect_native_run.py --run <run>`：失败与耗时摘要（不启动GPU）；`--performance --format json`输出计时；`--details`查看全部失败；`--recheck`只复查保存现场。
 - 同案例迭代：`inspect_native_run.py --run <新episode> --compare-with <原失败episode> --stage <阶段> --hypothesis "本轮猜想" --format json`。物理/接触假设加`--require-executed`，未测到目标阶段不算验证；输入精度和失败优先顺序见[迭代流程](../../docs/task_development/simulation_iteration.md#阶段精度与失败回归)。
 - `replay_motion_request.py --bundle <完整现场> --output <新目录>`：正式cuRobo离线重规划与冷/热对照，无物理执行。碰撞图仍用 `tools/viewers/view_motion_diagnostics.py`，用法与限制见[诊断流程](../../docs/user/motion/curobo_diagnostics.md)。
+
+- RealMan 真机 API 基础自检：`python tools/diagnostics/check_realman_api.py --help`，默认只读原始状态，显式启用小幅关节/夹爪往返；[操作说明](../../docs/user/realman_api_check.md)。

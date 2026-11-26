@@ -452,7 +452,7 @@ OUT="runs/realworld/pick_bowl_precheck_$(date +%Y%m%d_%H%M%S)"
 ```
 
 终端会按 AffordToolAct 粒度打印：运行模式和输出目录、冻结观测 frame/snapshot/障碍数、
-候选生成数量、每批规划成功/失败数与耗时、主要底层失败原因、终态阶段、轨迹数量、
+候选生成数量、主要失败原因、终态阶段、轨迹数量、
 证据文件路径及可直接复制的 Viser 命令。最后一行仍保留机器可读 JSON，便于脚本解析。
 
 首段通过后返回 `validated_prefix`，不发送运动命令。
@@ -627,6 +627,15 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 `Ctrl+C` 不能替代机械急停。异常时按现场停机流程处理，确认机械臂和夹爪状态后再恢复。
 
 ## 10. 运行证据
+
+真机入口默认按**操作终态**输出 cuRobo 详情：候选筛选中部分 IK 失败但最终找到轨迹，不触发详细输出；感知、夹爪、SDK 执行或独立姿态/接触检查失败也不触发。只有操作最终因 cuRobo IK/路径求解失败而停止，才写详细求解证据。运行命令不变。
+
+- `diagnostic_manifest.json` 的 `curobo_logging` 保存策略、总批次/请求数、候选失败数和详情是否输出；没有求解详情不表示没有做规划。
+- 普通 `selection.json` 保留场景锚点、选中候选及必要阶段轨迹，`plan.attempts` 不再反复嵌入；`candidate_selection.json` 仅引用它。候选清单保留状态与简短原因，成功前缀不展开全部求解明细。
+- cuRobo 终态失败时，`initial_scene/motion_requests/` 保存原批次的全部输入目标和一次公共上下文；成功项不额外写结果，失败项的唯一完整结果保存在 `motion_results/`。`events.jsonl` 保留原批次大小/索引及结果引用，`diagnostics/` 仅放摘要与引用。初始场景归档直接使用这份批次输入，不再复制另一份。
+- `failure_analysis.json` 引用事件和候选索引，Markdown 按阶段/原因分组计数；不重复嵌入全部候选和原始诊断。终端只显示终态失败的汇总，逐请求细节通过索引查看。
+- 原始场景与执行证据仍保留。详细记录失败会写入 `diagnostic_errors.json`，不会改变原规划/操作结果；旧日志的读取方式继续兼容。
+
 
 - 感知目录：原始 RGB-D、两个物体 mask、桌面高度计算及固定几何来源、关门参考、两个 session 和来源哈希。
 - `runtime_input.json`：自动装配的有效配置、输入来源、profile 和运行参数。

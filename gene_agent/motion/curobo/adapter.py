@@ -31,6 +31,15 @@ class CuroboPlannerAdapter:
             planner.diagnostic_options = DiagnosticOptions(**recording.options)
 
     def _record(self, requests, results, *, invocation=None):
+        from ..recording import current_motion_recording
+        recording = current_motion_recording()
+        policy = getattr(recording, "curobo_logs", None)
+        if policy is not None:
+            try:
+                return policy.record(self.planner, requests, results, invocation=invocation)
+            except Exception as error:
+                recording.record_error("deferred_curobo_recording", error)
+                return tuple(results)
         if self.request_output_dir is None:
             return tuple(results)
         started = time.perf_counter()
@@ -237,9 +246,15 @@ class CuroboPlannerAdapter:
             try:
                 from .diagnostics import collect_failure_diagnostics
                 import json
-                diagnostic = collect_failure_diagnostics(
-                    self.planner, request, raw, getattr(self.planner, 'diagnostic_snapshot', {}), options)
-                details['diagnostic'] = json.loads(json.dumps(diagnostic,default=lambda v:v.tolist(),allow_nan=False))
+                from ..recording import current_motion_recording
+                policy = getattr(current_motion_recording(), "curobo_logs", None)
+                if policy is not None:
+                    policy.defer_diagnostic(self.planner, request, raw,
+                                            getattr(self.planner, 'diagnostic_snapshot', {}), options)
+                else:
+                    diagnostic = collect_failure_diagnostics(
+                        self.planner, request, raw, getattr(self.planner, 'diagnostic_snapshot', {}), options)
+                    details['diagnostic'] = json.loads(json.dumps(diagnostic,default=lambda v:v.tolist(),allow_nan=False))
             except Exception as exc:
                 details['diagnostic_error'] = f'{type(exc).__name__}: {exc}'
         summary = str(raw.get("message") or raw.get("status") or "cuRobo 规划失败")
@@ -298,6 +313,25 @@ class CuroboPlannerAdapter:
         invalid = self._validate(request, request.operation)
         if invalid is not None:
             return self._record((request,), (invalid,))[0]
+        if request.joint_target is not None:
+            method = getattr(self.planner, "plan_joint_target", None)
+            if method is None:
+                return self._invalid(request, "当前 backend 不支持显式 joint_target")
+            raw = method(
+                request.start.joint_names, request.start.positions_rad,
+                request.joint_target.positions_rad, request.target.matrix,
+                target_frame=request.target.frame, verify_target_pose=True,
+                use_graph_seed=True,
+            )
+            result = self._convert(request, raw)
+            result = replace(result, metrics={
+                **result.metrics, "joint_target": request.joint_target.to_dict(),
+                "target_kind": "screened_joint_state",
+                "joint_target_initialization": raw.get("joint_target_initialization"),
+                **({"joint_target_validation": raw["joint_target_validation"]}
+                   if "joint_target_validation" in raw else {}),
+            })
+            return self._record((request,), (result,))[0]
         if request.operation is MotionOperation.PIVOT_TCP:
             method = getattr(self.planner, "plan_pivot_tcp", None)
             if method is None:

@@ -19,11 +19,12 @@ from scipy.spatial.transform import Rotation
 
 from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase, prepare_grasp_stage_snapshots
 from gene_agent.tasks.policies.microwave_task.planning.grasp import (
-    active_arm_base_reference, legacy_bowl_proposals, bowl_grasp_geometry_metrics,
+    active_arm_base_reference, base_side_bowl_proposals, bowl_grasp_geometry_metrics,
     plan_bowl_grasp_stages,
 )
 from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
-    BOWL_AUTO_GRASP_PROFILE,
+    BOWL_AUTO_GRASP_PROFILE, BOWL_GRASP_TABLE_ANGLE_RANGE_DEG,
+    BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
 )
 from .bowl_candidates import observed_bowl_candidates
 from gene_agent.knowledge.geometry import validate_pose
@@ -43,6 +44,21 @@ from gene_agent.skills.runtime.planning import SkillPlan, SkillStage
 _BOWL_INSTANCE = "Bowl/Bowl_0"
 _ROOT = Path(__file__).resolve().parents[3]
 _PROFILE_PATH = _ROOT / "data/task_1/skills/skill_profiles.json"
+
+
+def _affordtoolact_simulation_filtered_proposals(case, position, normal):
+    """保留 AffordToolAct TCP 定义，仅套用与其坐标语义兼容的仿真筛选。
+
+    AffordToolAct 的 TCP 原点包含指长补偿，且 +Z 方向与仿真候选的接触轴
+    符号不同，因此不使用仿真生成器专属的接触高度和外向轴硬阈值；桌面
+    45°~70°、近基座侧、碗沿半径及双指跨沿条件仍由同一筛选器检查。
+    """
+    return base_side_bowl_proposals(
+        case.candidates, object_pose_world=case.bowl_pose,
+        base_position_world=position, table_normal_world=normal,
+        min_external_approach_alignment=-1.0,
+        rim_height_tolerance_m=0.03,
+    )
 
 
 def _bowl_target(collision_scene: Mapping) -> dict:
@@ -105,9 +121,12 @@ def _selection_geometry(case):
 
 
 def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
-    """使用 AffordToolAct 真机候选顺序，不套用仿真接触几何硬筛选。"""
+    """生成 AffordToolAct 160 候选，再应用仿真抓碗几何约束。"""
     case, target = _observed_case(collision_scene, ".")
-    target["proposals"] = legacy_bowl_proposals(case.candidates)
+    _, position, normal = _selection_geometry(case)
+    target["proposals"] = _affordtoolact_simulation_filtered_proposals(
+        case, position, normal,
+    )
     return target
 
 
@@ -151,32 +170,45 @@ def plan_observed_bowl_grasp_stages(
     effective_profile = Path(profile_path) if profile_path is not None else _PROFILE_PATH
     profile_bytes = effective_profile.read_bytes()
     settings = load_grasp_settings(effective_profile, profile_name)
-    settings = replace(settings, max_grasp_candidates=len(case.candidates),
-                       pregrasp_search="first_valid_prefix")
+    settings = replace(
+        settings, max_grasp_candidates=len(case.candidates),
+        pregrasp_search="batch_all", align_before_approach=True,
+    )
     output.mkdir(parents=True, exist_ok=True)
     body, position, normal = _selection_geometry(case)
     evidence = {
         "input_state_id": target["collision_snapshot_sha256"],
         "bowl_pose_world": case.bowl_pose.tolist(),
-        "candidate_order_policy": target["candidate_parameters"]["candidate_order_policy"],
+        "candidate_generation_order_policy": target["candidate_parameters"]["candidate_order_policy"],
+        "candidate_order_policy": "affordtoolact_8x5x4_then_simulation_geometry_ranking",
         "right_arm_base_reference_body": body,
         "right_arm_base_position_world": position.tolist(),
         "grasp_table_angle_definition": "acute angle(TCP +Z, actual scene_table plane)",
-        "grasp_table_angle_constraint_enabled": False,
-        "grasp_table_angle_allowed_deg": None,
-        "grasp_table_angle_preferred_deg": None,
-        "simulation_geometry_pruning_enabled": False,
+        "grasp_table_angle_constraint_enabled": True,
+        "grasp_table_angle_allowed_deg": list(BOWL_GRASP_TABLE_ANGLE_RANGE_DEG),
+        "grasp_table_angle_preferred_deg": BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+        "simulation_geometry_pruning_enabled": True,
+        "geometry_filter_compatibility": {
+            "enabled": ["base_side", "table_angle_45_70", "rim_radius", "finger_rim_straddle"],
+            "affordtoolact_specific": [
+                "external_axis_sign_not_hard_filtered",
+                "tcp_origin_finger_length_height_compensation",
+            ],
+        },
         "max_grasp_candidates": settings.max_grasp_candidates,
         "candidate_parameters": target["candidate_parameters"],
         "generated_candidate_count": len(case.candidates),
         "pregrasp_search": settings.pregrasp_search,
-        "selection_stop_condition": "first_valid_pregrasp_and_approach_prefix",
-        "pregrasp_request_reuse_scope": "single_grasp_plan_exact_request_except_id",
+        "selection_stop_condition": "simulation_joint_state_rank_then_full_prefix_and_lift_feasibility",
+        "pregrasp_request_reuse_scope": None,
     }
     evidence_path = output / "candidate_selection.json"
     from gene_agent.feedback.realworld_diagnostics import write_candidate_inventory
     from gene_agent.motion.recording import current_motion_recording
-    ordered_proposals = legacy_bowl_proposals(case.candidates)
+    ordered_proposals = _affordtoolact_simulation_filtered_proposals(
+        case, position, normal,
+    )
+    evidence["geometry_filtered_candidate_count"] = len(ordered_proposals)
     candidate_order = [item.candidate_id for item in ordered_proposals]
     inventory_ref = write_candidate_inventory(output, case.candidates, candidate_order=candidate_order)
     evidence["candidate_diagnostics_ref"] = str(inventory_ref)
@@ -186,7 +218,7 @@ def plan_observed_bowl_grasp_stages(
             collision_scene, case.candidates, target["candidate_parameters"], effective_profile, seed)
     try:
         selected = plan_bowl_grasp_stages(
-            case, settings, seed=seed, enforce_table_angle=False,
+            case, settings, seed=seed, enforce_table_angle=True,
             proposals=ordered_proposals,
         )
     except Exception as error:
@@ -228,8 +260,8 @@ def plan_observed_bowl_grasp_stages(
         },
         plan=selected.plan.to_dict(),
     )
-    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-                             encoding="utf-8")
+    from gene_agent.feedback.curobo_log_policy import write_selection_report
+    write_selection_report(evidence_path, evidence)
     planned_prefix = all(
         selected.plan.stage(name).status == "planned"
         for name in ("open", "pregrasp", "approach", "close")
@@ -259,10 +291,7 @@ def plan_observed_bowl_grasp_stages(
         "planning_wall_s": time.perf_counter() - started,
         "plan": selected.plan.to_dict(),
     }
-    (output / "selection.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    write_selection_report(output / "selection.json", report)
     return report
 
 
@@ -286,7 +315,16 @@ def _original_request(selection_report: Mapping, stage_name: str) -> MotionReque
                if row["name"] == stage_name]
     if len(matches) != 1 or matches[0]["status"] != "planned":
         raise ValueError(f"原抓碗阶段未规划成功：{stage_name}")
-    request = motion_request_from_dict(matches[0]["request"])
+    row = matches[0]
+    request_data = row.get("request")
+    if request_data is None and stage_name == "approach":
+        segments = (row.get("details") or {}).get("segments") or ()
+        translations = [item.get("request") for item in segments
+                        if item.get("phase") == "approach_translate"]
+        if len(translations) != 1:
+            raise ValueError("组合 approach 缺少唯一的直线平移请求")
+        request_data = translations[0]
+    request = motion_request_from_dict(request_data)
     if request.operation is not _OPERATIONS[stage_name]:
         raise ValueError(f"原抓碗阶段的路径类型与 {stage_name} 不一致")
     if request.target.frame != "world_tcp":
@@ -399,18 +437,22 @@ def plan_observed_bowl_motion_stage(
     strict, contact = build_observed_bowl_grasp_stage_snapshots(
         collision_scene, open_width_m=width, output_dir=output,
     )
-    stage_snapshot = strict if stage_name == "pregrasp" else contact
     source = collision_scene["snapshot"]
-    stage_scene = {
-        **collision_scene,
-        "snapshot": stage_snapshot,
-        "provenance": {
-            **collision_scene["provenance"],
-            "collision_snapshot_sha256": stage_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": source["snapshot_sha256"],
-            "derived_planning_gripper_width_m": width,
-        },
-    }
+
+    def derived_scene(snapshot):
+        return {
+            **collision_scene,
+            "snapshot": snapshot,
+            "provenance": {
+                **collision_scene["provenance"],
+                "collision_snapshot_sha256": snapshot["snapshot_sha256"],
+                "derived_from_collision_snapshot_sha256": source["snapshot_sha256"],
+                "derived_planning_gripper_width_m": width,
+            },
+        }
+
+    stage_snapshot = strict if stage_name == "pregrasp" else contact
+    stage_scene = derived_scene(stage_snapshot)
     mode = PlannerMode(planner_mode or original.planner_mode)
     context = prepare_plan_only_context(
         stage_scene, group=original.group, planner_pool=planner_pool,
@@ -422,9 +464,24 @@ def plan_observed_bowl_motion_stage(
         context["scene"], original.collision_policy, seed=original.seed,
         planner_mode=mode, approximate_ik_budget=original.approximate_ik_budget,
     )
-    result = context["planner"].plan(request)
-    if result.request_id != request.request_id or result.operation is not request.operation:
-        raise RuntimeError("抓碗阶段 planner 返回的请求 ID 或路径类型不一致")
+    composition = {}
+    strict_context = None
+    if stage_name == "approach":
+        strict_context = prepare_plan_only_context(
+            derived_scene(strict), group=original.group, planner_pool=planner_pool,
+            scene_revision=scene_revision, seed=original.seed, planner_mode=mode,
+        )
+        if strict_context["start"] != context["start"]:
+            raise RuntimeError("approach 严格层与接触层的实测起点不一致")
+        from gene_agent.skills.library.pick.approach import plan_aligned_approach
+        result, composition, _ = plan_aligned_approach(
+            strict_context["planner"], context["planner"], request,
+            strict_context["scene"],
+        )
+    else:
+        result = context["planner"].plan(request)
+        if result.request_id != request.request_id or result.operation is not request.operation:
+            raise RuntimeError("抓碗阶段 planner 返回的请求 ID 或路径类型不一致")
     if result.success and (result.trajectory is None or result.goal_state is None):
         raise RuntimeError("抓碗阶段成功结果缺少连续轨迹或终点关节")
     postcheck = None
@@ -446,6 +503,7 @@ def plan_observed_bowl_motion_stage(
         {"source_selected_candidate_id": selection_report["selected_candidate_id"],
          "anchor_check": anchor,
          "path_kind": request.operation.value,
+         "approach_composition": composition,
          "target_contact_postcheck": postcheck,
          "derived_from_collision_snapshot_sha256": source["snapshot_sha256"]},
     )
@@ -464,6 +522,10 @@ def plan_observed_bowl_motion_stage(
         "planning_wall_s": time.perf_counter() - started,
         "planner_cache_hit": context["planner_cache_hit"],
         "planner_setup_duration_s": context["planner_setup_duration_s"],
+        "strict_planner_cache_hit": (None if strict_context is None
+                                     else strict_context["planner_cache_hit"]),
+        "strict_planner_setup_duration_s": (None if strict_context is None
+                                             else strict_context["planner_setup_duration_s"]),
         "anchor_check": anchor,
         "claim": "当前实测起点的单阶段规划；未执行机器人运动",
         "stage": stage.to_dict(),
@@ -564,8 +626,17 @@ def plan_observed_bowl_lift(
     attached_context = SkillContext(
         "right", context["start"], context["scene"], "bowl", old_request.seed,
     )
+    from gene_agent.tasks.policies.microwave_task.planning.bowl_lift import (
+        make_bowl_lift_candidates,
+    )
+    actual_tcp = context["planner"].fk(context["start"])
+    lift_candidates = make_bowl_lift_candidates(
+        actual_tcp, settings.lift_distance_m,
+        selection_report["right_arm_base_position_world"],
+    )
     plan = PickSkill().plan_visual_retreat(
         context["planner"], initial, attached_context, settings,
+        candidate_poses=lift_candidates,
     )
     lift = plan.stage("lift")
     report = {
@@ -581,7 +652,7 @@ def plan_observed_bowl_lift(
         "planner_cache_hit": context["planner_cache_hit"],
         "planner_setup_duration_s": context["planner_setup_duration_s"],
         "planning_wall_s": time.perf_counter() - started,
-        "claim": "仅复用原 PickSkill 规划 post-pick 筛选与直线 lift；未执行运动或 hold",
+        "claim": "按仿真 Pick 逻辑从实际闭爪状态筛选碗抬升候选；未执行运动或 hold",
         "plan": plan.to_dict(),
         "lift_stage": lift.to_dict(),
     }

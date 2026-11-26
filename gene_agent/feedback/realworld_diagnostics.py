@@ -84,6 +84,22 @@ def candidate_inventory(candidates, plan=None, *, candidate_order=None, error=No
 
 def write_candidate_inventory(output, candidates, plan=None, **kwargs):
     payload = candidate_inventory(candidates, plan, **kwargs)
+    from gene_agent.motion.recording import current_motion_recording
+    policy = getattr(current_motion_recording(), "curobo_logs", None)
+    if policy is not None:
+        stages = {row["name"]: row["status"] for row in (plan or {}).get("stages", ())}
+        prefix_ok = all(stages.get(name) == "planned" for name in ("open", "pregrasp", "approach", "close"))
+        for row in payload["candidates"]:
+            row["phase_count"] = len(row["phases"])
+            for phase in row["phases"]:
+                if phase.get("failure"):
+                    phase["failure"] = {key: phase["failure"].get(key)
+                                        for key in ("kind", "summary", "backend_status")}
+                phase["metrics"] = {key: val for key, val in phase.get("metrics", {}).items()
+                                    if key in {"backend_status", "request_reuse", "replay_request_ref"}}
+            if prefix_ok:
+                row["phases"] = []
+        payload["detail_logging"] = "terminal_curobo_failure_only; full results use events/result refs"
     path = write_json(Path(output) / "candidate_diagnostics.json", payload)
     lines = ["# 抓碗候选筛选", payload["scope"],
              f"生成 {payload['generated_count']}；进入筛选 {payload['selection_count']}；状态 {payload['counts']}",
@@ -102,9 +118,10 @@ def write_candidate_inventory(output, candidates, plan=None, **kwargs):
 
 class RealworldRunDiagnostics:
     """一次真机运行的记录生命周期；旁路错误不会改写正式规划/执行结果。"""
-    def __init__(self, output, *, perception_paths=(), options=None, metadata=None):
+    def __init__(self, output, *, perception_paths=(), options=None, metadata=None, failure_only=False):
         self.root = Path(output).resolve()
-        self.request_output_dir = self.root / "motion_requests"
+        self.request_output_dir = (self.root / "initial_scene" / "motion_requests"
+                                   if failure_only else self.root / "motion_requests")
         self.options = dict(options or {"mode": "on_failure", "budget_s": 5.})
         from gene_agent.motion.curobo.diagnostics import DiagnosticOptions
         DiagnosticOptions(**self.options)
@@ -113,6 +130,8 @@ class RealworldRunDiagnostics:
         self.errors = []
         self._request_dirs = {self.request_output_dir}
         self._initial_attempted = False
+        from .curobo_log_policy import FailureOnlyCuroboLogs
+        self.curobo_logs = FailureOnlyCuroboLogs(self) if failure_only else None
 
     def __enter__(self):
         from gene_agent.motion.recording import motion_recording
@@ -139,6 +158,12 @@ class RealworldRunDiagnostics:
             self.stack.close()
             raise
         return self
+
+    def finish(self, report):
+        """在 planner 释放前按操作终态决定是否落盘详细 cuRobo 证据。"""
+        if self.curobo_logs is not None:
+            self.curobo_logs.finish(report)
+        return report
 
     def record_error(self, scope, error):
         self.errors.append(dict(scope=scope, error=f"{type(error).__name__}: {error}"))
@@ -194,18 +219,23 @@ class RealworldRunDiagnostics:
             self.record_error("selection_scene", error)
             return None
 
-    def record(self, requests, results, *, snapshot, replay_ref=None, invocation=None):
+    def record(self, requests, results, *, snapshot, replay_ref=None, invocation=None,
+               source_batch_indices=None, source_batch_size=None):
         requests, results = list(requests), list(results)
         call_id = uuid4().hex
         if replay_ref:
             self._request_dirs.add(Path(replay_ref).resolve().parent)
+        result_refs = []
+        indices = tuple(range(len(requests))) if source_batch_indices is None else tuple(source_batch_indices)
         for index, (request, result) in enumerate(zip(requests, results)):
             value = result.to_dict()
             identity = f"{call_id}_{index:04d}"
             ref = write_json(self.root / "motion_results" / f"{identity}.json", value)
+            result_refs.append(str(ref.relative_to(self.root)))
             event = dict(schema_version=1, episode_id=self.root.name,
-                kind="planning", invocation_id=call_id, batch_index=index,
-                batch_size=len(requests), invocation=invocation,
+                kind="planning", invocation_id=call_id, batch_index=indices[index],
+                batch_size=len(requests) if source_batch_size is None else source_batch_size,
+                invocation=invocation,
                 stage_id=request.request_id, request_id=request.request_id,
                 phase=("final_grasp_ik" if request.request_id.rsplit(":", 1)[-1] == "final_ik" else
                        "pregrasp_ik" if request.request_id.rsplit(":", 1)[-1].startswith("pregrasp_ik_") else
@@ -222,7 +252,13 @@ class RealworldRunDiagnostics:
                 try:
                     summary = summarize_motion_result(result, snapshot)
                     event["summary"] = summary.to_dict()
-                    detail = save_motion_diagnostic(self.root, dict(event, planning=value), snapshot)
+                    if self.curobo_logs is not None:
+                        detail = write_json(self.root / "diagnostics" / f"{identity}.json", dict(
+                            schema_version=2, request_id=request.request_id,
+                            summary=summary.to_dict(), result_ref=event["result_ref"],
+                            replay_request_ref=event["replay_request_ref"]))
+                    else:
+                        detail = save_motion_diagnostic(self.root, dict(event, planning=value), snapshot)
                     event["diagnostic_ref"] = str(detail.relative_to(self.root))
                 except Exception as error:
                     event["diagnostic_error"] = f"{type(error).__name__}: {error}"
@@ -231,7 +267,7 @@ class RealworldRunDiagnostics:
             with (self.root / "events.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(encoded)
                 stream.flush()
-        if requests:
+        if requests and self.curobo_logs is None:
             phase = ("final_grasp_ik" if requests[0].request_id.rsplit(":", 1)[-1] == "final_ik" else
                      "pregrasp_ik" if requests[0].request_id.rsplit(":", 1)[-1].startswith("pregrasp_ik_") else
                      requests[0].request_id.rsplit(":", 1)[-1])
@@ -247,8 +283,24 @@ class RealworldRunDiagnostics:
                 reason, count = reasons.most_common(1)[0]
                 print(f"[planning] 主要失败：{count}/{len(failed)} {reason}", flush=True)
 
+        return tuple(result_refs)
+
     def __exit__(self, typ, error, tb):
+        if self.curobo_logs is not None and not self.curobo_logs.finished:
+            # 未走到正常报告时，只把 cuRobo 调用栈中的异常归为后端失败。
+            import traceback as traceback_module
+            frames = traceback_module.extract_tb(tb) if tb is not None else ()
+            backend_error = any("/motion/curobo/" in frame.filename.replace("\\", "/") for frame in frames)
+            self.finish({"first_failure": {"code": "backend_error"}} if backend_error else {})
         self.stack.close()
+        if self.curobo_logs is not None:
+            try:
+                path = self.root / "diagnostic_manifest.json"
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+                manifest["curobo_logging"] = self.manifest_curobo_logging
+                write_json(path, manifest)
+            except Exception as recording_error:
+                self.record_error("curobo_logging_manifest", recording_error)
         if error is not None:
             try:
                 write_json(self.root / "diagnostic_exception.json", dict(
@@ -264,7 +316,7 @@ class RealworldRunDiagnostics:
             self.record_error("archive_inputs", recording_error)
         self.archive.manifest["recording_errors"] = list(self.errors)
         for scope, finalize in (("archive_manifest", self.archive.save),
-                                ("failure_summary", lambda: write_realworld_summary(self.root))):
+                                ("failure_summary", lambda: write_realworld_summary(self.root, compact=self.curobo_logs is not None))):
             try:
                 finalize()
             except Exception as recording_error:
@@ -365,11 +417,28 @@ def inspect_realworld_run(root, *, candidate=None, stage=None):
         scope="只读已保存证据；没有执行的阶段不补造结果；有限搜索失败不是全局不可达证明。")
 
 
-def write_realworld_summary(root):
+def write_realworld_summary(root, *, compact=False):
     root = Path(root)
     payload = inspect_realworld_run(root)
+    events = payload["events"]
+    if compact:
+        unique_failures = {}
+        for failure in payload["operation_failures"]:
+            key = json.dumps(failure.get("first_failure"), sort_keys=True, ensure_ascii=False)
+            saved = unique_failures.setdefault(key, {**failure, "report_refs": []})
+            saved["report_refs"].append(failure["report_ref"])
+        payload["operation_failures"] = list(unique_failures.values())
+        payload["event_count"] = len(events)
+        payload["events_ref"] = "events.jsonl"
+        payload["events"] = []
+        payload["event_scope"] = "failed_curobo_requests_only"
+        payload["inventories"] = [{key: value for key, value in row.items()
+                                  if key in {"ref", "generated_count", "selection_count", "counts",
+                                             "selected_candidate_id", "error", "scope"}}
+                                 for row in payload["inventories"]]
     write_json(root / "failure_analysis.json", payload)
-    lines = ["# 真机失败定位", payload["scope"], f"规划请求：{payload['counts']}",
+    lines = ["# 真机失败定位", payload["scope"],
+        ("已记录 cuRobo 失败请求：" if compact else "规划请求：") + str(payload['counts']),
         "初始感知/场景包：initial_scene/manifest.json",
         "候选完整清单：各 selection/candidate_diagnostics.json 和同名 .md",
         "检查：python tools/diagnostics/inspect_realworld_run.py --run " + str(root) + " --details",
@@ -384,12 +453,29 @@ def write_realworld_summary(root):
                      + "；原报告：" + failure["report_ref"])
     if payload["exception"]:
         lines.insert(3, "运行异常：" + payload["exception"]["error"] + "；完整栈见 diagnostic_exception.json")
-    for row in payload["events"]:
-        if row.get("success"):
-            continue
-        summary = row.get("summary", {})
-        reason = str(summary.get("conclusion", "未知")).replace("|", "\\|")
-        lines.append(f"|{row['request_id']}|{reason}|{summary.get('best_position_error_m')}/{summary.get('best_rotation_error_rad')}|{row.get('diagnostic_ref')}|")
+    if compact:
+        groups = {}
+        for row in events:
+            if row.get("success"):
+                continue
+            summary = row.get("summary", {})
+            key = (row.get("phase"), summary.get("kind"), summary.get("raw_status"),
+                   summary.get("conclusion", "未知"))
+            group = groups.setdefault(key, {"count": 0, "examples": []})
+            group["count"] += 1
+            if len(group["examples"]) < 3:
+                group["examples"].append(row)
+        for (phase, kind, status, conclusion), group in groups.items():
+            example = group["examples"][0]
+            reason = str(conclusion).replace("|", "\\|")
+            lines.append(f"|{phase}（{group['count']} 次）|{reason}|见详细证据|{example.get('diagnostic_ref')}；完整索引 events.jsonl|")
+    else:
+        for row in payload["events"]:
+            if row.get("success"):
+                continue
+            summary = row.get("summary", {})
+            reason = str(summary.get("conclusion", "未知")).replace("|", "\\|")
+            lines.append(f"|{row['request_id']}|{reason}|{summary.get('best_position_error_m')}/{summary.get('best_rotation_error_rad')}|{row.get('diagnostic_ref')}|")
     table_start = next(index for index, line in enumerate(lines) if line.startswith("|请求/阶段|"))
     (root / "failure_analysis.md").write_text("\n\n".join(lines[:table_start]) + "\n\n" + "\n".join(lines[table_start:]) + "\n", encoding="utf-8")
     return root / "failure_analysis.json"

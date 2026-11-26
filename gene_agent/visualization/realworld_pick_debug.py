@@ -138,6 +138,19 @@ def load_pick_debug(run_source, *, selection=None, scene_snapshot_sha256=None):
     saved = _read_json(selection_path)
     plan = saved.get("plan") if isinstance(saved.get("plan"), dict) else saved
     attempts = plan.get("attempts", [])
+    if not attempts and plan.get("attempt_logging") == "terminal_curobo_failure_only":
+        events_path = run / "events.jsonl"
+        if events_path.is_file():
+            for line in events_path.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                ref = event.get("result_ref")
+                if not ref:
+                    continue
+                attempts.append({"candidate_id": event.get("candidate_id"),
+                    "stage": event.get("phase"), "request": {
+                        "request_id": event.get("request_id"),
+                        "target": {"matrix": event.get("target_world_tcp")}},
+                    "result": _read_json(run / ref)})
     attempt_by_candidate: dict[str, list[dict]] = {}
     request_targets = {}
     for attempt in attempts:
@@ -154,6 +167,10 @@ def load_pick_debug(run_source, *, selection=None, scene_snapshot_sha256=None):
     for candidate_id in attempt_by_candidate:
         if candidate_id not in order:
             order.append(candidate_id)
+    inventory = {}
+    index_path = selection_path.parent / "candidate_diagnostics.json"
+    if plan.get("attempt_logging") == "terminal_curobo_failure_only" and index_path.is_file():
+        inventory = {row["candidate_id"]: row for row in _read_json(index_path).get("candidates", ())}
     selected = saved.get("selected_candidate_id") or plan.get("selected_candidate_id")
     candidates = []
     failure_counts = Counter()
@@ -177,6 +194,20 @@ def load_pick_debug(run_source, *, selection=None, scene_snapshot_sha256=None):
             status = "evaluated"
         else:
             status = "not_evaluated"
+        if candidate_id in inventory:
+            known = inventory[candidate_id]
+            status = {"selected": "selected", "rejected": "rejected",
+                      "selected_prefix_incomplete": "rejected",
+                      "evaluated_not_selected": "evaluated"}.get(known["status"], "not_evaluated")
+            rejection = known.get("first_rejection")
+            if rejection:
+                failed = {"candidate_id": candidate_id, "stage": rejection.get("stage"),
+                          "request": {"request_id": rejection.get("request_id")},
+                          "result": {"success": False, "failure": rejection.get("failure") or {
+                              "kind": rejection.get("postcheck_details", {}).get("reason_code", "postcheck_rejected"),
+                              "summary": rejection.get("postcheck_details", {}).get("reason_code", "独立后检拒绝")}}}
+            else:
+                failed = None
         failure = None if failed is None else (failed.get("result") or {}).get("failure") or {}
         if failure is not None:
             failure_counts[(str(failure.get("kind") or "unknown"),

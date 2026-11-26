@@ -288,7 +288,7 @@ def capture_request_context(planner, request, snapshot):
         replay_config_sha256=digest(replay))
 
 
-def collect_failure_diagnostics(planner, request, raw, snapshot, options):
+def collect_failure_diagnostics(planner, request, raw, snapshot, options, *, context=None):
     """在原结果旁路附加证据；异常由调用者记下，原失败不会被覆盖。"""
     budget=getattr(planner,'_failure_diagnostic_budget',None) or DiagnosticBudget(options)
     target=np.asarray(request.target.matrix,float)
@@ -310,7 +310,7 @@ def collect_failure_diagnostics(planner, request, raw, snapshot, options):
     if budget.allow('sphere_identity_and_pairs'):
         try:collisions=sphere_collisions(planner,q,snapshot,budget)
         except Exception as exc:errors.append(f'spheres: {type(exc).__name__}: {exc}')
-    captured = capture_request_context(planner, request, snapshot)
+    captured = capture_request_context(planner, request, snapshot) if context is None else context
     return dict(captured, raw_failure=raw, source_batch_size=raw.get('batch_size',1),
         status='partial' if errors or budget.skipped else 'collected',candidates=candidates,
         invocation='evaluate_candidates' if 'batch_size' in raw else ('solve_ik' if request.operation.value=='ik' else 'plan'),
@@ -320,14 +320,9 @@ def collect_failure_diagnostics(planner, request, raw, snapshot, options):
 
 
 def request_from_dict(req):
-    from ..model import MotionRequest, JointState, PoseTarget, PlanningSceneRef, CollisionPolicy, CollisionAllowance, PivotLimits
-    cp = req['collision_policy']
-    return MotionRequest(request_id=req['request_id'],operation=req['operation'],group=req['group'],
-        start=JointState(tuple(req['start']['joint_names']),tuple(req['start']['positions_rad'])),
-        target=PoseTarget(req['target']['frame'],req['target']['matrix']),scene=PlanningSceneRef(**req['scene']),
-        collision_policy=CollisionPolicy(cp['policy_id'],tuple(CollisionAllowance(**a) for a in cp['allowances'])),
-        seed=req['seed'],planner_mode=req['planner_mode'],approximate_ik_budget=req.get('approximate_ik_budget'),
-        pivot_limits=PivotLimits(**req['pivot_limits']) if req.get('pivot_limits') else None)
+    # 冻结请求必须使用公共 parser，避免遗漏 joint_target 等阶段合同。
+    from ..model import motion_request_from_dict
+    return motion_request_from_dict(req)
 
 
 def save_planning_request(planner, requests, results, snapshot, output, *, invocation=None):
