@@ -27,6 +27,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 from gene_agent.motion.configuration import configured_motion, current_motion_config
+from gene_agent.feedback.runtime_timing import runtime_timing_scope, timed_runtime
 
 from gene_agent.realworld.microwave.task import SUBTASK_NAMES
 from gene_agent.realworld.microwave.task import run_observed_microwave_subtask
@@ -509,6 +510,7 @@ def _planning_acceleration(config, output):
             encoding="utf-8")
 
 
+@timed_runtime("output_dir")
 @configured_motion("config")
 def run_site(config: dict, *, subtask: str, output_dir: str | Path,
              execute: bool, prepare_held_bowl: bool = False, plan_only: bool = False) -> dict:
@@ -815,38 +817,60 @@ def main(argv: list[str] | None = None) -> int:
               Path("runs/realworld") / (
                   f"{args.subtask}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
               ))
+    print("=" * 78, flush=True)
+    print(f"[task] 开始：subtask={args.subtask} "
+          f"mode={'execute' if args.execute else 'plan_only' if args.plan_only else 'preflight'}",
+          flush=True)
+    print(f"[task] collision={args.collision_mode or config.get('motion', {}).get('collision_mode', 'configured')} "
+          f"diagnostics={args.diagnostic_mode} output={output.resolve()}", flush=True)
+    print(f"[perception] source={Path(args.perception).expanduser().resolve()}", flush=True)
+    print("=" * 78, flush=True)
     from gene_agent.motion.curobo.bootstrap import curobo_import_gc_scope
     bootstrap = None
     bootstrap_output_available = not output.exists() or not any(output.iterdir())
-    try:
-        with curobo_import_gc_scope(enabled=not args.no_freeze_import_gc) as bootstrap:
-            report = run_site(config, subtask=args.subtask,
-                              output_dir=output, execute=args.execute,
-                              prepare_held_bowl=args.prepare_held_bowl,
-                              **({"plan_only": True} if args.plan_only else {}))
-    finally:
-        if bootstrap is not None and bootstrap_output_available and output.is_dir():
-            (output / "planning_bootstrap.json").write_text(
-                json.dumps(bootstrap, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-                encoding="utf-8")
-    video_failed = False
-    if args.video:
+    with runtime_timing_scope(output):
         try:
-            from gene_agent.visualization.video_export import export_video
-            export_video(output, output / "plan_preview.mp4", mode="planned",
-                         cameras=(("observed", "gripper_side") if report.get("observed_geometry")
-                                  else ("task", "gripper_side")), profile="microwave_task1")
-        except Exception as error:
-            video_failed = True
-            write = {"status": "failed", "message": f"{type(error).__name__}: {error}"}
-            (output / "video_result.json").write_text(json.dumps(write, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
-            print(f"规划报告已保存，视频导出失败：{error}", file=sys.stderr)
+            with curobo_import_gc_scope(enabled=not args.no_freeze_import_gc) as bootstrap:
+                report = run_site(config, subtask=args.subtask,
+                                  output_dir=output, execute=args.execute,
+                                  prepare_held_bowl=args.prepare_held_bowl,
+                                  **({"plan_only": True} if args.plan_only else {}))
+        finally:
+            if bootstrap is not None and bootstrap_output_available and output.is_dir():
+                (output / "planning_bootstrap.json").write_text(
+                    json.dumps(bootstrap, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                    encoding="utf-8")
+        video_failed = False
+        if args.video:
+            try:
+                from gene_agent.visualization.video_export import export_video
+                export_video(output, output / "plan_preview.mp4", mode="planned",
+                             cameras=(("observed", "gripper_side") if report.get("observed_geometry")
+                                      else ("task", "gripper_side")), profile="microwave_task1")
+            except Exception as error:
+                video_failed = True
+                write = {"status": "failed", "message": f"{type(error).__name__}: {error}"}
+                (output / "video_result.json").write_text(json.dumps(write, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+                print(f"规划报告已保存，视频导出失败：{error}", file=sys.stderr)
+    timing_path = output.resolve() / "runtime_timing.json"
+    timing = json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.is_file() else {}
+    from gene_agent.feedback.realworld_diagnostics import print_realworld_console_summary
+    print_realworld_console_summary(
+        output, report, subtask=args.subtask, execute=args.execute,
+        collision_mode=args.collision_mode or config.get("motion", {}).get("collision_mode"),
+        plan_only=args.plan_only)
     print(json.dumps({"status": report.get("status"), "success": report.get("success"),
                       "requested_scope": report.get("requested_scope", args.subtask),
                       "task_success": report.get("task_success"),
                       "output_dir": str(output.resolve()),
                       "failure_analysis_ref": str(output.resolve() / "failure_analysis.json"),
-                      "initial_scene_ref": str(output.resolve() / "initial_scene/manifest.json")},
+                      "initial_scene_ref": str(output.resolve() / "initial_scene/manifest.json"),
+                      "runtime_timing_ref": str(timing_path),
+                      "started_at": timing.get("started_at"),
+                      "finished_at": timing.get("finished_at"),
+                      "total_duration_s": timing.get("total_duration_s"),
+                      "timing_bottleneck": timing.get("bottleneck"),
+                      "timing_comparison": timing.get("comparison")},
                      ensure_ascii=False))
     return 0 if not video_failed and (report.get("success") is True or report.get("status") == "validated_prefix") else 2
 

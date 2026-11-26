@@ -438,9 +438,13 @@ def test_connection_failure_keeps_traceable_entry_report(tmp_path, monkeypatch):
         run_site(loaded, subtask="pick_bowl", output_dir=output, execute=False)
 
     record = json.loads((output / "entry_result.json").read_text(encoding="utf-8"))
+    timing = json.loads((output / "runtime_timing.json").read_text(encoding="utf-8"))
     assert record["status"] == "failed"
     assert record["failure"]["code"] == "connection_failed"
     assert record["site_config_sha256"] == loaded["source_sha256"]
+    assert timing["status"] == "failed"
+    assert timing["total_duration_s"] > 0
+    assert timing["finished_at"]
 
 
 def test_required_subtask_tolerance_cannot_be_null(tmp_path):
@@ -797,8 +801,12 @@ def test_standalone_insert_can_prepare_hold_from_current_observation(tmp_path, m
 
     assert result["status"] == "validated_prefix"
     saved = json.loads((output / "prepared_hold_report.json").read_text(encoding="utf-8"))
+    timing = json.loads((output / "runtime_timing.json").read_text(encoding="utf-8"))
     assert saved["source_frame_number"] == 23
     assert events == ["observe", "pool_closed", "closed", "closed"]
+    assert timing["status"] == "success"
+    assert timing["components"]["perception"]["call_count"] == 1
+    assert timing["total_duration_s"] > 0
 
 
 def test_prepare_hold_rejects_failed_operator_confirmation_before_planning(tmp_path, monkeypatch):

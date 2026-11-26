@@ -2041,18 +2041,25 @@ class SynchronousPlanner:
                 start.position.expand(batch_count, -1).clone(),
                 joint_names=self.planner_joint_names,
             )
+            from gene_agent.feedback.runtime_timing import measure_runtime
             if batch_count not in self._ik_batches:
-                self._ik_batches[batch_count] = InverseKinematics(InverseKinematicsCfg.create(
-                    robot=copy.deepcopy(self.robot_config), scene_model=self.scene_model,
-                    collision_cache=self.collision_cache,
-                    optimizer_collision_activation_distance=self.optimizer_collision_activation_distance,
-                    self_collision_check=True, num_seeds=16,
-                    max_batch_size=batch_count, **self.runtime_options,
-                ))
+                with measure_runtime(
+                        "curobo_initialization", "batch_ik_solver_initialization",
+                        metadata={"batch_capacity": batch_count}):
+                    self._ik_batches[batch_count] = InverseKinematics(InverseKinematicsCfg.create(
+                        robot=copy.deepcopy(self.robot_config), scene_model=self.scene_model,
+                        collision_cache=self.collision_cache,
+                        optimizer_collision_activation_distance=self.optimizer_collision_activation_distance,
+                        self_collision_check=True, num_seeds=16,
+                        max_batch_size=batch_count, **self.runtime_options,
+                    ))
             solver = self._ik_batches[batch_count]
-            with optimizer_mounting_mask(solver.kinematics, self.mounting_contact_policy) if self._validator else nullcontext():
-                raw = solver.solve_pose(goal, current_state=batch_start)
-            self.torch.cuda.synchronize()
+            with measure_runtime("curobo_solver", "batch_ik_solve",
+                                 metadata={"batch_size": count,
+                                           "batch_capacity": batch_count}):
+                with optimizer_mounting_mask(solver.kinematics, self.mounting_contact_policy) if self._validator else nullcontext():
+                    raw = solver.solve_pose(goal, current_state=batch_start)
+                self.torch.cuda.synchronize()
 
             success = raw.success.detach().cpu().numpy().reshape(batch_count, -1)[:count, 0].astype(bool)
             feasible = raw.feasible.detach().cpu().numpy().reshape(batch_count, -1)[:count, 0].astype(bool)

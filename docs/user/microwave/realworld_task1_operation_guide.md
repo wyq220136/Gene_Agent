@@ -296,10 +296,14 @@ ssh -N -L 8083:127.0.0.1:8083 58.220.16.98
 
 然后打开 `http://127.0.0.1:8083/overview/alignment.html`，或对应的 `table_roi/` 页面。
 
-## 5.2 AffordToolAct Viser：查看真机实际使用的碗、桌面和规划障碍
+## 5.2 AffordToolAct Viser：查看真机现场、抓取候选、失败与轨迹
 
 该入口迁移 AffordToolAct `visualization/scene/viser_viewer.py` 的坐标轴和图层开关，
 通过 Gene 的同一套 visual/规划碰撞适配显示**本轮运行的冻结初始输入**。
+若运行目录内存在抓碗 `selection.json`，还会自动显示全部候选 TCP、抓取轴、
+候选状态、首个拒绝阶段、底层失败原因和桌面抬升修正线；若保存了关节轨迹，
+可用时间轴播放机器人 FK 和 TCP 路径。失败发生在轨迹生成前时，界面明确显示“无轨迹”原因，
+不会生成一条虚构回放。
 它从 `initial_scene` 验证 hash、恢复原模型和两臂/夹爪 qpos，仅执行静态 FK；
 不会落稳物体、重新测桌面、生成候选、规划或连接机器人。
 新运行的 `diagnostic_manifest.json.scene_viewer` 保存查看入口及参数。
@@ -329,6 +333,16 @@ OUT=runs/realworld/task1_plan_20261124_200548
 不自动上传日志、不读取附件中的操作指令，也不更改原运行记录。
 显示解释器需要 `viser`、`mujoco`、`numpy`、`scipy`、`trimesh`、`Pillow`。
 
+如果 `selection.json` 是单独从真机复制出来的，可显式指定：
+
+```bash
+"$PY" "$PWD/tools/viewers/view_realworld_scene.py" \
+  --run "$OUT" --selection /实际路径/selection.json --host 127.0.0.1 --port 8120
+```
+
+工具会比较 selection 与 `initial_scene` 的快照标识；不一致时界面显示醒目警告，
+此时只能用于观察候选几何，不能声称两份材料来自同一轮现场。
+
 在自己电脑另开终端（使用当前能登录该服务器的 SSH 配置；显式参数如下）：
 
 ```bash
@@ -344,6 +358,7 @@ ssh -N -L 8120:127.0.0.1:8120 -p 23400 yuquan@58.220.16.98
 3. 开启**同帧原始 RGB-D 点云**和**原始注册碗 mesh**，可关闭机器人及规划障碍去掉遮挡。青色注册 mesh 应贴着点云中的实碗；青色 mesh 使用原注册资产与原相机 pose，操作碗使用当时消费的 pose。面板给出二者变换差，帮助排查中间坐标链。
 4. 用 `camera`、`active_sdk`、`bowl_consumed`、`configured_table_center/top` 坐标轴定位。X 红、Y 绿、Z 蓝。所有几何统一在保存的 world 中；`T_world_sdk` 明确显示。切换浏览器上方向仅影响观察视角，不修改任何数据，也不证明重力朝向。
 5. 比较点云中的可见桌面与橙色配置顶面的**高度、法向及 XY 范围**。右侧保存原 RGB 和输入矩阵/来源。微波炉保留先前操作状态时单独注明，不冒称本轮重感知。
+6. 在“抓碗失败定位”中先看红/绿/蓝/灰候选分布，再选择单个候选检查首个失败阶段和底层原因。橙线表示候选被桌面规则抬升的位移。轨迹存在时蓝线是保存关节轨迹的 TCP FK；碰撞球只属于起点快照，播放离开首帧后会隐藏，不能当作逐帧碰撞验证。
 
 本附件的冻结数据为：碗原点（右臂 SDK，米）约 `[0.303765, 0.058829, -0.052891]`，
 桌面中心 `[0.1, 0.3, -0.0442143]`，厚度 `0.02 m`，配置顶面 Z 为 `-0.0342143 m`，
@@ -435,6 +450,10 @@ OUT="runs/realworld/pick_bowl_precheck_$(date +%Y%m%d_%H%M%S)"
 "$PY" "$PWD/tools/run/run_microwave_task1_realworld.py" \
   "${COMMON[@]}" --subtask pick_bowl --collision-mode full --output "$OUT"
 ```
+
+终端会按 AffordToolAct 粒度打印：运行模式和输出目录、冻结观测 frame/snapshot/障碍数、
+候选生成数量、每批规划成功/失败数与耗时、主要底层失败原因、终态阶段、轨迹数量、
+证据文件路径及可直接复制的 Viser 命令。最后一行仍保留机器可读 JSON，便于脚本解析。
 
 首段通过后返回 `validated_prefix`，不发送运动命令。
 仅使用 `--subtask all` 而不加执行或完整预览参数时，也只预检完整任务的首段，

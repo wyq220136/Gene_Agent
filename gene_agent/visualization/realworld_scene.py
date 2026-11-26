@@ -101,8 +101,13 @@ def checkbox(server, label, handles, *, visible=True):
 
 
 class RealworldSceneApp:
-    def __init__(self, server, scene, model, data, rgbd=None, warning=None):
+    def __init__(self, server, scene, model, data, rgbd=None, warning=None,
+                 pick_debug=None):
         self.server = server
+        self.scene = scene
+        self.model = model
+        self.data = data
+        self.pick_overlay = None
         self.summary = observation_summary(scene, rgbd, warning)
         provenance = scene["provenance"]
         server.scene.set_up_direction("+z")
@@ -164,6 +169,14 @@ class RealworldSceneApp:
         server.initial_camera.fov = .8
         view_up = server.gui.add_dropdown("仅改变浏览器视图的上方向", options=("+z", "-z", "+y", "-y"), initial_value="+z")
         view_up.on_update(lambda _: server.scene.set_up_direction(view_up.value))
+        if pick_debug is not None and pick_debug.get("candidates"):
+            from gene_agent.visualization.realworld_pick_debug import RealworldPickDebugOverlay
+            self.pick_overlay = RealworldPickDebugOverlay(
+                server, model, data, scene, self.geometry, pick_debug)
+
+    def tick(self):
+        if self.pick_overlay is not None:
+            self.pick_overlay.tick()
 
     def _add_rgbd(self, server, rgbd, camera_pose, consumed_bowl):
         import trimesh

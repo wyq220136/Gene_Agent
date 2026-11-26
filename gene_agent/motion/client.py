@@ -108,8 +108,13 @@ class StageMotion:
     def _invoke(self, method, request, *, batch=False):
         """一次实际调用一个身份；批次逐项保留结果，但共享墙钟时间不相加。"""
         call_id = uuid4().hex
+        operation = getattr(method, "__name__", "motion_call")
+        from gene_agent.feedback.runtime_timing import measure_runtime
         started = time.perf_counter()
-        raw = method(request)
+        with measure_runtime(
+                "curobo_planning", operation,
+                metadata={"batch_size": len(request) if batch else 1, "call_id": call_id}):
+            raw = method(request)
         elapsed = time.perf_counter() - started
         rows = tuple(raw) if batch else (raw,)
         results = tuple(self._with_evidence(replace(row, metrics={
@@ -118,6 +123,17 @@ class StageMotion:
                 "batch_size": len(rows), "batch_index": index,
             },
         })) for index, row in enumerate(rows))
+        from gene_agent.feedback.runtime_timing import record_runtime_duration
+        # 单目标调用已有后端分阶段计时；它能把冷启动（含场景/mesh 装载）
+        # 与真正 solver 调用拆开。batch 的初始化/求解由 core 在实际调用处记录。
+        timing = rows[0].metrics.get("timing", {}) if rows else {}
+        for field, component in (
+                ("solver_initialization_s", "curobo_initialization"),
+                ("solver_call_including_graph_capture_s", "curobo_solver")):
+            duration = timing.get(field)
+            if isinstance(duration, (int, float)):
+                record_runtime_duration(component, field, duration,
+                                        metadata={"call_id": call_id})
         return results if batch else results[0]
 
     def _with_evidence(self, result):

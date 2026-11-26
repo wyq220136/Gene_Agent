@@ -216,6 +216,23 @@ class CuroboPlannerPool:
             cleanup()
 
     def acquire(self, settings: dict, snapshot: dict, **planner_options) -> PlannerLease:
+        from gene_agent.feedback.runtime_timing import record_runtime_duration
+        started = time.perf_counter()
+        lease = None
+        try:
+            lease = self._acquire(settings, snapshot, **planner_options)
+            return lease
+        finally:
+            record_runtime_duration(
+                "curobo_setup", "planner_pool_acquire", time.perf_counter() - started,
+                metadata={} if lease is None else {
+                    "cache_hit": lease.cache_hit,
+                    "rebuild_reason": lease.rebuild_reason,
+                    "acquisition_id": lease.acquisition_id,
+                },
+            )
+
+    def _acquire(self, settings: dict, snapshot: dict, **planner_options) -> PlannerLease:
         if self._stage_owner is not None:
             raise RuntimeError("pool已有活跃stage，不能在阶段中切换共享求解器")
         from .optimization import current_optimization

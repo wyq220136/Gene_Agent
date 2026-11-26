@@ -4,6 +4,8 @@ from contextlib import ExitStack
 from copy import deepcopy
 import json
 from pathlib import Path
+import shlex
+import sys
 import traceback
 from uuid import uuid4
 
@@ -128,6 +130,11 @@ class RealworldRunDiagnostics:
                 scene_viewer=dict(entrypoint="tools/viewers/view_realworld_scene.py",
                     argv=["--run", str(self.root), "--host", "127.0.0.1", "--port", "8120"],
                     read_only=True, source="initial_scene/manifest.json")))
+            viewer = Path(__file__).resolve().parents[2] / "tools/viewers/view_realworld_scene.py"
+            print(f"[diagnostics] 记录目录：{self.root}", flush=True)
+            print("[diagnostics] Viser（观测完成后可打开）："
+                  f"{shlex.quote(sys.executable)} {shlex.quote(str(viewer))} "
+                  f"--run {shlex.quote(str(self.root))}", flush=True)
         except Exception:
             self.stack.close()
             raise
@@ -146,6 +153,12 @@ class RealworldRunDiagnostics:
         self._initial_attempted = True
         try:
             self.archive.add_scene(scene, label="initial")
+            snapshot = scene.get("snapshot", {})
+            print("[perception] 冻结现场："
+                  f"frame={scene.get('provenance', {}).get('source_frame_number')} "
+                  f"group={snapshot.get('active_group')} "
+                  f"obstacles={len(snapshot.get('records', []))} "
+                  f"snapshot={snapshot.get('snapshot_sha256')}", flush=True)
         except Exception as error:
             self.record_error("initial_scene", error)
         # 模型构建/导出失败时仍保存已有原始帧，不让现场证据随之丢失。
@@ -157,8 +170,11 @@ class RealworldRunDiagnostics:
 
     def wrap_observer(self, observe):
         def recorded():
-            scene = observe()
-            self.capture_initial(scene)
+            from gene_agent.feedback.runtime_timing import measure_runtime
+            with measure_runtime("perception", "observe_collision_scene"):
+                scene = observe()
+            with measure_runtime("diagnostics", "capture_initial_scene"):
+                self.capture_initial(scene)
             return scene
         from gene_agent.realworld.microwave.operation_perception import forward_observation_hooks
         forward_observation_hooks(observe, recorded)
@@ -166,12 +182,17 @@ class RealworldRunDiagnostics:
 
     def note_selection(self, scene, candidates, parameters, profile_path, seed):
         try:
-            return self.archive.add_selection(scene, candidates, parameters, profile_path, seed)
+            result = self.archive.add_selection(scene, candidates, parameters, profile_path, seed)
+            print("[grasp] 候选已生成："
+                  f"count={len(candidates)} policy={parameters.get('candidate_order_policy')} "
+                  f"profile={profile_path}", flush=True)
+            return result
         except Exception as error:
             self.record_error("selection_scene", error)
             return None
 
     def record(self, requests, results, *, snapshot, replay_ref=None, invocation=None):
+        requests, results = list(requests), list(results)
         call_id = uuid4().hex
         if replay_ref:
             self._request_dirs.add(Path(replay_ref).resolve().parent)
@@ -207,6 +228,21 @@ class RealworldRunDiagnostics:
             with (self.root / "events.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(encoded)
                 stream.flush()
+        if requests:
+            phase = ("final_grasp_ik" if requests[0].request_id.rsplit(":", 1)[-1] == "final_ik" else
+                     "pregrasp_ik" if requests[0].request_id.rsplit(":", 1)[-1].startswith("pregrasp_ik_") else
+                     requests[0].request_id.rsplit(":", 1)[-1])
+            failed = [result.to_dict() for result in results if not result.success]
+            print(f"[planning] {phase}: requests={len(requests)} "
+                  f"success={len(results) - len(failed)} failed={len(failed)} "
+                  f"elapsed={sum(float(result.duration_s) for result in results):.3f}s", flush=True)
+            if failed:
+                reasons = Counter((item.get("failure") or {}).get("summary")
+                                  or (item.get("failure") or {}).get("backend_status")
+                                  or (item.get("failure") or {}).get("kind") or "未知失败"
+                                  for item in failed)
+                reason, count = reasons.most_common(1)[0]
+                print(f"[planning] 主要失败：{count}/{len(failed)} {reason}", flush=True)
 
     def __exit__(self, typ, error, tb):
         self.stack.close()
@@ -354,3 +390,65 @@ def write_realworld_summary(root):
     table_start = next(index for index, line in enumerate(lines) if line.startswith("|请求/阶段|"))
     (root / "failure_analysis.md").write_text("\n\n".join(lines[:table_start]) + "\n\n" + "\n".join(lines[table_start:]) + "\n", encoding="utf-8")
     return root / "failure_analysis.json"
+
+
+def print_realworld_console_summary(root, report, *, subtask, execute, collision_mode,
+                                    plan_only=False):
+    """打印面向现场操作者的摘要；最后的机器可读 JSON 仍由 CLI 单独输出。"""
+    root = Path(root).resolve()
+    from gene_agent.visualization.realworld_pick_debug import load_pick_debug
+    try:
+        debug = load_pick_debug(root)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        debug = None
+        debug_error = f"{type(error).__name__}: {error}"
+    else:
+        debug_error = None
+    first_failure = report.get("first_failure") or report.get("failure") or {}
+    if not first_failure and isinstance(report.get("grasp"), dict):
+        first_failure = report["grasp"].get("first_failure") or {}
+    stages = report.get("stages") or (report.get("grasp") or {}).get("stages") or []
+    viewer = Path(__file__).resolve().parents[2] / "tools/viewers/view_realworld_scene.py"
+    viewer_command = (f"{shlex.quote(sys.executable)} {shlex.quote(str(viewer))} "
+                      f"--run {shlex.quote(str(root))}")
+    print("\n" + "=" * 78, flush=True)
+    print("[task] 真机运行摘要", flush=True)
+    mode = "execute" if execute else "plan_only" if plan_only else "preflight"
+    print(f"[task] subtask={subtask} mode={mode} "
+          f"collision={collision_mode or 'configured'} status={report.get('status')} "
+          f"success={report.get('success', report.get('pick_success'))}", flush=True)
+    if stages:
+        print("[task] 阶段：" + ", ".join(
+            f"{stage.get('name', stage.get('stage_id', '?'))}={stage.get('status', stage.get('success'))}"
+            for stage in stages), flush=True)
+    else:
+        print("[task] 阶段：尚未生成可执行阶段", flush=True)
+    if debug is not None:
+        print(f"[grasp] 候选={debug['candidate_count']} 状态={debug['status_counts']} "
+              f"selected={debug['selected_candidate_id']}", flush=True)
+        if debug["top_failures"]:
+            top = debug["top_failures"][0]
+            print(f"[grasp] 主要失败={top['count']}/{debug['candidate_count']} "
+                  f"stage={next(iter(debug['failure_stage_counts']), 'unknown')} "
+                  f"kind={top['kind']} backend={top['backend_status']} reason={top['reason']}", flush=True)
+        if debug["clamp_summary"]:
+            clamp = debug["clamp_summary"]
+            print(f"[grasp] 桌面抬升修正={clamp['count']} 个 "
+                  f"range={clamp['min_m'] * 1000:.2f}..{clamp['max_m'] * 1000:.2f}mm "
+                  f"mean={clamp['mean_m'] * 1000:.2f}mm", flush=True)
+        print(f"[trajectory] 已保存={debug['trajectory_count']}"
+              + (f"；{debug['no_trajectory_reason']}" if debug["no_trajectory_reason"] else "；可在 Viser 回放"),
+              flush=True)
+        print(f"[evidence] selection={debug['selection_path']}", flush=True)
+    elif debug_error:
+        print(f"[grasp] 候选诊断加载失败：{debug_error}", flush=True)
+    else:
+        print("[grasp] 未找到 selection.json；候选可能尚未生成", flush=True)
+    if first_failure:
+        print(f"[failure] code={first_failure.get('code', first_failure.get('kind'))}", flush=True)
+        print(f"[failure] {first_failure.get('message') or first_failure.get('summary')}", flush=True)
+    print(f"[evidence] {root / 'failure_analysis.json'}", flush=True)
+    print(f"[evidence] {root / 'initial_scene/manifest.json'}", flush=True)
+    print(f"[viser] {viewer_command}", flush=True)
+    print("=" * 78, flush=True)
+    return viewer_command

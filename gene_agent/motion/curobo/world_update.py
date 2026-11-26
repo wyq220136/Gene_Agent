@@ -20,21 +20,25 @@ def _mesh_format(path):
 
 def mesh_content_hashes(scene: dict) -> dict[str, str | None]:
     """逐次记录加载的mesh内容；外部引用格式或缺文件时不能证明几何身份。"""
-    result = {}
-    for name, row in scene.get('mesh', {}).items():
-        try:
-            path = row['file_path']
-            if _mesh_format(path) is None:
+    from gene_agent.feedback.runtime_timing import measure_runtime
+    meshes = scene.get('mesh', {})
+    with measure_runtime("mesh_file_read", "hash_mesh_files",
+                         metadata={"mesh_count": len(meshes)}):
+        result = {}
+        for name, row in meshes.items():
+            try:
+                path = row['file_path']
+                if _mesh_format(path) is None:
+                    result[name] = None
+                    continue
+                digest = hashlib.sha256()
+                with open(path, 'rb') as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                        digest.update(chunk)
+                result[name] = digest.hexdigest()
+            except (OSError, KeyError, TypeError, ValueError):
                 result[name] = None
-                continue
-            digest = hashlib.sha256()
-            with open(path, 'rb') as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                    digest.update(chunk)
-            result[name] = digest.hexdigest()
-        except (OSError, KeyError, TypeError, ValueError):
-            result[name] = None
-    return result
+        return result
 
 
 def pose_updates(previous: dict, current: dict, *, previous_mesh_hashes=None,

@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 import numpy as np
 import pytest
-from gene_agent.feedback.realworld_diagnostics import candidate_inventory,RealworldRunDiagnostics,inspect_realworld_run
+from gene_agent.feedback.realworld_diagnostics import candidate_inventory,RealworldRunDiagnostics,inspect_realworld_run,print_realworld_console_summary
 from gene_agent.motion.recording import current_motion_recording
 from gene_agent.motion.model import JointState,MotionRequest,MotionResult,MotionOperation,PlanningSceneRef,PoseTarget,MotionFailure,MotionFailureKind
 
@@ -124,3 +124,23 @@ def test_invalid_model_does_not_discard_available_raw_perception(tmp_path):
     assert manifest['status']=='initial_scene_unavailable'
     assert manifest['perception_status']=='captured'
     assert all(manifest['initial_frame_files'])
+
+
+def test_console_summary_exposes_underlying_candidate_failure_and_viser_command(tmp_path,capsys):
+    selection=tmp_path/'grasp/selection/selection.json';selection.parent.mkdir(parents=True)
+    selection.write_text(json.dumps({'candidate_order':['a'],'candidate_parameters':{'candidate_targets':[
+        {'candidate_id':'a','T_world_tcp':np.eye(4).tolist(),'table_clamp_delta_sdk_z_m':.1}]},
+        'plan':{'attempts':[{'candidate_id':'a','stage':'final_grasp_ik','request':{},
+            'result':{'success':False,'failure':{'kind':'backend_error','backend_status':'AttributeError',
+                'summary':"'Tensor' object has no attribute 'robot_spheres'"}}}]}}))
+    report={'status':'failed','pick_success':False,'first_failure':{
+        'code':'grasp_selection_failed','message':'原 PickSkill 没有生成完整的抓取前缀'}}
+
+    command=print_realworld_console_summary(tmp_path,report,subtask='pick_bowl',execute=False,collision_mode='full')
+    output=capsys.readouterr().out
+
+    assert '候选=1' in output
+    assert "robot_spheres" in output
+    assert '已保存=0' in output and '没有生成关节轨迹' in output
+    assert 'grasp_selection_failed' in output
+    assert 'view_realworld_scene.py' in command and str(tmp_path) in command
