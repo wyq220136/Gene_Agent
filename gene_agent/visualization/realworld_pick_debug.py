@@ -23,6 +23,26 @@ STATUS_COLORS = {
 }
 
 
+def _add_line_segments_compat(scene: Any, name: str, **kwargs):
+    """兼容不支持线宽参数的旧版 Viser，同时保留其他 TypeError。"""
+    try:
+        return scene.add_line_segments(name, **kwargs)
+    except TypeError as error:
+        message = str(error)
+        unsupported_width = (
+            "unexpected keyword argument 'thickness'" in message
+            or 'unexpected keyword argument "thickness"' in message
+            or "unexpected keyword argument 'thickness_units'" in message
+            or 'unexpected keyword argument "thickness_units"' in message
+        )
+        if not unsupported_width:
+            raise
+        fallback = dict(kwargs)
+        fallback.pop("thickness", None)
+        fallback.pop("thickness_units", None)
+        return scene.add_line_segments(name, **fallback)
+
+
 def _read_json(path: Path) -> dict:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -288,11 +308,13 @@ class RealworldPickDebugOverlay:
             if before is not None and not np.allclose(before[:3, 3], pose[:3, 3]):
                 clamp_segments.append(np.stack((before[:3, 3], pose[:3, 3])))
         if axis_segments:
-            self._axis_handles.append(self.server.scene.add_line_segments(
+            self._axis_handles.append(_add_line_segments_compat(
+                self.server.scene,
                 "/realworld_pick/approach_axes", points=np.asarray(axis_segments),
                 colors=(116, 182, 255), thickness=.0015, thickness_units="world"))
         if clamp_segments:
-            self._clamp_handles.append(self.server.scene.add_line_segments(
+            self._clamp_handles.append(_add_line_segments_compat(
+                self.server.scene,
                 "/realworld_pick/table_clamp", points=np.asarray(clamp_segments),
                 colors=(255, 158, 42), thickness=.002, thickness_units="world"))
 
@@ -352,7 +374,8 @@ class RealworldPickDebugOverlay:
             self._trajectory_line = None
         points = self._tcp_points(trajectory)
         if len(points) >= 2:
-            self._trajectory_line = self.server.scene.add_line_segments(
+            self._trajectory_line = _add_line_segments_compat(
+                self.server.scene,
                 "/realworld_pick/tcp_path", points=np.stack((points[:-1], points[1:]), axis=1),
                 colors=(31, 135, 212), thickness=.004, thickness_units="world")
         self.playback_detail.content = (

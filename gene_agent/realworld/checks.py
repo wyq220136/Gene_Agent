@@ -75,8 +75,11 @@ __all__ = [
 def execution_handoff_error(
     previous: dict, current: dict, execution: dict, *,
     max_joint_error_rad: float, max_width_error_m: float,
+    compare_gripper_endpoint: bool = True,
 ) -> str | None:
     """只接受执行后的新观测；预测 goal_state 不能代替实测终点。"""
+    if type(compare_gripper_endpoint) is not bool:
+        raise ValueError("夹爪终点复核开关必须为 bool")
     old = previous["provenance"]
     new = current["provenance"]
     if (int(new["source_frame_number"]) <= int(old["source_frame_number"])
@@ -108,11 +111,12 @@ def execution_handoff_error(
     measured_width = execution.get("measured_end_width_m")
     if measured_width is None:
         return "夹爪阶段没有实测终点开口"
-    group = current["snapshot"]["active_group"]
-    current_width = float(new["gripper_widths_m"][group])
-    width_error = abs(float(measured_width) - current_width)
-    if not math.isfinite(width_error) or width_error > max_width_error_m:
-        return f"新现场夹爪开口与执行终点不一致：{width_error:.5f} m"
+    if compare_gripper_endpoint:
+        group = current["snapshot"]["active_group"]
+        current_width = float(new["gripper_widths_m"][group])
+        width_error = abs(float(measured_width) - current_width)
+        if not math.isfinite(width_error) or width_error > max_width_error_m:
+            return f"新现场夹爪开口与执行终点不一致：{width_error:.5f} m"
     measured_start = execution.get("measured_joint_start")
     if measured_start is None or tuple(measured_start["joint_names"]) != joints.joint_names:
         return "夹爪阶段缺少可核对的实测关节起点"

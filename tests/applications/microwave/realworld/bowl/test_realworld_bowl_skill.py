@@ -157,6 +157,14 @@ def test_executed_grasp_replans_each_motion_from_fresh_measured_scene(
         _scene("after_close", 5, q=(.3, .4), width=.007),
     ]
     seen = []
+    gripper_overrides = []
+
+    def observe(*, gripper_width_overrides=None):
+        scene = scenes.pop(0)
+        if gripper_width_overrides is not None:
+            gripper_overrides.append(dict(gripper_width_overrides))
+            scene["provenance"]["gripper_widths_m"].update(gripper_width_overrides)
+        return scene
 
     def plan(scene, selection, *, stage_name, **kwargs):
         seen.append(("plan", stage_name, scene["snapshot"]["snapshot_sha256"]))
@@ -173,6 +181,7 @@ def test_executed_grasp_replans_each_motion_from_fresh_measured_scene(
 
         def run_gripper_stage(self, stage, **kwargs):
             assert kwargs["execute"] is True
+            assert kwargs["confirm_stable_endpoint"] is True
             if stage == "close":
                 assert kwargs["command_mode"] == "grasp"
                 assert kwargs["grasp_force"] == .5
@@ -193,7 +202,7 @@ def test_executed_grasp_replans_each_motion_from_fresh_measured_scene(
     if grasp_evidence_frame is not None:
         evidence["source_frame_number"] = grasp_evidence_frame
     report = bowl_skill.run_observed_bowl_grasp(
-        **_options(tmp_path, lambda: scenes.pop(0), Runtime, execute=True,
+        **_options(tmp_path, observe, Runtime, execute=True,
                    check_grasp=lambda _scene: CheckResult(
                        "pass", "manual_terminal", evidence, "已夹住"))
     )
@@ -211,6 +220,13 @@ def test_executed_grasp_replans_each_motion_from_fresh_measured_scene(
     assert ("plan", "pregrasp", "after_open") in seen
     assert ("plan", "approach", "after_pregrasp") in seen
     assert ("runtime", "collision_approach") in seen
+    assert gripper_overrides == [{"right": .041}, {"right": .007}]
+    assert report["stages"][0]["postcommand_gripper_width_source"] == (
+        "confirmed_execution_endpoint"
+    )
+    assert report["stages"][-1]["postcommand_gripper_width_source"] == (
+        "confirmed_execution_endpoint"
+    )
     assert not scenes
 
 

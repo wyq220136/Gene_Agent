@@ -465,6 +465,16 @@ OUT="runs/realworld/pick_bowl_precheck_$(date +%Y%m%d_%H%M%S)"
 TCP限高至实测桌面上方50–70 mm后再派生pregrasp。IK、碰撞、关节行程和发令前复核仍保留。
 若之后无可行解，应区分候选生成、IK、碰撞和轨迹阶段；生成160个候选不代表实际抓取已经成功。
 
+### 抓碗筛选的停止条件与请求复用
+
+真机 `pick_bowl` 默认使用 `first_valid_prefix`：最终抓取 IK 保留单次批筛；随后沿原候选顺序逐个展开抓取候选，每个最多 17 个 pregrasp IK 分支，在该候选内部仍按关节行程排序。只要 pregrasp 路径和直线 approach 都通过现有检查，就立即采用，不继续展开其他抓取候选；仅 IK 成功不会触发截止。路径失败或关节行程检查未通过时继续尝试。
+
+4 档深度（15、25、28、30 mm）来自 `data/task_1/realworld/pick_bowl.json` 的 AffordToolAct 真机配置。它们与 8 方位、5 倾角共生成 160 个抓取候选；这些是备选范围，不表示必须求解所有 pregrasp 和路径。此次保留全部几何备选及碰撞、关节行程和直线接近约束。
+
+完全相同的 pregrasp IK / 路径请求在进入 cuRobo 前去重，成功或失败都可在本轮筛选内复用。比较包含目标矩阵、起始关节、场景快照、碰撞策略、种子、规划模式等全部请求字段，只排除追踪 ID，不对位姿取整；新一轮规划或上下文变化不会沿用旧结果。复用的失败仅表示沿用这次求解结论，不证明目标绝对不可达。
+
+运行命令不变，使用本节的首段预检命令及新的 `OUT` 即可。`candidate_selection.json` / `selection.json` 中的 `pregrasp_search`、`selection_stop_condition` 和 `pregrasp_search_summary` 记录策略、实际展开候选数、逻辑请求数、后端计算数及复用数。`plan.attempts[].result.metrics.request_reuse` 标明来源 `source_request_id`；复用结果的 `duration_s` 为 0，原始耗时保存在 `source_duration_s`。`motion_requests/` 仅记录实际送入后端的请求；未展开阶段在候选索引的 `not_reached` 中标明，不算规划失败。
+
 ### 7.2 完整 Task1 plan_only 与预览视频
 
 实际执行之前，使用以下命令连续规划整个任务并导出视频：

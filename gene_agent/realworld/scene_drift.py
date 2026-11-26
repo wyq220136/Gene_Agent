@@ -199,9 +199,11 @@ def bind_live_scene_guard(
         raise TypeError("limits 必须是 SceneDriftLimits")
     last_scene: dict | None = None
 
-    def observe() -> dict:
+    def observe(*, gripper_width_overrides=None) -> dict:
         nonlocal last_scene
-        scene = observe_collision_scene()
+        scene = (observe_collision_scene()
+                 if gripper_width_overrides is None else
+                 observe_collision_scene(gripper_width_overrides=gripper_width_overrides))
         if not isinstance(scene, dict):
             raise TypeError("现场观测必须返回 dict")
         # 后续规划可能派生/修改碰撞快照，基准必须固定为采集时的物理现场。

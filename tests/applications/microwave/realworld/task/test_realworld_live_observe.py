@@ -80,6 +80,31 @@ def test_live_scene_uses_robot_gripper_and_articulated_readings(tmp_path, monkey
     assert result["provenance"]["live_state"]["robot_sampled_at_unix_ms"] == 1000000.
 
 
+def test_live_scene_reuses_confirmed_gripper_widths_without_sdk_reads(tmp_path, monkeypatch):
+    from gene_agent.realworld.microwave import scene as module
+    monkeypatch.setattr(module.time, "time", lambda: 1000.)
+    observed, robots, grippers, angles, static = _inputs(tmp_path)
+
+    def unexpected_read():
+        raise AssertionError("步骤五不得再次读取夹爪")
+
+    for gripper in grippers.values():
+        gripper.read_width_m = unexpected_read
+    result = build_live_microwave_collision_scene(
+        observed=observed, robots=robots, grippers=grippers,
+        angles=angles, scene_parameters=static, max_age_s=2.,
+        microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj",
+        gripper_width_overrides={"left": .08, "right": .041},
+    )
+    assert result["provenance"]["gripper_widths_m"] == {
+        "left": pytest.approx(.08), "right": pytest.approx(.041),
+    }
+    assert result["provenance"]["live_state"]["gripper_width_sources"] == {
+        "left": "confirmed_execution_endpoint",
+        "right": "confirmed_execution_endpoint",
+    }
+
+
 def test_computed_table_height_and_afford_geometry_reach_collision_export(tmp_path, monkeypatch):
     from gene_agent.realworld.microwave import scene as module
     from gene_agent.realworld.microwave.perception_setup import asset_geometry, table_from_scene_geometry

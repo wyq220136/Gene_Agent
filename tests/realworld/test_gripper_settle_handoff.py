@@ -50,10 +50,17 @@ def _rig(monkeypatch, *, fault=False, invalid_end=False):
 
 def test_force_grasp_waits_before_freezing_end_width_and_handoff(monkeypatch):
     runtime,kw,events=_rig(monkeypatch)
-    execution=runtime.run_gripper_stage("close",execute=True,**kw)
+    execution=runtime.run_gripper_stage(
+        "close",execute=True,confirm_stable_endpoint=True,**kw)
     assert execution["status"]=="executed"
     assert execution["measured_end_width_m"]==pytest.approx(.024)
-    assert events==["grasp",("settle",1.5),"read_end"]
+    assert events==[
+        "grasp",("settle",1.5),"read_end",("settle",.05),
+        "read_end",("settle",.05),"read_end",
+    ]
+    confirmation=execution["endpoint_confirmation"]
+    assert confirmation["confirmed"] is True
+    assert len(confirmation["readings"])==3
     assert execution_handoff_error(_scene(1,.041),_scene(2,.024),execution,
         max_joint_error_rad=.02,max_width_error_m=.005) is None
     # 力控夹持由物体决定宽度，不能拿规划的7mm闭合宽度当作到位条件。
@@ -66,6 +73,18 @@ def test_width_change_after_settling_still_blocks_handoff(monkeypatch):
     error=execution_handoff_error(_scene(1,.041),_scene(2,.044),execution,
         max_joint_error_rad=.02,max_width_error_m=.005)
     assert error and "开口" in error
+
+
+def test_pick_can_reuse_confirmed_width_without_comparing_a_second_read(monkeypatch):
+    runtime,kw,_=_rig(monkeypatch)
+    execution=runtime.run_gripper_stage(
+        "close",execute=True,confirm_stable_endpoint=True,**kw)
+    error=execution_handoff_error(
+        _scene(1,.041),_scene(2,.044),execution,
+        max_joint_error_rad=.02,max_width_error_m=.005,
+        compare_gripper_endpoint=False,
+    )
+    assert error is None
 
 
 def test_settle_does_not_hide_arm_drift(monkeypatch):

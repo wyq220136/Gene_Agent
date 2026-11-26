@@ -169,10 +169,13 @@ class RealworldRunDiagnostics:
             self.record_error("initial_perception", error)
 
     def wrap_observer(self, observe):
-        def recorded():
+        def recorded(*, gripper_width_overrides=None):
             from gene_agent.feedback.runtime_timing import measure_runtime
             with measure_runtime("perception", "observe_collision_scene"):
-                scene = observe()
+                if gripper_width_overrides is None:
+                    scene = observe()
+                else:
+                    scene = observe(gripper_width_overrides=gripper_width_overrides)
             with measure_runtime("diagnostics", "capture_initial_scene"):
                 self.capture_initial(scene)
             return scene
@@ -419,7 +422,8 @@ def print_realworld_console_summary(root, report, *, subtask, execute, collision
           f"success={report.get('success', report.get('pick_success'))}", flush=True)
     if stages:
         print("[task] 阶段：" + ", ".join(
-            f"{stage.get('name', stage.get('stage_id', '?'))}={stage.get('status', stage.get('success'))}"
+            f"{stage.get('name', stage.get('stage_id', stage.get('stage', '?')))}="
+            f"{stage.get('status', stage.get('success'))}"
             for stage in stages), flush=True)
     else:
         print("[task] 阶段：尚未生成可执行阶段", flush=True)

@@ -15,6 +15,7 @@ from gene_agent.motion.model import (
 from gene_agent.motion.planner import MotionPlanner
 
 from gene_agent.skills.library.pick.model import PICK_STAGE_ORDER, GRASP_STAGE_ORDER, GraspSettings
+from gene_agent.skills.library.pick.pregrasp_search import PregraspRequestCache
 from gene_agent.skills.runtime.planning import SkillContext, SkillPlan, SkillStage
 from gene_agent.skills.runtime.poses import offset_along_tcp_z
 
@@ -73,6 +74,39 @@ def _joint_travel_check(
     }
 
 
+def _first_valid_pregrasps(eligible, context, settings, cache, attempts):
+    """逐抓取候选展开；调用方一旦得到有效完整前缀就不再推进生成器。"""
+    for item, final in eligible:
+        targets = _legacy_pregrasp_targets(final, settings.approach_distance_m)
+        requests = tuple(MotionRequest(
+            f"{item.candidate_id}:pregrasp_ik_{index:02d}", MotionOperation.IK,
+            context.group, context.start, target, context.scene,
+            CollisionPolicy(), seed=context.seed,
+        ) for index, target in enumerate(targets))
+        results = cache.evaluate_candidates(requests)
+        viable = []
+        for target, request, result in zip(targets, requests, results):
+            attempts.append({"candidate_id": item.candidate_id, "stage": "pregrasp_ik",
+                             "request": request.to_dict(), "result": result.to_dict()})
+            if not result.success or result.goal_state is None:
+                continue
+            posture = _joint_travel_check(
+                context.start, result.goal_state.joint_names, result.goal_state.positions_rad,
+                settings.max_pregrasp_joint_travel_rad,
+                reason_code="pregrasp_joint_travel_exceeded",
+            )
+            if not posture["success"]:
+                attempts.append({"candidate_id": item.candidate_id,
+                                 "stage": "pregrasp_posture_check",
+                                 "request_id": request.request_id, "result": posture})
+                continue
+            viable.append((target, float(posture.get("maximum_joint_travel_rad", 0.))))
+        # 保留原有候选优先级及候选内关节行程排序，不要求其他 grasp 先算完。
+        viable.sort(key=lambda row: row[1])
+        for target, _ in viable:
+            yield item, final, target
+
+
 class GraspSkill:
     def plan(
         self,
@@ -84,7 +118,7 @@ class GraspSkill:
         contact_planner: MotionPlanner | None = None,
         contact_scene: PlanningSceneRef | None = None,
     ) -> SkillPlan:
-        """按配置筛抓取候选；旧视觉模式在轨迹规划前筛全部局部姿态。"""
+        """按配置筛抓取候选；真机按需寻找首条有效完整抓取前缀。"""
         if (contact_planner is None) != (contact_scene is None):
             raise ValueError("目标接触 planner 与场景快照必须同时提供")
         # 旧抓取语义：最终抓取和直线接近允许碰目标物体；pregrasp 的
@@ -117,7 +151,13 @@ class GraspSkill:
             for item, ik_request, ik_result in zip(selected, requests, results)
             if ik_result.success
         )
-        if settings.candidate_selection == "legacy_ik":
+        pregrasp_cache = (PregraspRequestCache(planner)
+                          if settings.pregrasp_search == "first_valid_prefix" else None)
+        if pregrasp_cache is not None:
+            candidates_to_plan = _first_valid_pregrasps(
+                eligible, context, settings, pregrasp_cache, attempts,
+            )
+        elif settings.candidate_selection == "legacy_ik":
             # 旧 Viser 先按顺序为所有最终 IK 可达的 grasp 生成 17 个
             # pregrasp，再以 128 为一批做 IK；第一个成功批次中的首个可达
             # 候选就是最终选项。随后执行阶段若路径失败，不偷偷换 grasp。
@@ -192,14 +232,15 @@ class GraspSkill:
                 context.start, pregrasp, context.scene, CollisionPolicy(), seed=context.seed,
                 approximate_ik_budget=settings.pregrasp_approximate_ik_budget,
             )
-            pre_result = planner.plan(pre_request)
+            pre_result = (pregrasp_cache.plan(pre_request) if pregrasp_cache is not None
+                          else planner.plan(pre_request))
             if (pre_result.request_id != pre_request.request_id
                     or pre_result.operation is not MotionOperation.PLAN):
                 raise RuntimeError("planner 返回的 pregrasp 结果与请求不匹配")
             attempts.append({"candidate_id": item.candidate_id, "stage": "pregrasp",
                              "request": pre_request.to_dict(), "result": pre_result.to_dict()})
             if not pre_result.success or pre_result.goal_state is None or pre_result.trajectory is None:
-                if (settings.candidate_selection == "legacy_ik"
+                if (pregrasp_cache is None and settings.candidate_selection == "legacy_ik"
                         and settings.max_pregrasp_joint_travel_rad is None):
                     return SkillPlan("grasp", item.candidate_id, (
                         SkillStage("open", "planned", details={
@@ -273,7 +314,8 @@ class GraspSkill:
             # pregrasp + approach 前缀。第一条安全 pregrasp 的直线接近失败
             # 不能阻止后续候选继续竞争；旧兼容模式仍保留首次候选行为。
             if (approach_status != "planned"
-                    and (settings.max_pregrasp_joint_travel_rad is not None
+                    and (pregrasp_cache is not None
+                         or settings.max_pregrasp_joint_travel_rad is not None
                          or settings.max_approach_joint_travel_rad is not None)):
                 continue
             later = "planned" if approach_result.success else "not_executed"

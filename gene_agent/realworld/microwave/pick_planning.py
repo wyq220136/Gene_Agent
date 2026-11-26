@@ -151,7 +151,8 @@ def plan_observed_bowl_grasp_stages(
     effective_profile = Path(profile_path) if profile_path is not None else _PROFILE_PATH
     profile_bytes = effective_profile.read_bytes()
     settings = load_grasp_settings(effective_profile, profile_name)
-    settings = replace(settings, max_grasp_candidates=len(case.candidates))
+    settings = replace(settings, max_grasp_candidates=len(case.candidates),
+                       pregrasp_search="first_valid_prefix")
     output.mkdir(parents=True, exist_ok=True)
     body, position, normal = _selection_geometry(case)
     evidence = {
@@ -168,6 +169,9 @@ def plan_observed_bowl_grasp_stages(
         "max_grasp_candidates": settings.max_grasp_candidates,
         "candidate_parameters": target["candidate_parameters"],
         "generated_candidate_count": len(case.candidates),
+        "pregrasp_search": settings.pregrasp_search,
+        "selection_stop_condition": "first_valid_pregrasp_and_approach_prefix",
+        "pregrasp_request_reuse_scope": "single_grasp_plan_exact_request_except_id",
     }
     evidence_path = output / "candidate_selection.json"
     from gene_agent.feedback.realworld_diagnostics import write_candidate_inventory
@@ -202,7 +206,17 @@ def plan_observed_bowl_grasp_stages(
         )
     write_candidate_inventory(output, case.candidates, selected.plan.to_dict(),
                               candidate_order=[item.candidate_id for item in selected.proposals])
+    search_attempts = [row for row in selected.plan.attempts
+                       if row.get("stage") in {"pregrasp_ik", "pregrasp"}]
+    reuse_count = sum(bool(row.get("result", {}).get("metrics", {}).get("request_reuse"))
+                      for row in search_attempts)
     evidence.update(
+        pregrasp_search_summary={
+            "logical_requests": len(search_attempts),
+            "backend_evaluated_requests": len(search_attempts) - reuse_count,
+            "reused_requests": reuse_count,
+            "expanded_grasp_candidates": len({row["candidate_id"] for row in search_attempts}),
+        },
         selected_grasp_geometry=selected_geometry,
         pregrasp_joint_travel_limit_rad=settings.max_pregrasp_joint_travel_rad,
         approach_joint_travel_limit_rad=settings.max_approach_joint_travel_rad,

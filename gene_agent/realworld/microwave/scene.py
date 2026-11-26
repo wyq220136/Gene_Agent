@@ -314,6 +314,7 @@ def build_live_microwave_collision_scene(
     microwave_pose_mesh_path: str | Path,
     microwave_root_anchor: Mapping | None = None,
     include_knob: bool = True,
+    gripper_width_overrides: Mapping[str, float] | None = None,
 ) -> dict:
     """读两臂与夹爪后调用现有碰撞导出，不运行 MuJoCo 动力学。
 
@@ -412,8 +413,13 @@ def build_live_microwave_collision_scene(
             "请沿用经检查的固定本体锚点并单独测门角，或跟踪静止柜体"
         )
 
+    overrides = dict(gripper_width_overrides or {})
+    unknown_override_groups = set(overrides) - {"left", "right"}
+    if unknown_override_groups:
+        raise ValueError(f"夹爪开口复用包含未知机器人组: {sorted(unknown_override_groups)}")
     joints = {}
     widths = {}
+    width_sources = {}
     for group in ("left", "right"):
         state = robots[group].read_joint_state()
         expected = tuple(f"{group}_joint_{index}" for index in range(1, 8))
@@ -423,7 +429,16 @@ def build_live_microwave_collision_scene(
         if values.shape != (7,) or not np.isfinite(values).all():
             raise ValueError(f"{group} 必须有七个有效实测关节角")
         joints[group] = values.tolist()
-        widths[group] = float(grippers[group].read_width_m())
+        if group in overrides:
+            width = float(overrides[group])
+            source = "confirmed_execution_endpoint"
+        else:
+            width = float(grippers[group].read_width_m())
+            source = "sdk_live_read"
+        if not math.isfinite(width) or width < 0:
+            raise ValueError(f"{group} 夹爪开口必须是非负有限米数")
+        widths[group] = width
+        width_sources[group] = source
     sampled_at_ms = time.time() * 1000.
     if sampled_at_ms - now_ms > age_limit * 1000.:
         raise ValueError("读取两臂状态耗时超过现场快照有效期")
@@ -446,6 +461,7 @@ def build_live_microwave_collision_scene(
         raise ValueError("碰撞场景导出完成时微波炉本体锚点已过期")
     result["provenance"]["live_state"] = {
         "robot_sampled_at_unix_ms": sampled_at_ms,
+        "gripper_width_sources": width_sources,
         "declared_microwave_pose_mesh_path": str(microwave_pose_mesh_path),
         "door": checked_angles["door"], "knob": checked_angles["knob"],
         "include_knob": bool(include_knob),
@@ -494,7 +510,7 @@ def make_live_microwave_observer(
     base = Path(output_dir).expanduser().resolve()
     sequence = count()
 
-    def observe() -> dict:
+    def observe(*, gripper_width_overrides: Mapping[str, float] | None = None) -> dict:
         folder = base / f"{next(sequence):04d}"
         if operation_perception is not None:
             operation_perception.prepare_capture()
@@ -564,6 +580,7 @@ def make_live_microwave_observer(
             max_age_s=max_age_s, microwave_pose_mesh_path=microwave_pose_mesh_path,
             microwave_root_anchor=anchor,
             include_knob=include_knob,
+            gripper_width_overrides=gripper_width_overrides,
         )
 
     if operation_perception is not None:

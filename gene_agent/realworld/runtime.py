@@ -290,6 +290,11 @@ class RealWorldRuntime:
         max_width_error_m: float, planned_scene_snapshot_sha256: str,
         execute: bool = False, command_mode: str = "position",
         grasp_force: float = 0.5, grasp_settle_time_s: float = 1.5,
+        confirm_stable_endpoint: bool = False,
+        endpoint_stability_samples: int = 3,
+        endpoint_stability_tolerance_m: float = 0.0005,
+        endpoint_stability_timeout_s: float = 2.0,
+        endpoint_poll_interval_s: float = 0.05,
     ) -> dict:
         """使用真机实测关节和夹爪开口核对米制命令。
 
@@ -301,6 +306,17 @@ class RealWorldRuntime:
         settle = float(grasp_settle_time_s)
         if not math.isfinite(settle) or settle < 0:
             raise ValueError("闭爪稳定等待时间必须是非负有限秒数")
+        if type(confirm_stable_endpoint) is not bool:
+            raise ValueError("夹爪终点稳定确认开关必须为 bool")
+        stable_samples = int(endpoint_stability_samples)
+        stable_tolerance = float(endpoint_stability_tolerance_m)
+        stable_timeout = float(endpoint_stability_timeout_s)
+        poll_interval = float(endpoint_poll_interval_s)
+        if (stable_samples < 2 or stable_samples != endpoint_stability_samples
+                or not math.isfinite(stable_tolerance) or stable_tolerance < 0
+                or not math.isfinite(stable_timeout) or stable_timeout <= 0
+                or not math.isfinite(poll_interval) or poll_interval < 0):
+            raise ValueError("夹爪终点稳定确认参数必须有效")
         if not math.isfinite(max_width_error_m) or max_width_error_m <= 0:
             raise ValueError("夹爪起点误差阈值必须为正有限米数")
         if command_mode not in {"position", "grasp", "release"}:
@@ -354,6 +370,7 @@ class RealWorldRuntime:
             "measured_joint_start": measured_joints.to_dict(),
             "grasp_settle_time_s": settle if command_mode == "grasp" else 0.0,
             "grasp_settle_completed": False,
+            "endpoint_confirmation": None,
             "claim": "只核对夹爪指令与真机起点；未执行运动",
         }
         if not execute:
@@ -384,15 +401,66 @@ class RealWorldRuntime:
                 self.gripper.release()
             else:
                 self.gripper.command_width_m(target)
-            measured_end_width = float(self.gripper.read_width_m())
-            if not math.isfinite(measured_end_width) or not 0 <= measured_end_width <= maximum:
-                raise ValueError("夹爪实测终点开口无效")
+            confirmation_started = time.monotonic()
+            readings = []
+            while True:
+                measured_end_width = float(self.gripper.read_width_m())
+                if not math.isfinite(measured_end_width) or not 0 <= measured_end_width <= maximum:
+                    raise ValueError("夹爪实测终点开口无效")
+                readings.append({
+                    "elapsed_s": time.monotonic() - confirmation_started,
+                    "width_m": measured_end_width,
+                })
+                if not confirm_stable_endpoint:
+                    break
+                recent = readings[-stable_samples:]
+                endpoint_is_stable = (
+                    len(recent) == stable_samples
+                    and max(row["width_m"] for row in recent)
+                    - min(row["width_m"] for row in recent) <= stable_tolerance
+                )
+                position_target_reached = (
+                    command_mode != "position"
+                    or abs(measured_end_width - target) <= max_width_error_m
+                )
+                if endpoint_is_stable and position_target_reached:
+                    break
+                if time.monotonic() - confirmation_started >= stable_timeout:
+                    record["endpoint_confirmation"] = {
+                        "method": "blocking_command_plus_stable_actpos",
+                        "confirmed": False,
+                        "required_stable_samples": stable_samples,
+                        "stability_tolerance_m": stable_tolerance,
+                        "timeout_s": stable_timeout,
+                        "poll_interval_s": poll_interval,
+                        "readings": readings,
+                        "duration_s": time.monotonic() - confirmation_started,
+                    }
+                    reason = ("开口未在限定时间内稳定到目标"
+                              if command_mode == "position" else
+                              "开口未在限定时间内稳定")
+                    raise TimeoutError(f"夹爪命令返回后{reason}")
+                if poll_interval:
+                    time.sleep(poll_interval)
+            record["endpoint_confirmation"] = {
+                "method": ("blocking_command_plus_stable_actpos"
+                           if confirm_stable_endpoint else "blocking_command_single_actpos"),
+                "confirmed": True,
+                "required_stable_samples": stable_samples if confirm_stable_endpoint else 1,
+                "stability_tolerance_m": stable_tolerance if confirm_stable_endpoint else None,
+                "timeout_s": stable_timeout if confirm_stable_endpoint else None,
+                "poll_interval_s": poll_interval if confirm_stable_endpoint else None,
+                "readings": readings,
+                "duration_s": time.monotonic() - confirmation_started,
+            }
         except Exception as error:
             failure = self._failed(stage, "gripper_execution_failed",
                                    f"夹爪执行或终点读取失败：{type(error).__name__}: {error}")
             if recheck is not None:
                 failure["scene_recheck"] = recheck
             failure["measured_start_width_m"] = measured_width
+            if record.get("endpoint_confirmation") is not None:
+                failure["endpoint_confirmation"] = record["endpoint_confirmation"]
             return failure
         record.update({
             "status": "executed", "measured_end_width_m": measured_end_width,

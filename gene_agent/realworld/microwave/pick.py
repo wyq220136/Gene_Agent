@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import math
 import time
 import traceback
@@ -49,6 +50,29 @@ def _command_end_state(execution, name):
                               {'gripper_width_m': float(width), 'joint_state_unknown': True})
     return OperationState(f'unavailable:{name}', 'unavailable',
                           {'state_unavailable': True, 'reason': '等待执行后重新观测'})
+
+
+def _observe_after_gripper_stage(observe, scene, execution):
+    """感知新场景，但复用已稳定确认的夹爪终点，不再次读取夹爪。"""
+    measured = execution.get("measured_end_width_m")
+    if measured is None or not math.isfinite(float(measured)):
+        raise ValueError("夹爪阶段缺少已确认的有限终点开口")
+    group = scene["snapshot"]["active_group"]
+    widths = dict(scene["provenance"]["gripper_widths_m"])
+    widths[group] = float(measured)
+    try:
+        parameters = inspect.signature(observe).parameters.values()
+    except (TypeError, ValueError):
+        parameters = ()
+    supports_override = any(
+        parameter.name == "gripper_width_overrides"
+        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+    if not supports_override:
+        # 离线测试/旧注入回调没有真机夹爪读取；保持原无参接口。
+        return observe(), False
+    return observe(gripper_width_overrides=widths), True
 
 
 def _run_observed_pick_flow(report, *, observe, perform, execute, **options):
@@ -224,6 +248,7 @@ def run_observed_bowl_grasp(
                     max_width_error_m=max_gripper_width_error_m,
                     planned_scene_snapshot_sha256=scene["snapshot"]["snapshot_sha256"],
                     execute=execute,
+                    confirm_stable_endpoint=True,
                     **({"command_mode": "grasp", "grasp_force": force}
                        if name == "close" else {}),
                 )
@@ -283,13 +308,23 @@ def run_observed_bowl_grasp(
                     "message": "当前阶段仅完成预检；下一段需要先执行并重新观测",
                 })
                 return {'success': False}
-            next_scene = observe_collision_scene()
+            if name in {"open", "close"}:
+                next_scene, reused_width = _observe_after_gripper_stage(
+                    observe_collision_scene, scene, execution,
+                )
+                row["postcommand_gripper_width_source"] = (
+                    "confirmed_execution_endpoint" if reused_width
+                    else "legacy_injected_observer"
+                )
+            else:
+                next_scene = observe_collision_scene()
             observed = _operation_state(next_scene)
             row["observed_after"] = _summary(next_scene)
             error = _handoff_error(
                 scene, next_scene, execution,
                 max_joint_error_rad=max_start_error_rad,
                 max_width_error_m=max_gripper_width_error_m,
+                compare_gripper_endpoint=name not in {"open", "close"},
             )
             if error is not None:
                 row["status"] = "failed"
