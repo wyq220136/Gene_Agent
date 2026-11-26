@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import time
+from gene_agent.feedback.runtime_timing import timed_runtime_call
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -75,6 +76,7 @@ def _bowl_target(collision_scene: Mapping) -> dict:
     }
 
 
+@timed_runtime_call("scene_reconstruction")
 def _observed_case(
     collision_scene: Mapping, output_dir: str | Path, *, generate_candidates: bool = True,
 ) -> tuple[PickBowlCase, dict]:
@@ -135,6 +137,7 @@ def build_observed_bowl_grasp_stage_snapshots(
     )
 
 
+@timed_runtime_call("stage", "grasp_candidate_selection")
 def plan_observed_bowl_grasp_stages(
     collision_scene: Mapping, *, output_dir: str | Path,
     profile_name: str = "pick_bowl_legacy_visual", seed: int = 123,
@@ -162,7 +165,7 @@ def plan_observed_bowl_grasp_stages(
     settings = load_grasp_settings(effective_profile, profile_name)
     settings = replace(
         settings, max_grasp_candidates=len(case.candidates),
-        pregrasp_search="batch_all", align_before_approach=True,
+        pregrasp_search="batch_all", align_before_approach=True, deduplicate_pregrasp=True,
     )
     output.mkdir(parents=True, exist_ok=True)
     body, position, normal = _selection_geometry(case)
@@ -194,7 +197,8 @@ def plan_observed_bowl_grasp_stages(
         "generated_candidate_count": len(case.candidates),
         "pregrasp_search": settings.pregrasp_search,
         "selection_stop_condition": "joint_state_rank_then_full_prefix_and_lift_feasibility",
-        "pregrasp_request_reuse_scope": None,
+        "pregrasp_request_reuse_scope": "single_grasp_selection_exact_request_except_id",
+        "deduplicate_pregrasp": settings.deduplicate_pregrasp,
     }
     evidence_path = output / "candidate_selection.json"
     from gene_agent.feedback.realworld_diagnostics import write_candidate_inventory

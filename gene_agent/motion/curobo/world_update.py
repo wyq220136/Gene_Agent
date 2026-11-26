@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
+from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 import numpy as np
@@ -18,24 +23,113 @@ def _mesh_format(path):
     return suffix if suffix in _SELF_CONTAINED_MESH_SUFFIXES else None
 
 
+
+_FILE_HASH_CACHE = ContextVar("curobo_mesh_file_hash_cache", default=None)
+
+
+def file_signature(path):
+    value = os.stat(path)
+    if not stat.S_ISREG(value.st_mode):
+        raise OSError("mesh 必须是普通文件")
+    return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+
+class MeshFileHashCache:
+    """任务内有界内容身份缓存；ctime 也参与，覆盖同大小改写并恢复 mtime。"""
+    def __init__(self, capacity=256):
+        self.capacity = capacity
+        self.entries = OrderedDict()
+        self.hits = self.misses = self.bytes_read = 0
+        from .mesh_file_watch import MeshFileWatch
+        self.watch = MeshFileWatch()
+
+    def token(self, path):
+        signature = file_signature(path)
+        generation = self.watch.token(path)
+        return None if generation is None else (signature, generation)
+
+    def remember(self, path, digest, *, token=None):
+        token = self.token(path) if token is None else token
+        if token is not None:
+            self.entries[token] = digest
+            self.entries.move_to_end(token)
+            while len(self.entries) > self.capacity:
+                self.entries.popitem(last=False)
+        return token
+
+    def digest(self, path):
+        token = self.token(path)
+        if token is not None and token in self.entries and self.token(path) == token:
+            self.hits += 1
+            self.entries.move_to_end(token)
+            return self.entries[token]
+        self.misses += 1
+        digest = hashlib.sha256()
+        with open(path, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                self.bytes_read += len(chunk)
+                digest.update(chunk)
+            after = os.fstat(stream.fileno())
+        identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        final_token = self.token(path)
+        if (identity(before) != identity(after) or identity(after) != file_signature(path)
+                or (token is not None and token != final_token)):
+            raise OSError("mesh 读取期间发生变化，不能证明几何身份")
+        value = digest.hexdigest()
+        if final_token is not None:
+            self.remember(path, value, token=final_token)
+        return value
+
+    def close(self):
+        self.entries.clear()
+        self.watch.close()
+
+    def stats(self):
+        return dict(hits=self.hits, misses=self.misses, bytes_read=self.bytes_read,
+                    change_monitor_available=self.watch.enabled_ever)
+
+
+@contextmanager
+def mesh_file_cache_scope():
+    existing = _FILE_HASH_CACHE.get()
+    if existing is not None:
+        yield existing
+        return
+    cache = MeshFileHashCache()
+    token = _FILE_HASH_CACHE.set(cache)
+    try:
+        yield cache
+    finally:
+        cache.close()
+        _FILE_HASH_CACHE.reset(token)
+
+
+def mesh_file_token(path):
+    cache = _FILE_HASH_CACHE.get()
+    return None if cache is None else cache.token(path)
+
+
+def remember_mesh_digest(path, digest):
+    cache = _FILE_HASH_CACHE.get()
+    if cache is not None:
+        cache.remember(path, digest)
+
+
 def mesh_content_hashes(scene: dict) -> dict[str, str | None]:
-    """逐次记录加载的mesh内容；外部引用格式或缺文件时不能证明几何身份。"""
+    """复用任务内未变文件；修改/替换重读，外部引用格式不作几何同一性证明。"""
     from gene_agent.feedback.runtime_timing import measure_runtime
-    meshes = scene.get('mesh', {})
-    with measure_runtime("mesh_file_read", "hash_mesh_files",
-                         metadata={"mesh_count": len(meshes)}):
+    meshes = scene.get("mesh", {})
+    cache = _FILE_HASH_CACHE.get()
+    if cache is None:
+        with mesh_file_cache_scope():
+            return mesh_content_hashes(scene)
+    with measure_runtime("mesh_file_read", "hash_mesh_files", metadata={"mesh_count": len(meshes)}):
         result = {}
         for name, row in meshes.items():
             try:
-                path = row['file_path']
-                if _mesh_format(path) is None:
-                    result[name] = None
-                    continue
-                digest = hashlib.sha256()
-                with open(path, 'rb') as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                        digest.update(chunk)
-                result[name] = digest.hexdigest()
+                path = row["file_path"]
+                result[name] = cache.digest(path) if _mesh_format(path) is not None else None
             except (OSError, KeyError, TypeError, ValueError):
                 result[name] = None
         return result

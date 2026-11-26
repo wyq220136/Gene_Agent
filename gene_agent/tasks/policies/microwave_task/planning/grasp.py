@@ -501,11 +501,14 @@ def plan_bowl_grasp_stages(
             output=case.output_dir / "predicted_lift" / f"{check_index:03d}_{proposal.candidate_id}",
         )
 
+    from gene_agent.skills.library.pick.pregrasp_search import PregraspRequestCache
+    pregrasp_cache = PregraspRequestCache(adapter) if profile.deduplicate_pregrasp else None
     try:
         result = PickSkill().plan(
             adapter, proposals, context, profile,
             contact_planner=contact_adapter, contact_scene=contact_scene,
             candidate_postcheck=postgrasp_check if profile.align_before_approach else None,
+            pregrasp_request_cache=pregrasp_cache,
         )
         if (profile.align_before_approach and result.selected_candidate_id is None
                 and any(row["stage"] == "final_grasp_ik" and row["result"]["success"]
@@ -521,6 +524,7 @@ def plan_bowl_grasp_stages(
                 pregrasp_target_generator=make_bowl_pregrasp_targets,
                 candidate_postcheck=postgrasp_check,
                 final_ik_evidence=evidence,
+                pregrasp_request_cache=pregrasp_cache,
             )
             result = replace(alternative, attempts=(
                 *result.attempts,

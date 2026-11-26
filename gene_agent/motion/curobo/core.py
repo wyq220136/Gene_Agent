@@ -1573,6 +1573,9 @@ class SynchronousPlanner:
                         optimizer_collision_activation_distance=self.optimizer_collision_activation_distance,
                         self_collision_check=True, num_seeds=16, **self.runtime_options))
                 phase_timing["solver_initialization_s"] = time.perf_counter()-initialization_started
+                from gene_agent.feedback.runtime_timing import record_runtime_duration
+                record_runtime_duration("curobo_initialization", "single_solver_initialization",
+                                        phase_timing["solver_initialization_s"], started_at_s=initialization_started)
                 solver_started = time.perf_counter()
                 with optimizer_mounting_mask(self._ik.kinematics, self.mounting_contact_policy) if self._validator else nullcontext():
                     raw = self._ik.solve_pose(goal, current_state=start)
@@ -1591,6 +1594,9 @@ class SynchronousPlanner:
                     planner_config.trajopt_solver_config.interpolation_dt = 0.025
                     self._planner = MotionPlanner(planner_config)
                 phase_timing["solver_initialization_s"] = time.perf_counter()-initialization_started
+                from gene_agent.feedback.runtime_timing import record_runtime_duration
+                record_runtime_duration("curobo_initialization", "single_solver_initialization",
+                                        phase_timing["solver_initialization_s"], started_at_s=initialization_started)
                 solver_started = time.perf_counter()
                 with self._linear_criteria(non_terminal_scale) if linear else nullcontext():
                     with optimizer_mounting_mask(self._planner.kinematics, self.mounting_contact_policy) if self._validator else nullcontext():
@@ -1604,6 +1610,9 @@ class SynchronousPlanner:
                             raw = self._planner.plan_pose(goal, start, max_attempts=max_attempts)
             self.torch.cuda.synchronize()
             phase_timing["solver_call_including_graph_capture_s"] = time.perf_counter()-solver_started
+            record_runtime_duration("curobo_solver", "single_solver_call_including_cuda_sync",
+                                    phase_timing["solver_call_including_graph_capture_s"], started_at_s=solver_started)
+            phase_timing["wall_spans_recorded"] = True
             postprocess_started = time.perf_counter()
             if raw is None:
                 empty = dict(

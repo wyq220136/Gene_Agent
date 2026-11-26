@@ -8,10 +8,12 @@ import shlex
 import sys
 import traceback
 from uuid import uuid4
+from .runtime_timing import timed_runtime_call
 
 from .motion_diagnostics import summarize_motion_result, save_motion_diagnostic
 
 
+@timed_runtime_call("diagnostics")
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +84,7 @@ def candidate_inventory(candidates, plan=None, *, candidate_order=None, error=No
         scope="每行是一个抓取候选；phase 是实际请求。未到达阶段不代表该路径已求解或失败。")
 
 
+@timed_runtime_call("diagnostics")
 def write_candidate_inventory(output, candidates, plan=None, **kwargs):
     payload = candidate_inventory(candidates, plan, **kwargs)
     from gene_agent.motion.recording import current_motion_recording
@@ -133,6 +136,7 @@ class RealworldRunDiagnostics:
         from .curobo_log_policy import FailureOnlyCuroboLogs
         self.curobo_logs = FailureOnlyCuroboLogs(self) if failure_only else None
 
+    @timed_runtime_call("diagnostics")
     def __enter__(self):
         from gene_agent.motion.recording import motion_recording
         from gene_agent.realworld.scene_archive import SceneArchive
@@ -172,6 +176,7 @@ class RealworldRunDiagnostics:
         except OSError:
             pass
 
+    @timed_runtime_call("diagnostics")
     def capture_initial(self, scene):
         if self._initial_attempted:
             return
@@ -219,6 +224,7 @@ class RealworldRunDiagnostics:
             self.record_error("selection_scene", error)
             return None
 
+    @timed_runtime_call("diagnostics")
     def record(self, requests, results, *, snapshot, replay_ref=None, invocation=None,
                source_batch_indices=None, source_batch_size=None):
         requests, results = list(requests), list(results)
@@ -247,7 +253,9 @@ class RealworldRunDiagnostics:
                 result_ref=str(ref.relative_to(self.root)),
                 replay_request_ref=((str(Path(replay_ref).relative_to(self.root))
                     if Path(replay_ref).is_relative_to(self.root) else str(replay_ref)) if replay_ref else None),
-                success=result.success, duration_s=result.duration_s)
+                success=result.success, duration_s=result.duration_s,
+                duration_scope="backend_method_only",
+                runtime_timing_event_id=result.metrics.get("runtime_timing_event_id"))
             if not result.success:
                 try:
                     summary = summarize_motion_result(result, snapshot)
@@ -285,6 +293,7 @@ class RealworldRunDiagnostics:
 
         return tuple(result_refs)
 
+    @timed_runtime_call("diagnostics")
     def __exit__(self, typ, error, tb):
         if self.curobo_logs is not None and not self.curobo_logs.finished:
             # 未走到正常报告时，只把 cuRobo 调用栈中的异常归为后端失败。
@@ -417,6 +426,7 @@ def inspect_realworld_run(root, *, candidate=None, stage=None):
         scope="只读已保存证据；没有执行的阶段不补造结果；有限搜索失败不是全局不可达证明。")
 
 
+@timed_runtime_call("diagnostics")
 def write_realworld_summary(root, *, compact=False):
     root = Path(root)
     payload = inspect_realworld_run(root)

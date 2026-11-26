@@ -4,6 +4,7 @@ from typing import Sequence, TYPE_CHECKING
 from dataclasses import replace
 import time
 import numpy as np
+from gene_agent.feedback.runtime_timing import timed_runtime_call, current_timing_event_id
 from .approximate import ApproximateIKBudget
 from ..model import (JointState as MotionJointState, JointTrajectory, MotionFailure,
                      MotionFailureKind, MotionOperation, MotionRequest, MotionResult)
@@ -31,6 +32,12 @@ class CuroboPlannerAdapter:
             planner.diagnostic_options = DiagnosticOptions(**recording.options)
 
     def _record(self, requests, results, *, invocation=None):
+        event_id = current_timing_event_id()
+        if event_id is not None:
+            results = tuple(replace(result, metrics={**result.metrics,
+                "runtime_timing_event_id": event_id,
+                "duration_scope": "backend_method_only; full adapter wall interval in runtime_timing.json"})
+                            for result in results)
         from ..recording import current_motion_recording
         recording = current_motion_recording()
         policy = getattr(recording, "curobo_logs", None)
@@ -269,6 +276,7 @@ class CuroboPlannerAdapter:
             duration, failure=failure, metrics=metrics,
         )
 
+    @timed_runtime_call("curobo_planning")
     def solve_ik(self, request: MotionRequest) -> MotionResult:
         invalid = self._validate(request, MotionOperation.IK)
         if invalid is not None:
@@ -279,6 +287,7 @@ class CuroboPlannerAdapter:
         )
         return self._record((request,), (self._convert(request, raw),))[0]
 
+    @timed_runtime_call("curobo_planning")
     def evaluate_candidates(self, requests: Sequence[MotionRequest]) -> tuple[MotionResult, ...]:
         """同一初态和场景的一批 IK 请求；输入顺序就是输出顺序。"""
         requests = tuple(requests)
@@ -307,6 +316,7 @@ class CuroboPlannerAdapter:
             return tuple(self._backend_error(item, "cuRobo batch 结果数与候选数不一致") for item in requests)
         return self._record(requests, tuple(self._convert(item, result) for item, result in zip(requests, raw)), invocation="evaluate_candidates")
 
+    @timed_runtime_call("curobo_planning")
     def plan(self, request: MotionRequest) -> MotionResult:
         if request.operation not in (MotionOperation.PLAN, MotionOperation.LINEAR_TCP, MotionOperation.PIVOT_TCP):
             return self._invalid(request, "请求 operation 必须是 plan、linear_tcp 或 pivot_tcp")

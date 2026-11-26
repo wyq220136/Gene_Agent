@@ -174,3 +174,36 @@ def test_exhausted_search_reports_failure_and_cache_does_not_invent_path():
     plan = solve(Planner(failure="approach"), (proposal("a"), proposal("b")))
     assert plan.selected_candidate_id is None
     assert all(plan.stage(s).status == "not_executed" for s in ("open", "approach", "close"))
+
+
+@pytest.mark.parametrize("failure", [None, "ik", "pre"])
+def test_batch_all_dedup_keeps_global_ranking_and_reuses_success_or_failure(failure):
+    proposals = (proposal("a"), proposal("b"), proposal("c", .5))
+    base = replace(settings(), pregrasp_search="batch_all")
+    baseline_planner = Planner(failure=failure)
+    baseline = GraspSkill().plan(baseline_planner, proposals, context(), base)
+    planner = Planner(failure=failure)
+    optimized = GraspSkill().plan(planner, proposals, context(),
+                                  replace(base, deduplicate_pregrasp=True))
+    assert optimized.selected_candidate_id == baseline.selected_candidate_id
+    assert optimized.stage("pregrasp").request.joint_target == baseline.stage("pregrasp").request.joint_target
+    pre_ik = [r for r in requests(planner, MotionOperation.IK) if ":pregrasp_ik_" in r.request_id]
+    old_pre_ik = [r for r in requests(baseline_planner, MotionOperation.IK) if ":pregrasp_ik_" in r.request_id]
+    assert len(pre_ik) < len(old_pre_ik)
+    reused = [row for row in optimized.attempts if row.get("result", {}).get("metrics", {}).get("request_reuse")]
+    assert reused and all(row["result"]["duration_s"] == 0 for row in reused)
+    if failure in {"ik", "pre"}:
+        assert any(not row["result"]["success"] for row in reused)
+
+
+def test_shared_cache_reuses_same_id_on_fallback_with_zero_duration():
+    planner = Planner(failure="ik")
+    ctx = context()
+    req = MotionRequest("a:pregrasp_ik_00", MotionOperation.IK, ctx.group, ctx.start,
+                        PoseTarget("world_tcp", np.eye(4)), ctx.scene)
+    cache = PregraspRequestCache(planner)
+    first = cache.evaluate_candidates((req,))[0]
+    second = cache.evaluate_candidates((req,))[0]
+    assert not first.success and not second.success
+    assert len(planner.calls) == 1
+    assert second.duration_s == 0 and second.metrics["request_reuse"]["source_request_id"] == req.request_id

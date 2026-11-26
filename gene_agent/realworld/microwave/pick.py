@@ -6,6 +6,7 @@ import json
 import inspect
 import math
 import time
+from gene_agent.feedback.runtime_timing import measure_runtime
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -545,8 +546,11 @@ def run_observed_bowl_pick(
                 return {'success': True}
             if name == 'hold_check':
                 settings = load_grasp_settings(_PROFILE_PATH, selection["skill_profile"])
-                time.sleep(settings.hold_duration_s)
-                report["hold_duration_s"] = settings.hold_duration_s
+                hold_started = time.perf_counter()
+                with measure_runtime("settle_wait", "post_lift_hold"):
+                    time.sleep(settings.hold_duration_s)
+                report["requested_hold_duration_s"] = settings.hold_duration_s
+                report["hold_duration_s"] = time.perf_counter() - hold_started
                 after_lift = observe_collision_scene()
                 observed = _operation_state(after_lift)
                 error = _handoff_error(

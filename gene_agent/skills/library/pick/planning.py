@@ -126,6 +126,7 @@ class GraspSkill:
         pregrasp_target_generator=None,
         candidate_postcheck=None,
         final_ik_evidence=None,
+        pregrasp_request_cache=None,
     ) -> SkillPlan:
         """按配置筛抓取候选；真机按需寻找首条有效完整抓取前缀。"""
         if (contact_planner is None) != (contact_scene is None):
@@ -168,9 +169,13 @@ class GraspSkill:
             for item, ik_request, ik_result in zip(selected, requests, results)
             if ik_result.success
         )
-        pregrasp_cache = (PregraspRequestCache(planner)
-                          if settings.pregrasp_search == "first_valid_prefix" else None)
-        if pregrasp_cache is not None:
+        if pregrasp_request_cache is not None and pregrasp_request_cache.planner is not planner:
+            raise ValueError("pregrasp 缓存必须绑定当前严格 planner")
+        pregrasp_cache = pregrasp_request_cache
+        if pregrasp_cache is None and (settings.deduplicate_pregrasp
+                                      or settings.pregrasp_search == "first_valid_prefix"):
+            pregrasp_cache = PregraspRequestCache(planner)
+        if settings.pregrasp_search == "first_valid_prefix":
             candidates_to_plan = (
                 (*row, None) for row in _first_valid_pregrasps(
                     eligible, context, settings, pregrasp_cache, attempts,
@@ -198,7 +203,9 @@ class GraspSkill:
             ]] = []
             for offset in range(0, len(records), 128):
                 batch = records[offset:offset + 128]
-                prechecks = planner.evaluate_candidates(tuple(row[4] for row in batch))
+                batch_requests = tuple(row[4] for row in batch)
+                prechecks = (pregrasp_cache.evaluate_candidates(batch_requests) if pregrasp_cache is not None
+                             else planner.evaluate_candidates(batch_requests))
                 if len(prechecks) != len(batch):
                     raise RuntimeError("planner 返回的 pregrasp IK 数量与候选不一致")
                 for (item, final, pregrasp, branch_index, request), result in zip(batch, prechecks):
@@ -284,7 +291,7 @@ class GraspSkill:
             attempts.append({"candidate_id": item.candidate_id, "stage": "pregrasp",
                              "request": pre_request.to_dict(), "result": pre_result.to_dict()})
             if not pre_result.success or pre_result.goal_state is None or pre_result.trajectory is None:
-                if (pregrasp_cache is None and settings.candidate_selection == "legacy_ik"
+                if (settings.pregrasp_search != "first_valid_prefix" and settings.candidate_selection == "legacy_ik"
                         and settings.max_pregrasp_joint_travel_rad is None):
                     return SkillPlan("grasp", item.candidate_id, (
                         SkillStage("open", "planned", details={
@@ -372,7 +379,7 @@ class GraspSkill:
             # pregrasp + approach 前缀。第一条安全 pregrasp 的直线接近失败
             # 不能阻止后续候选继续竞争；旧兼容模式仍保留首次候选行为。
             if (approach_status != "planned"
-                    and (pregrasp_cache is not None
+                    and (settings.pregrasp_search == "first_valid_prefix"
                          or settings.max_pregrasp_joint_travel_rad is not None
                          or settings.max_approach_joint_travel_rad is not None)):
                 continue
@@ -470,6 +477,7 @@ class PickSkill:
         pregrasp_target_generator=None,
         candidate_postcheck=None,
         final_ik_evidence=None,
+        pregrasp_request_cache=None,
     ) -> SkillPlan:
         grasp = GraspSkill().plan(
             planner, proposals, context, settings,
@@ -477,6 +485,7 @@ class PickSkill:
             pregrasp_target_generator=pregrasp_target_generator,
             candidate_postcheck=candidate_postcheck,
             final_ik_evidence=final_ik_evidence,
+            pregrasp_request_cache=pregrasp_request_cache,
         )
         # 抬升目标必须从闭爪后的实际 TCP 状态生成；静态规划在此只记录
         # 阶段契约，物体附着代理由执行时已验证的双指接触建立。

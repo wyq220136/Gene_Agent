@@ -232,7 +232,7 @@ class ReusablePlanner(SynchronousPlanner):
             self.robot_config = cfg
             self._geometry_id = gid
         from .world_update import mesh_content_hashes, pose_updates
-        from .batch_world import apply_batch as apply_pose_updates, update_solver_world
+        from .batch_world import apply_batch as apply_pose_updates, update_solver_worlds
         from curobo._src.geom.types import SceneCfg
 
         scene = s["scene_model"]
@@ -287,8 +287,9 @@ class ReusablePlanner(SynchronousPlanner):
                     ):
                         raise ValueError("同名mesh几何变化，须额外处理")
                 scene_cfg = SceneCfg.create(copy.deepcopy(scene))
-                for solver in solvers:
-                    update_solver_world(solver, scene_cfg)
+                changed_kinds = {kind for kind in set(self.scene_model) | set(scene)
+                                 if exact_digest(self.scene_model.get(kind)) != exact_digest(scene.get(kind))}
+                update_solver_worlds(solvers, scene_cfg, changed_kinds=changed_kinds)
             else:
                 names = {name for objects in scene.values() for name in objects}
                 worlds = [

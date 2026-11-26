@@ -32,11 +32,12 @@ def test_runtime_timing_writes_component_comparison_and_total(tmp_path):
     assert payload["status"] == "success"
     assert payload["started_at"] and payload["finished_at"]
     assert payload["total_duration_s"] > 0
-    assert payload["comparison"]["curobo_planning_wall_s"] == .25
-    assert payload["comparison"]["curobo_initialization_s"] == .08
-    assert payload["comparison"]["dominant_mesh_or_curobo_solver"] == "curobo_solver"
-    assert payload["comparison"]["dominant_recorded_component"] == "curobo_planning"
-    assert payload["bottleneck"]["component"] == "curobo_planning"
+    # 没有实际区间的后端数字不能冒充墙钟或成为墙钟瓶颈。
+    assert payload["comparison"]["curobo_planning_wall_s"] == 0
+    assert payload["comparison"]["curobo_initialization_s"] == 0
+    assert payload["components"]["curobo_planning"]["reported_duration_s"] == .25
+    assert payload["components"]["curobo_initialization"]["reported_duration_s"] == .08
+    assert payload["accounting"]["reconciliation_error_s"] == 0
     assert payload["components"]["mesh_preparation"]["call_count"] == 1
 
 

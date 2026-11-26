@@ -1,60 +1,86 @@
-"""真机流程的旁路墙钟统计；不参与感知、规划或执行决策。"""
+"""单一单调墙钟、层级区间与互斥账本；不参与操作决策。"""
 from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
+import heapq
 import inspect
 import json
 import math
 from pathlib import Path
 import time
 
-
 _CURRENT = ContextVar("realworld_runtime_timing", default=None)
-_DETAIL_COMPONENTS = frozenset({"curobo_initialization", "curobo_solver"})
+_STACK = ContextVar("realworld_timing_spans", default=())
+_NS = 1_000_000_000
 
 
-def _timestamp() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
+def _timestamp(wall_ns=None):
+    value = datetime.now(timezone.utc) if wall_ns is None else datetime.fromtimestamp(wall_ns / _NS, timezone.utc)
+    return value.astimezone().isoformat(timespec="milliseconds")
+
+
+def _union_ns(intervals):
+    total, right = 0, 0
+    for start, end in sorted(intervals):
+        total += max(0, end - max(start, right))
+        right = max(right, end)
+    return total
 
 
 class RuntimeTimingRecorder:
-    """收集同步流程中的计时事件，并在结束后写入运行目录。"""
-
-    def __init__(self, output_dir: str | Path):
-        self.output_dir = Path(output_dir).expanduser().resolve()
-        self.started_at = _timestamp()
-        self._started = time.perf_counter()
+    """总时间来自起止时钟；组件/阶段独占时间各自与总时间守恒。"""
+    def __init__(self, output_dir=None, *, started_ns=None, started_wall_ns=None, clock_ns=None):
+        self.clock_ns = clock_ns or time.perf_counter_ns
+        self._started_ns = self.clock_ns() if started_ns is None else int(started_ns)
+        self._started = self._started_ns / _NS  # 兼容已有 perf_counter 秒偏移调用方。
+        self.output_dir = None if output_dir is None else Path(output_dir).expanduser().resolve()
+        self._write_allowed = True
+        self.started_at = _timestamp(started_wall_ns)
         self.finished_at = None
         self.total_duration_s = None
+        self._total_ns = None
         self.status = "running"
         self.error = None
         self.events = []
+        self._sequence = 0
+        self._open = {}
 
-    def record(self, component: str, operation: str, duration_s: float, *,
-               started_offset_s: float | None = None, status: str = "success",
-               metadata: dict | None = None) -> None:
+    def bind_output(self, output_dir):
+        if output_dir is not None and self.output_dir is None:
+            self.output_dir = Path(output_dir).expanduser().resolve()
+            # 延迟绑定的 CLI 不得因拒绝复用旧目录而覆盖旧的计时报告。
+            self._write_allowed = not self.output_dir.exists() or not any(self.output_dir.iterdir())
+
+    def record(self, component, operation, duration_s, *, started_offset_s=None,
+               ended_offset_s=None, status="success", metadata=None, event_id=None,
+               parent_id=None, depth=0, stage_id=None):
         duration = float(duration_s)
         if not math.isfinite(duration) or duration < 0:
             return
-        event = {
-            "component": str(component),
-            "operation": str(operation),
-            "duration_s": duration,
-            "status": str(status),
-        }
+        if event_id is None:
+            self._sequence += 1
+            event_id = self._sequence
+        event = dict(event_id=event_id, parent_id=parent_id, depth=depth,
+                     component=str(component), operation=str(operation), duration_s=duration,
+                     status=str(status), timing_kind="reported_duration", stage_id=stage_id)
         if started_offset_s is not None:
-            event["started_offset_s"] = max(0.0, float(started_offset_s))
+            start = float(started_offset_s)
+            end = start + duration if ended_offset_s is None else float(ended_offset_s)
+            if not all(math.isfinite(value) for value in (start, end)) or end < start:
+                return
+            event.update(started_offset_s=start, ended_offset_s=end, timing_kind="wall_interval")
         if metadata:
             event["metadata"] = dict(metadata)
         self.events.append(event)
 
-    def finish(self, *, status: str, error: BaseException | None = None) -> dict:
-        if self.total_duration_s is None:
+    def finish(self, *, status, error=None):
+        if self._total_ns is None:
+            self._total_ns = max(0, self.clock_ns() - self._started_ns)
             self.finished_at = _timestamp()
-            self.total_duration_s = time.perf_counter() - self._started
+            self.total_duration_s = self._total_ns / _NS
             self.status = str(status)
             if error is not None:
                 self.error = f"{type(error).__name__}: {error}"
@@ -62,127 +88,178 @@ class RuntimeTimingRecorder:
         self._write(payload)
         return payload
 
-    def to_dict(self) -> dict:
-        components = {}
-        for event in self.events:
-            row = components.setdefault(event["component"], {
-                "call_count": 0,
-                "total_duration_s": 0.0,
-                "max_duration_s": 0.0,
-                "slowest_operation": None,
-            })
+    def to_dict(self):
+        total_ns = self._total_ns if self._total_ns is not None else max(0, self.clock_ns() - self._started_ns)
+        snapshot_at = self.finished_at or _timestamp()
+        events = list(self.events)
+        for event in self._open.values():
+            events.append({**event, "ended_offset_s": total_ns / _NS,
+                           "duration_s": max(0., total_ns / _NS - event["started_offset_s"])})
+        components, intervals, starts, points = {}, [], {}, {0, total_ns}
+        for event in events:
+            row = components.setdefault(event["component"], dict(call_count=0, total_duration_s=0.,
+                wall_duration_s=0., reported_duration_s=0., inclusive_sum_s=0.,
+                exclusive_duration_s=0., max_duration_s=0., slowest_operation=None))
             row["call_count"] += 1
-            row["total_duration_s"] += event["duration_s"]
             if event["duration_s"] >= row["max_duration_s"]:
-                row["max_duration_s"] = event["duration_s"]
-                row["slowest_operation"] = event["operation"]
-
-        primary = {
-            name: row for name, row in components.items()
-            if name not in _DETAIL_COMPONENTS
-        }
-        bottleneck = None
-        if primary:
-            name, row = max(primary.items(), key=lambda item: item[1]["total_duration_s"])
-            bottleneck = {
-                "component": name,
-                "total_duration_s": row["total_duration_s"],
-                "slowest_operation": row["slowest_operation"],
-            }
-        comparison = {
-            "mesh_preparation_s": components.get("mesh_preparation", {}).get("total_duration_s", 0.0),
-            "mesh_file_read_s": components.get("mesh_file_read", {}).get("total_duration_s", 0.0),
-            "curobo_setup_s": components.get("curobo_setup", {}).get("total_duration_s", 0.0),
-            "curobo_planning_wall_s": components.get("curobo_planning", {}).get("total_duration_s", 0.0),
-            "curobo_initialization_s": components.get("curobo_initialization", {}).get("total_duration_s", 0.0),
-            "curobo_solver_s": components.get("curobo_solver", {}).get("total_duration_s", 0.0),
-        }
-        explicit_mesh = comparison["mesh_preparation_s"] + comparison["mesh_file_read_s"]
-        planning_wall = comparison["curobo_planning_wall_s"]
-        mesh_and_initialization = explicit_mesh + comparison["curobo_initialization_s"]
+                row.update(max_duration_s=event["duration_s"], slowest_operation=event["operation"])
+            if event["timing_kind"] != "wall_interval":
+                row["reported_duration_s"] += event["duration_s"]
+                continue
+            start = min(total_ns, max(0, round(event["started_offset_s"] * _NS)))
+            end = min(total_ns, max(start, round(event["ended_offset_s"] * _NS)))
+            row["inclusive_sum_s"] += (end - start) / _NS
+            intervals.append((start, end, event))
+            starts.setdefault(start, []).append((start, end, event))
+            points.update((start, end))
+        for name, row in components.items():
+            row["wall_duration_s"] = _union_ns((start, end) for start, end, event in intervals
+                                              if event["component"] == name) / _NS
+            row["total_duration_s"] = row["wall_duration_s"]
+        # 最深层区间优先；同深度重叠取后开始者，保证每纳秒只进入一个桶。
+        exclusive, stages, active = {}, {}, []
+        ordered = sorted(points)
+        for left, right in zip(ordered, ordered[1:]):
+            for start, end, event in starts.get(left, ()):
+                heapq.heappush(active, (-event["depth"], -start, -event["event_id"], end, event))
+            while active and active[0][3] <= left:
+                heapq.heappop(active)
+            event = active[0][4] if active else None
+            component = event["component"] if event else "unattributed"
+            stage = str(event.get("stage_id") or "outside_stages") if event else "outside_stages"
+            exclusive[component] = exclusive.get(component, 0) + right - left
+            stages[stage] = stages.get(stage, 0) + right - left
+        for name, value in exclusive.items():
+            if name in components:
+                components[name]["exclusive_duration_s"] = value / _NS
+        stage_events = [dict(event_id=e["event_id"], parent_id=e["parent_id"],
+                             operation=e["operation"], status=e["status"],
+                             started_offset_s=e["started_offset_s"], ended_offset_s=e["ended_offset_s"],
+                             inclusive_duration_s=e["duration_s"],
+                             exclusive_duration_s=stages.get(str(e["event_id"]), 0) / _NS)
+                        for e in events if e["component"] == "stage" and e["timing_kind"] == "wall_interval"]
+        comparison = {key: components.get(name, {}).get("wall_duration_s", 0.) for key, name in (
+            ("mesh_preparation_s", "mesh_preparation"), ("mesh_file_read_s", "mesh_file_read"),
+            ("curobo_setup_s", "curobo_setup"), ("curobo_planning_wall_s", "curobo_planning"),
+            ("curobo_initialization_s", "curobo_initialization"), ("curobo_solver_s", "curobo_solver"))}
+        explicit_mesh = _union_ns((start, end) for start, end, event in intervals
+                                  if event["component"] in {"mesh_preparation", "mesh_file_read"}) / _NS
+        mesh_init = _union_ns((start, end) for start, end, event in intervals
+                             if event["component"] in {"mesh_preparation", "mesh_file_read", "curobo_initialization"}) / _NS
         solver = comparison["curobo_solver_s"]
-        comparison["scene_mesh_and_curobo_initialization_s"] = mesh_and_initialization
-        comparison["dominant_mesh_or_curobo_solver"] = (
-            "curobo_solver" if solver > mesh_and_initialization else
-            "scene_mesh_and_curobo_initialization" if mesh_and_initialization > solver else
-            None
-        )
-        comparison["dominant_recorded_component"] = (
-            "curobo_planning" if planning_wall > explicit_mesh else
-            "explicit_mesh_processing" if explicit_mesh > planning_wall else
-            None
-        )
-        return {
-            "schema_version": 1,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-            "total_duration_s": self.total_duration_s,
-            "status": self.status,
-            "error": self.error,
-            "components": components,
-            "comparison": comparison,
-            "bottleneck": bottleneck,
-            "events": list(self.events),
-            "scope": [
-                "total_duration_s 是完整现场执行阶段墙钟时间；CLI记录从cuRobo启动到设备连接、感知、规划、执行、清理及可选视频导出结束。",
-                "curobo_initialization 是规划调用内的 solver 初始化，包含 cuRobo 内部场景/mesh 装载，不能与 curobo_planning 相加。",
-                "mesh_file_read 可能发生在 curobo_setup 或 curobo_planning 内；各组件用于定位瓶颈，不是互斥分项。",
-                "dominant_mesh_or_curobo_solver 比较场景/mesh准备加solver初始化与纯solver调用；初始化还包含机器人配置，不能解释成纯mesh耗时。",
-                "dominant_recorded_component 仅比较显式 mesh 处理与 cuRobo 调用墙钟，用于观察端到端调用开销。",
-            ],
-        }
+        comparison.update(scene_mesh_and_curobo_initialization_s=mesh_init,
+            dominant_mesh_or_curobo_solver=("curobo_solver" if solver > mesh_init else
+                "scene_mesh_and_curobo_initialization" if mesh_init > solver else None),
+            dominant_recorded_component=("curobo_planning" if comparison["curobo_planning_wall_s"] > explicit_mesh else
+                "explicit_mesh_processing" if explicit_mesh > comparison["curobo_planning_wall_s"] else None))
+        bottleneck = None
+        if exclusive:
+            name = max(exclusive, key=exclusive.get)
+            bottleneck = dict(component=name, total_duration_s=exclusive[name] / _NS,
+                              slowest_operation=components.get(name, {}).get("slowest_operation"),
+                              basis="exclusive_wall_time")
+        stage_labels = {str(row["event_id"]): row["operation"] for row in stage_events}
+        stage_totals = {}
+        for key, value in stages.items():
+            label = stage_labels.get(key, key)
+            stage_totals[label] = stage_totals.get(label, 0) + value
+        return dict(schema_version=2, started_at=self.started_at, finished_at=self.finished_at, snapshot_at=snapshot_at,
+            total_duration_s=total_ns / _NS, status=self.status, error=self.error,
+            components=components, comparison=comparison, bottleneck=bottleneck,
+            accounting=dict(clock="perf_counter_ns", total_wall_s=total_ns / _NS,
+                exclusive_components_s={key: value / _NS for key, value in exclusive.items()},
+                exclusive_stages_s={key: value / _NS for key, value in stage_totals.items()},
+                accounted_wall_s=sum(exclusive.values()) / _NS,
+                unattributed_s=exclusive.get("unattributed", 0) / _NS,
+                reconciliation_error_s=(sum(exclusive.values()) - total_ns) / _NS),
+            stages=sorted(stage_events, key=lambda row: row["started_offset_s"]),
+            events=sorted(events, key=lambda row: (row.get("started_offset_s", float("inf")), row["event_id"])),
+            scope=["CLI 从脚本最早可测语句计时，覆盖导入/配置、连接、感知、规划、执行、等待、日志、清理、视频及最终终端输出；直接调用从入口开始。",
+                   "不包含 Python 启动到首条计时语句之前、计时报告自身最终写盘及进程退出；终端快照略早于文件终态。",
+                   "accounting.exclusive_components_s 与 exclusive_stages_s 各自加总等于 total_duration_s；unattributed 是显式未覆盖时间。",
+                   "components.total_duration_s 是同组件实测区间的并集，父子组件仍可能重叠，不能跨组件直接相加。",
+                   "没有起止位置的后端报告仅列 reported_duration_s，不冒充实测墙钟、不参与守恒账本。"])
 
-    def _write(self, payload: dict) -> None:
-        # 输出目录尚未被正式入口创建时不落盘，避免污染无效或已有运行目录。
-        if not self.output_dir.is_dir():
+    def _write(self, payload):
+        if not self._write_allowed or self.output_dir is None or not self.output_dir.is_dir():
             return
         if not any((self.output_dir / name).exists() for name in (
                 "runtime_input.json", "site_input.json", "entry_result.json", "events.jsonl")):
             return
-        path = self.output_dir / "runtime_timing.json"
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
+        (self.output_dir / "runtime_timing.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 
-def current_runtime_timing() -> RuntimeTimingRecorder | None:
+def current_runtime_timing():
     return _CURRENT.get()
 
 
-def record_runtime_duration(component: str, operation: str, duration_s: float, *,
-                            metadata: dict | None = None) -> None:
+def current_timing_event_id():
+    stack = _STACK.get()
+    return stack[-1][1] if stack and stack[-1][0] is current_runtime_timing() else None
+
+
+def current_stage_timing_event_id():
+    stack = _STACK.get()
+    return stack[-1][2] if stack and stack[-1][0] is current_runtime_timing() else None
+
+
+def record_runtime_duration(component, operation, duration_s, *, metadata=None, started_at_s=None):
     recorder = current_runtime_timing()
     if recorder is not None:
-        recorder.record(component, operation, duration_s, metadata=metadata)
+        stack = _STACK.get()
+        parent = stack[-1] if stack and stack[-1][0] is recorder else None
+        recorder.record(component, operation, duration_s,
+                        started_offset_s=None if started_at_s is None else started_at_s - recorder._started,
+                        metadata=metadata, parent_id=None if parent is None else parent[1],
+                        depth=len(stack), stage_id=None if parent is None else parent[2])
 
 
 @contextmanager
-def measure_runtime(component: str, operation: str, *, metadata: dict | None = None):
+def measure_runtime(component, operation, *, metadata=None):
     recorder = current_runtime_timing()
     if recorder is None:
-        yield
+        yield None
         return
-    started = time.perf_counter()
-    offset = started - recorder._started
+    started = recorder.clock_ns()
+    stack = _STACK.get()
+    parent = stack[-1] if stack and stack[-1][0] is recorder else None
+    recorder._sequence += 1
+    event_id = recorder._sequence
+    stage_id = event_id if component == "stage" else parent[2] if parent else None
+    token = _STACK.set((*stack, (recorder, event_id, stage_id)))
+    recorder._open[event_id] = dict(event_id=event_id, parent_id=None if parent is None else parent[1],
+        depth=len(stack), component=str(component), operation=str(operation), stage_id=stage_id,
+        timing_kind="wall_interval", started_offset_s=(started - recorder._started_ns) / _NS,
+        status="running", **({"metadata": dict(metadata)} if metadata else {}))
+    span = {"event_id": event_id}
+    status = "success"
     try:
-        yield
+        yield span
     except BaseException:
-        recorder.record(component, operation, time.perf_counter() - started,
-                        started_offset_s=offset, status="failed", metadata=metadata)
+        status = "failed"
         raise
-    else:
-        recorder.record(component, operation, time.perf_counter() - started,
-                        started_offset_s=offset, metadata=metadata)
+    finally:
+        ended = recorder.clock_ns()
+        span["duration_s"] = (ended - started) / _NS
+        _STACK.reset(token)
+        recorder._open.pop(event_id, None)
+        recorder.record(component, operation, span["duration_s"],
+            started_offset_s=(started - recorder._started_ns) / _NS,
+            ended_offset_s=(ended - recorder._started_ns) / _NS, status=status, metadata=metadata,
+            event_id=event_id, parent_id=None if parent is None else parent[1],
+            depth=len(stack), stage_id=stage_id)
 
 
 @contextmanager
-def runtime_timing_scope(output_dir: str | Path):
+def runtime_timing_scope(output_dir=None, *, started_ns=None, started_wall_ns=None, clock_ns=None):
     existing = current_runtime_timing()
     if existing is not None:
+        existing.bind_output(output_dir)
         yield existing
         return
-    recorder = RuntimeTimingRecorder(output_dir)
+    recorder = RuntimeTimingRecorder(output_dir, started_ns=started_ns,
+                                    started_wall_ns=started_wall_ns, clock_ns=clock_ns)
     token = _CURRENT.set(recorder)
     try:
         yield recorder
@@ -190,29 +267,45 @@ def runtime_timing_scope(output_dir: str | Path):
         try:
             recorder.finish(status="failed", error=error)
         except Exception:
-            # 旁路统计失败不能覆盖原始现场异常。
-            pass
+            pass  # 旁路统计不能覆盖原操作异常。
         raise
     else:
         try:
             recorder.finish(status="success")
         except Exception:
-            # 日志介质异常不能改变已经完成的任务结果。
             pass
     finally:
         _CURRENT.reset(token)
 
 
-def timed_runtime(output_parameter: str):
-    """让直接调用入口也获得统计；已有外层 scope 时复用同一记录器。"""
+def timed_runtime_call(component, operation=None, *, name_parameter=None, result_duration_key=None):
+    """为现有同步函数加墙钟区间；可把完整调用耗时附在字典报告。"""
     def decorate(function):
         signature = inspect.signature(function)
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            name = operation or function.__name__
+            if name_parameter is not None:
+                value = signature.bind_partial(*args, **kwargs).arguments.get(name_parameter)
+                name += ":" + str(getattr(value, "name", value))
+            with measure_runtime(component, name) as span:
+                result = function(*args, **kwargs)
+            if result_duration_key and span is not None and isinstance(result, dict):
+                result = {**result, result_duration_key: span["duration_s"]}
+            return result
+        return wrapped
+    return decorate
 
+
+def timed_runtime(output_parameter):
+    """直接入口获得根计时器；已有 CLI 根时复用，不提前结束总计时。"""
+    def decorate(function):
+        signature = inspect.signature(function)
         @wraps(function)
         def wrapped(*args, **kwargs):
             bound = signature.bind_partial(*args, **kwargs)
             with runtime_timing_scope(bound.arguments[output_parameter]):
-                return function(*args, **kwargs)
-
+                with measure_runtime("realworld", function.__name__):
+                    return function(*args, **kwargs)
         return wrapped
     return decorate

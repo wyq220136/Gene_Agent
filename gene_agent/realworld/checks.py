@@ -51,7 +51,11 @@ def resolve_realworld_check(
     question: str = "本阶段是否达到现场目标？[y/n/?] ",
 ) -> CheckResult:
     """证据不明时允许人工确认；仿真来源的通过不能充当现场成功。"""
-    checked = resolve_unknown(result, ask=ask, question=question)
+    from gene_agent.feedback.runtime_timing import measure_runtime
+    def timed_ask(prompt):
+        with measure_runtime("manual_wait", "manual_confirmation"):
+            return ask(prompt)
+    checked = resolve_unknown(result, ask=None if ask is None else timed_ask, question=question)
     if checked is not result and checked.source == "manual_terminal":
         # 问题和回答由共享检查器保存；时间只属于现场人工确认，
         # 不改变 Viser/MuJoCo 的 CheckResult 输出格式。

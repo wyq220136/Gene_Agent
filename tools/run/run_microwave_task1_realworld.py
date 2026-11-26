@@ -7,6 +7,11 @@
 
 from __future__ import annotations
 
+# 最早可测入口，先于 numpy、任务模块及配置加载。
+import time as _entry_clock
+_SCRIPT_ENTRY_NS = _entry_clock.perf_counter_ns()
+_SCRIPT_ENTRY_WALL_NS = _entry_clock.time_ns()
+
 import argparse
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
@@ -27,7 +32,10 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 from gene_agent.motion.configuration import configured_motion, current_motion_config
-from gene_agent.feedback.runtime_timing import runtime_timing_scope, timed_runtime
+from gene_agent.feedback.runtime_timing import (
+    runtime_timing_scope, timed_runtime, timed_runtime_call,
+    current_runtime_timing, measure_runtime,
+)
 
 from gene_agent.realworld.microwave.task import SUBTASK_NAMES
 from gene_agent.realworld.microwave.task import run_observed_microwave_subtask
@@ -35,6 +43,12 @@ from gene_agent.realworld.microwave.task import run_observed_microwave_task1
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.realworld.scene_drift import SceneDriftLimits
 from gene_agent.realworld.microwave.configuration import runtime_configuration
+
+
+class _TimedExitStack(ExitStack):
+    @timed_runtime_call("cleanup", "resource_cleanup")
+    def __exit__(self, *args):
+        return super().__exit__(*args)
 
 
 _OBJECT_IDS = ("Bowl/Bowl_0", "Microwave/Microwave_0")
@@ -591,7 +605,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                             "observation_filter": collision_objects, "camera_calibration": setup["camera"],
                             "include_knob": config.get("include_knob", False)}
 
-    with _record_entry_errors(output, config["source_sha256"]), ExitStack() as stack:
+    with _record_entry_errors(output, config["source_sha256"]), _TimedExitStack() as stack:
         from gene_agent.feedback.realworld_diagnostics import RealworldRunDiagnostics
         diagnostics = stack.enter_context(RealworldRunDiagnostics(
             output, perception_paths=(source.parent if setup is not None else source,
@@ -629,14 +643,16 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             # 抓碗前第一条夹爪操作直接设800，不以初始开口/场景检测为前提。
             # 已持碗的插入/取出/放置流程不自动改变夹爪。
             prepare_right = execute and subtask in {"pick_bowl", "load_bowl"}
-            connections = {}
-            if prepare_right:
-                from gene_agent.realworld.microwave.gripper_preparation import prepare_right_gripper
-                connections["right"] = stack.enter_context(connect_side("right"))
-                prepare_right_gripper(connections["right"].gripper, output_dir=output)
-            for side in ("left", "right"):
-                if side not in connections:
-                    connections[side] = stack.enter_context(connect_side(side))
+            with measure_runtime("device_connection", "connect_and_prepare_arms"):
+                connections = {}
+                if prepare_right:
+                    from gene_agent.realworld.microwave.gripper_preparation import prepare_right_gripper
+                    connections["right"] = stack.enter_context(connect_side("right"))
+                    with measure_runtime("robot_execution", "prepare_right_gripper"):
+                        prepare_right_gripper(connections["right"].gripper, output_dir=output)
+                for side in ("left", "right"):
+                    if side not in connections:
+                        connections[side] = stack.enter_context(connect_side(side))
         except Exception as error:
             (output / "entry_result.json").write_text(json.dumps({
                 "schema_version": 1, "status": "failed", "success": False,
@@ -752,7 +768,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             pool.clear()
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="现场微波炉子任务/Task；默认只预检首段")
     parser.add_argument("--perception", required=True, help="prepare_microwave_realworld.py 自动生成的感知记录目录")
     parser.add_argument("--left-ip", required=True, help="左臂 RealMan IPv4 地址")
@@ -854,21 +870,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.video:
             try:
                 from gene_agent.visualization.video_export import export_video
-                export_video(output, output / "plan_preview.mp4", mode="planned",
-                             cameras=(("observed", "gripper_side") if report.get("observed_geometry")
-                                      else ("task", "gripper_side")), profile="microwave_task1")
+                with measure_runtime("video_export", "export_planned_video"):
+                    export_video(output, output / "plan_preview.mp4", mode="planned",
+                                 cameras=(("observed", "gripper_side") if report.get("observed_geometry")
+                                          else ("task", "gripper_side")), profile="microwave_task1")
             except Exception as error:
                 video_failed = True
                 write = {"status": "failed", "message": f"{type(error).__name__}: {error}"}
                 (output / "video_result.json").write_text(json.dumps(write, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
                 print(f"规划报告已保存，视频导出失败：{error}", file=sys.stderr)
     timing_path = output.resolve() / "runtime_timing.json"
-    timing = json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.is_file() else {}
     from gene_agent.feedback.realworld_diagnostics import print_realworld_console_summary
-    print_realworld_console_summary(
-        output, report, subtask=args.subtask, execute=args.execute,
-        collision_mode=args.collision_mode or config.get("motion", {}).get("collision_mode"),
-        plan_only=args.plan_only)
+    with measure_runtime("reporting", "load_and_print_console_summary"):
+        print_realworld_console_summary(
+            output, report, subtask=args.subtask, execute=args.execute,
+            collision_mode=args.collision_mode or config.get("motion", {}).get("collision_mode"),
+            plan_only=args.plan_only)
+    recorder = current_runtime_timing()
+    timing = recorder.to_dict() if recorder is not None else {}
     print(json.dumps({"status": report.get("status"), "success": report.get("success"),
                       "requested_scope": report.get("requested_scope", args.subtask),
                       "task_success": report.get("task_success"),
@@ -877,12 +896,26 @@ def main(argv: list[str] | None = None) -> int:
                       "initial_scene_ref": str(output.resolve() / "initial_scene/manifest.json"),
                       "runtime_timing_ref": str(timing_path),
                       "started_at": timing.get("started_at"),
-                      "finished_at": timing.get("finished_at"),
+                      "finished_at": timing.get("finished_at") or timing.get("snapshot_at"),
                       "total_duration_s": timing.get("total_duration_s"),
                       "timing_bottleneck": timing.get("bottleneck"),
-                      "timing_comparison": timing.get("comparison")},
+                      "timing_comparison": timing.get("comparison"),
+                      "time_accounting": timing.get("accounting"),
+                      "timing_scope": "snapshot before final JSON print; runtime_timing.json includes completion"},
                      ensure_ascii=False))
     return 0 if not video_failed and (report.get("success") is True or report.get("status") == "validated_prefix") else 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    script_entry = _SCRIPT_ENTRY_NS if __name__ == "__main__" else None
+    wall_entry = _SCRIPT_ENTRY_WALL_NS if script_entry is not None else None
+    with runtime_timing_scope(started_ns=script_entry, started_wall_ns=wall_entry) as recorder:
+        if script_entry is not None:
+            imports_finished = recorder.clock_ns()
+            recorder.record("startup", "script_imports",
+                            (imports_finished - script_entry) / 1e9, started_offset_s=0.)
+        with measure_runtime("cli", "main"):
+            return _main(argv)
 
 
 if __name__ == "__main__":

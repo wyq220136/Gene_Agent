@@ -52,10 +52,12 @@ class PregraspRequestCache:
                 self.validate(request, result)
             self.results.update(zip(pending, fresh))
         results = []
+        emitted = set()
         for key, request in zip(keys, requests):
             source = self.results[key]
-            results.append(source if source.request_id == request.request_id
-                           else self.reuse(request, source))
+            fresh = key in pending and key not in emitted
+            results.append(source if fresh else self.reuse(request, source))
+            emitted.add(key)
         return tuple(results)
 
     def plan(self, request: MotionRequest) -> MotionResult:

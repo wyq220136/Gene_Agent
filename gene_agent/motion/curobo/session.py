@@ -225,6 +225,7 @@ class CuroboPlannerPool:
         finally:
             record_runtime_duration(
                 "curobo_setup", "planner_pool_acquire", time.perf_counter() - started,
+                started_at_s=started,
                 metadata={} if lease is None else {
                     "cache_hit": lease.cache_hit,
                     "rebuild_reason": lease.rebuild_reason,

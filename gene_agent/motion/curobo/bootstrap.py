@@ -2,8 +2,10 @@
 from contextlib import contextmanager
 import gc
 from time import perf_counter
+from gene_agent.feedback.runtime_timing import timed_runtime_call, measure_runtime
 
 
+@timed_runtime_call("startup", "load_curobo_runtime")
 def _load_runtime():
     # 在任何solver/图创建之前载入常用库，避免每次捕图扫描这些长期对象。
     from curobo.motion_planner import MotionPlanner, MotionPlannerCfg  # noqa: F401
@@ -35,14 +37,16 @@ def curobo_import_gc_scope(*, enabled=True):
         report.update(reason='cuda_already_initialized', setup_s=perf_counter()-started)
         yield report
         return
-    gc.collect()
-    gc.freeze()
+    with measure_runtime("startup", "collect_and_freeze_imports"):
+        gc.collect()
+        gc.freeze()
     report.update(applied=True, reason='frozen_imports', frozen_objects=gc.get_freeze_count(),
                   setup_s=perf_counter()-started)
     try:
         yield report
     finally:
         cleanup_started = perf_counter()
-        gc.unfreeze()
-        gc.collect()
+        with measure_runtime("cleanup", "unfreeze_and_collect_imports"):
+            gc.unfreeze()
+            gc.collect()
         report['cleanup_s'] = perf_counter()-cleanup_started

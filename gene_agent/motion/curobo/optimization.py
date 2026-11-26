@@ -37,6 +37,11 @@ class ReuseOwner:
         self.activations = 0
         self.created = 0
         self.mesh_cache = {}
+        self.mesh_export_cache = {}
+        self.mesh_asset_dir = None
+        self.mesh_export_hits = self.mesh_export_misses = 0
+        self.mesh_file_cache = None
+        self.world_sync_requests = self.world_data_syncs = 0
         self.mesh_hits = 0
         self.mesh_misses = 0
         self.started = time.perf_counter()
@@ -90,6 +95,7 @@ class ReuseOwner:
                     self.engine.close()
             finally:
                 self.mesh_cache.clear()
+                self.mesh_export_cache.clear()
                 self.engine = None
 
     def to_dict(self):
@@ -101,6 +107,11 @@ class ReuseOwner:
             poisoned=self.poisoned,
             mesh_cache_hits=self.mesh_hits,
             mesh_cache_misses=self.mesh_misses,
+            world_sync_requests=self.world_sync_requests,
+            world_data_syncs=self.world_data_syncs,
+            mesh_export_cache_hits=self.mesh_export_hits,
+            mesh_export_cache_misses=self.mesh_export_misses,
+            mesh_file_hash_cache={} if self.mesh_file_cache is None else self.mesh_file_cache.stats(),
             calls=list(self.calls),
         )
 
@@ -191,13 +202,19 @@ def optimization_scope(mode="baseline"):
     """仅显式single_reuse启用，默认不改变原版；不隐式fallback。"""
     if mode not in ("baseline", "single_reuse"):
         raise ValueError(f"未知cuRobo优化模式: {mode}")
-    owner = ReuseOwner() if mode == "single_reuse" else None
-    token = _OWNER.set(owner)
-    try:
-        yield owner
-    finally:
-        try:
-            if owner is not None:
-                owner.close()
-        finally:
-            _OWNER.reset(token)
+    from .world_update import mesh_file_cache_scope
+    with mesh_file_cache_scope() as file_cache:
+        owner = ReuseOwner() if mode == "single_reuse" else None
+        if owner is not None:
+            owner.mesh_file_cache = file_cache
+        from .scene_mesh_cache import mesh_asset_cache_scope
+        with mesh_asset_cache_scope(owner):
+            token = _OWNER.set(owner)
+            try:
+                yield owner
+            finally:
+                try:
+                    if owner is not None:
+                        owner.close()
+                finally:
+                    _OWNER.reset(token)

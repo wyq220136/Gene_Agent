@@ -12,6 +12,7 @@ import time
 from typing import Callable, Sequence
 
 import numpy as np
+from gene_agent.feedback.runtime_timing import timed_runtime_call
 
 from gene_agent.motion.model import JointState
 from gene_agent.skills.runtime.planning import SkillStage
@@ -100,6 +101,8 @@ class RealWorldRuntime:
                                 details=evidence), evidence
         return None, evidence
 
+    @timed_runtime_call("robot_execution", name_parameter="stage",
+                        result_duration_key="stage_wall_duration_s")
     def run_motion_stage(self, stage: SkillStage, *, execute: bool = False) -> dict:
         """核对一个已规划运动阶段；`execute=True` 才允许发 SDK 命令。"""
         if stage.details.get("execution_forbidden"):
@@ -196,6 +199,8 @@ class RealWorldRuntime:
         })
         return record
 
+    @timed_runtime_call("robot_execution", name_parameter="stage",
+                        result_duration_key="stage_wall_duration_s")
     def run_last_joint_stage(
         self, stage: str, *, group: str, joint_delta_rad: float,
         planned_start: JointState, planned_scene_snapshot_sha256: str,
@@ -284,6 +289,8 @@ class RealWorldRuntime:
                       claim="只证实末关节到达；旋钮是否被物理带动仍需现场检查")
         return record
 
+    @timed_runtime_call("robot_execution", name_parameter="stage",
+                        result_duration_key="stage_wall_duration_s")
     def run_gripper_stage(
         self, stage: str, *, group: str, target_width_m: float,
         planned_start, planned_start_width_m: float,

@@ -131,7 +131,7 @@ class StageMotion:
                 ("solver_initialization_s", "curobo_initialization"),
                 ("solver_call_including_graph_capture_s", "curobo_solver")):
             duration = timing.get(field)
-            if isinstance(duration, (int, float)):
+            if isinstance(duration, (int, float)) and not timing.get("wall_spans_recorded"):
                 record_runtime_duration(component, field, duration,
                                         metadata={"call_id": call_id})
         return results if batch else results[0]

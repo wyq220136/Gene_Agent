@@ -398,12 +398,19 @@ def export_collision_scene(model, data, robot_metadata: dict, active_group: str,
             from gene_agent.feedback.runtime_timing import measure_runtime
             with measure_runtime("mesh_preparation", "build_and_export_collision_mesh",
                                  metadata={"geom_id": int(geom_id)}):
-                mesh, approximation = _mesh_for_geom(
-                    model, geom_id, effective_margins[geom_id]
-                )
-                mesh_path = output_dir / f"geom_{geom_id}.obj"
-                mesh.export(mesh_path)
-                mesh_sha256 = hashlib.sha256(mesh_path.read_bytes()).hexdigest()
+                from .optimization import current_optimization
+                from .scene_mesh_cache import current_mesh_asset_cache
+                owner = current_optimization() or current_mesh_asset_cache()
+                if owner is not None:
+                    from .scene_mesh_cache import cached_mesh_asset
+                    mesh_path, mesh_sha256, approximation = cached_mesh_asset(
+                        owner, model, geom_id, effective_margins[geom_id],
+                        _build_mesh_for_geom, output_dir)
+                else:
+                    mesh, approximation = _mesh_for_geom(model, geom_id, effective_margins[geom_id])
+                    mesh_path = output_dir / f"geom_{geom_id}.obj"
+                    mesh.export(mesh_path)
+                    mesh_sha256 = hashlib.sha256(mesh_path.read_bytes()).hexdigest()
             scene["mesh"][name] = {"file_path": str(mesh_path), "pose": _pose_list(base_geom)}
             record.update(export_kind="mesh", approximation=approximation,
                           mesh_sha256=mesh_sha256, mesh_path=str(mesh_path))

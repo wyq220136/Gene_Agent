@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 import json
 from uuid import uuid4
+from gene_agent.feedback.runtime_timing import timed_runtime_call, current_stage_timing_event_id
 
 
 
@@ -45,6 +46,7 @@ def failed_in_curobo(report):
     return failed_in_curobo({"first_failure": nested}) if isinstance(nested, dict) else False
 
 
+@timed_runtime_call("diagnostics")
 def write_selection_report(path, report):
     """内存仍交付完整计划供执行；磁盘 selection 只保留一份必要阶段。"""
     from gene_agent.motion.recording import current_motion_recording
@@ -54,6 +56,8 @@ def write_selection_report(path, report):
     if policy is None:
         return write_json(path, report)
     value = {key: val for key, val in report.items() if key != "plan"}
+    value["runtime_timing_event_id"] = current_stage_timing_event_id()
+    value["timing_scope"] = "planning_wall_s is local preparation/planning; full stage including output uses runtime_timing_event_id"
     plan = report.get("plan", {})
     policy.resolve_successful_selection(plan)
     value["plan"] = {key: val for key, val in plan.items() if key != "attempts"}
@@ -81,6 +85,7 @@ class FailureOnlyCuroboLogs:
     def defer_diagnostic(self, planner, request, raw, snapshot, options):
         self.raw[id(request)] = (deepcopy(raw), options)
 
+    @timed_runtime_call("diagnostics")
     def record(self, planner, requests, results, *, invocation=None):
         requests, results = tuple(requests), tuple(results)
         self.batches += 1
@@ -136,6 +141,7 @@ class FailureOnlyCuroboLogs:
                 note="候选失败数不是操作失败数；仅 cuRobo 导致操作终态失败时保存详细批次")
         return report
 
+    @timed_runtime_call("diagnostics")
     def _flush(self):
         from gene_agent.feedback.realworld_diagnostics import write_json
         from gene_agent.motion.curobo.diagnostics import collect_failure_diagnostics, digest

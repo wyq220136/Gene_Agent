@@ -1,6 +1,7 @@
 """同步公共阶段循环：失败保留实际终态，未知检查不能伪装成通过。"""
 from gene_agent.skills.contracts import OperationResult
 from dataclasses import replace
+from gene_agent.feedback.runtime_timing import measure_runtime
 
 
 def _predicted(source, values):
@@ -24,7 +25,12 @@ def run_operation(stages, *, backend, initial_state=None):
     if not predicted and _predicted(current.source, current.values):
         return result(False, 'initial_state', 'predicted_start_in_execution')
     for stage in stages:
-        outcome = backend.execute(stage, current)
+        with measure_runtime("stage", stage.name, metadata={"evidence_mode": backend.evidence_mode}) as span:
+            outcome = backend.execute(stage, current)
+        if span is not None:
+            outcome = replace(outcome, details={**outcome.details,
+                "stage_wall_duration_s": span["duration_s"],
+                "runtime_timing_event_id": span["event_id"]})
         if stage.observation_only:
             outcome = replace(outcome, details={**outcome.details, 'observation_only': True})
         if not predicted and not enabled and not any(

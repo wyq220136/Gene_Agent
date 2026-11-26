@@ -628,6 +628,34 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 
 ## 10. 运行证据
 
+### 请求与碰撞资产复用
+
+真机当前 `batch_all` 筛选启用 `deduplicate_pregrasp=True`，不改变全局关节排序、显式关节目标、原位对齐和 lift 可行性检查。pregrasp IK/路径请求只在全部求解字段相同（追踪 ID 除外）时复用；成功和失败均缓存，水平入口 fallback 共享本次缓存，复用耗时为 0。新现场、起点、目标、seed、策略、关节目标变化会形成不同请求。运行命令不变。
+
+collision mesh 在本任务内以内容地址复用 OBJ；strict/contact/预测场景分别保存自己的位姿，不重复导出同一局部几何。文件哈希结合 dev/inode/size/mtime_ns/ctime_ns 与 inode 变更事件核对；同大小改写、恢复 mtime、替换和缺失都会使复用失效。监测不可用（例如 inotify 配额耗尽）时安全重读，不只靠时间戳命中，不要求修改主机参数；重读确认内容相同后仍跳过重复 OBJ 序列化和写盘。读取中变化会拒绝复用。所有缓存随任务释放。baseline 入口也有任务内资产/哈希缓存。
+
+共享同一 `world.data` 的多个 solver 只做一次同步，未变化的 cuboid/mesh 子部分不重复加载，各 wrapper 及 graph 缓冲仍更新。独立 world 保持独立同步；真实场景变化后的实测重规划和完整检查继续执行。
+
+`selection.json` 的 `deduplicate_pregrasp` / `pregrasp_search_summary` 可核对请求复用；`planning_optimization.json`（single_reuse 模式）的 `mesh_export_cache_hits/misses`、`mesh_file_hash_cache`、`world_sync_requests` / `world_data_syncs` 可核对重复工作是否减少。剩余的 `Mesh already in cache` 提示可能来自不同独立 world 的有效复用，不能当作重新构建 mesh 或求解次数。
+
+### 时间统计（schema_version=2）
+
+原命令不变，使用新的 `OUT`。`runtime_timing.json` 的 `total_duration_s` 使用统一单调墙钟，从脚本首条可测语句开始，覆盖导入/配置、设备连接、感知/场景、候选与路径规划、执行与人工等待、诊断写盘、资源清理、可选视频和最终终端输出。Python 启动到首条计时语句之前、计时报告自身最终写盘及进程退出不在此范围。终端 JSON 是最终输出前的快照，文件为输出完成后的正式终态。
+
+| 字段 | 含义与核对方式 |
+|---|---|
+| `accounting.exclusive_components_s` | 互斥组件墙钟；各项加总等于 `total_duration_s`，用于核对耗时去向 |
+| `accounting.exclusive_stages_s` | 互斥阶段墙钟；各项加总也等于总时间，`outside_stages` 为启动、清理等动作阶段外时间 |
+| `accounting.unattributed_s` | 未被任何计时区间覆盖的真实时间，显式列出，不隐去或冒称 solver 时间 |
+| `accounting.reconciliation_error_s` | 互斥分项与总时间的核算差，应为 0 |
+| `stages[]` | 每次阶段的起止偏移、状态、包含子步骤的时间和独占时间；重复阶段保留独立身份 |
+| `components.*.total_duration_s` | 同组件实测区间的并集，避免 adapter/StageMotion 嵌套重复；不同组件间仍可能包含关系，不能直接跨组件相加 |
+| `components.*.reported_duration_s` | 没有起止位置的后端报告耗时，仅供参考，不参与墙钟核算 |
+| `events[]` | 含父子身份、起止偏移、组件和阶段关联的时间线，用于定位具体慢调用 |
+
+`MotionResult.duration_s` 仍表示后端方法耗时，批 IK 通常是批耗时均摊；不是完整阶段时间。其 `metrics.runtime_timing_event_id` 指向完整 adapter 调用区间，同一批不能逐项重复累加该区间。SDK 的 `execution_duration_s` 是原驱动窗口；`stage_wall_duration_s` 才是相应完整阶段调用（包括前后检查/观测）的墙钟时间。selection 的完整阶段时间通过 `runtime_timing_event_id` 查询，避免漏掉输出成本或重复嵌入计时详情。
+
+
 真机入口默认按**操作终态**输出 cuRobo 详情：候选筛选中部分 IK 失败但最终找到轨迹，不触发详细输出；感知、夹爪、SDK 执行或独立姿态/接触检查失败也不触发。只有操作最终因 cuRobo IK/路径求解失败而停止，才写详细求解证据。运行命令不变。
 
 - `diagnostic_manifest.json` 的 `curobo_logging` 保存策略、总批次/请求数、候选失败数和详情是否输出；没有求解详情不表示没有做规划。

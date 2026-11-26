@@ -26,8 +26,11 @@ class GraspSettings:
     max_approach_joint_travel_rad: float | None = None
     pregrasp_search: str = "batch_all"
     align_before_approach: bool = False
+    deduplicate_pregrasp: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.deduplicate_pregrasp) is not bool:
+            raise ValueError("deduplicate_pregrasp 必须为 bool")
         if type(self.align_before_approach) is not bool:
             raise ValueError("align_before_approach 必须为 bool")
         values = (self.approach_distance_m, self.lift_distance_m, self.open_width_m,
