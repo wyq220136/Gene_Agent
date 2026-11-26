@@ -19,7 +19,11 @@ def current_optimization():
 def ik_bucket_size(count):
     if count < 1:
         raise ValueError("IK批次必须非空")
-    return 25 if count <= 25 else 119 if count <= 119 else count
+    # 去重后的 120～128 个目标共享图容量，不为每个剩余数量捕获新图。
+    for capacity in (25, 128, 160):
+        if count <= capacity:
+            return capacity
+    return ((count + 127) // 128) * 128
 
 
 class ReuseOwner:

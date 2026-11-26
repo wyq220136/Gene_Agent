@@ -45,7 +45,7 @@ class Gripper:
     def read_width_m(self):
         return .08
 
-    def command_width_m(self, width):
+    def command_width_m(self, width, *, blocking=True):
         self.commands.append(width)
 
 

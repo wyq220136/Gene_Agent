@@ -137,6 +137,21 @@ def build_observed_bowl_grasp_stage_snapshots(
     )
 
 
+
+def _planning_reuse_identity(scene, snapshot):
+    if not scene["provenance"].get("alignment_input_sha256"):
+        return None  # 旧/注入场景缺标定身份时正常重规划，禁止结果复用。
+    from gene_agent.motion.curobo.core import load_realman_motion_config
+    settings = load_realman_motion_config(
+        scene["snapshot"]["active_group"], scene["robot_metadata"],
+        gripper_snapshot=snapshot.get("gripper_snapshot"))
+    urdf = Path(settings["robot_config"]["kinematics"]["urdf_path"])
+    payload = {"settings": settings, "urdf_sha256": hashlib.sha256(urdf.read_bytes()).hexdigest(),
+               "alignment": scene["provenance"].get("alignment_input_sha256"),
+               "scene_config": scene["provenance"].get("scene_config_sha256")}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
 @timed_runtime_call("stage", "grasp_candidate_selection")
 def plan_observed_bowl_grasp_stages(
     collision_scene: Mapping, *, output_dir: str | Path,
@@ -290,6 +305,13 @@ def plan_observed_bowl_grasp_stages(
         "planning_wall_s": time.perf_counter() - started,
         "plan": selected.plan.to_dict(),
     }
+    from .planning_reuse import summarize_selection
+    from os import getpid
+    report["reuse_process_id"] = getpid()
+    report["planning_reuse_identity"] = _planning_reuse_identity(collision_scene, selected.strict_snapshot)
+    report["planning_work_summary"] = summarize_selection(report["plan"])
+    (output / "planning_work_summary.json").write_text(
+        json.dumps(report["planning_work_summary"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_selection_report(output / "selection.json", report)
     return report
 
@@ -462,10 +484,17 @@ def plan_observed_bowl_motion_stage(
         original.operation, original.group, context["start"], original.target,
         context["scene"], original.collision_policy, seed=original.seed,
         planner_mode=mode, approximate_ik_budget=original.approximate_ik_budget,
+        joint_target=original.joint_target,
     )
-    composition = {}
+    from .planning_reuse import reuse_selected_motion
+    result, composition, reuse_reason = reuse_selected_motion(
+        selection_report, stage_name, request,
+        identity=_planning_reuse_identity(collision_scene, strict),
+        strict_snapshot_sha256=strict["snapshot_sha256"])
     strict_context = None
-    if stage_name == "approach":
+    if result is not None:
+        pass
+    elif stage_name == "approach":
         strict_context = prepare_plan_only_context(
             derived_scene(strict), group=original.group, planner_pool=planner_pool,
             scene_revision=scene_revision, seed=original.seed, planner_mode=mode,
@@ -510,6 +539,7 @@ def plan_observed_bowl_motion_stage(
         "schema_version": 1,
         "kind": "observed_bowl_motion_stage_plan_only",
         "stage_name": stage_name,
+        "selection_plan_reuse": reuse_reason,
         "success": accepted,
         "planning_success": result.success,
         "failure_code": ("collision_postcheck_rejected" if result.success and not accepted

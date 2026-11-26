@@ -26,12 +26,15 @@ class Gripper:
 
     def __init__(self):
         self.commands = []
+        self.width = .08
 
     def read_width_m(self):
-        return .08
+        return self.width
 
-    def command_width_m(self, width):
+    def command_width_m(self, width, *, blocking=True):
+        assert blocking
         self.commands.append(width)
+        self.width = width
 
 
 def _scene(frame, bowl_x=0.):

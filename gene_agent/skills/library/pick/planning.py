@@ -247,11 +247,20 @@ class GraspSkill:
             ]] = []
             pregrasp_batches = backend_pregrasp_batches = checked_pregrasps = 0
             stopped_pregrasps = False
+            # 全量排序原本就要解全部候选：先跨原批次去重，再紧凑分批，
+            # 最后按原记录顺序展开结果。first-valid 路径仍保留原早停语义。
+            all_prechecks = None
+            if (not stop_on_batch and pregrasp_cache is not None
+                    and settings.max_pregrasp_joint_travel_rad is not None):
+                records = tuple(records)
+                all_prechecks = pregrasp_cache.evaluate_candidates(
+                    tuple(row[4] for row in records), batch_size=128)
             for batch in _candidate_batches(records):
                 pregrasp_batches += 1
                 checked_pregrasps += len(batch)
                 batch_requests = tuple(row[4] for row in batch)
-                prechecks = (pregrasp_cache.evaluate_candidates(batch_requests) if pregrasp_cache is not None
+                prechecks = (all_prechecks[checked_pregrasps - len(batch):checked_pregrasps] if all_prechecks is not None else
+                             pregrasp_cache.evaluate_candidates(batch_requests) if pregrasp_cache is not None
                              else planner.evaluate_candidates(batch_requests))
                 backend_pregrasp_batches += int(any(not result.metrics.get("request_reuse") for result in prechecks))
                 if len(prechecks) != len(batch):

@@ -17,6 +17,7 @@ import numpy as np
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.motion.curobo.scene import export_collision_scene
 from gene_agent.realworld.perception import ObservedScene
+from gene_agent.realworld.gripper_state import endpoint_overrides, retained_width_source
 from gene_agent.realworld.pose_tracking import (
     capture_frozen_scene_frame,
     track_observed_scene_from_capture,
@@ -323,6 +324,7 @@ def build_live_microwave_collision_scene(
     microwave_root_anchor: Mapping | None = None,
     include_knob: bool = True,
     gripper_width_overrides: Mapping[str, float] | None = None,
+    robot_samples: Mapping | None = None,
 ) -> dict:
     """读两臂与夹爪后调用现有碰撞导出，不运行 MuJoCo 动力学。
 
@@ -421,15 +423,20 @@ def build_live_microwave_collision_scene(
             "请沿用经检查的固定本体锚点并单独测门角，或跟踪静止柜体"
         )
 
-    overrides = dict(gripper_width_overrides or {})
+    overrides = endpoint_overrides(grippers, gripper_width_overrides)
     unknown_override_groups = set(overrides) - {"left", "right"}
     if unknown_override_groups:
         raise ValueError(f"夹爪开口复用包含未知机器人组: {sorted(unknown_override_groups)}")
     joints = {}
     widths = {}
     width_sources = {}
+    sample_times = {}
+    if robot_samples is not None and set(robot_samples) != {"left", "right"}:
+        raise ValueError("并行状态采集缺少机器人组")
     for group in ("left", "right"):
-        state = robots[group].read_joint_state()
+        started_ms, started_mono = time.time() * 1000., time.monotonic()
+        sample = None if robot_samples is None else robot_samples[group]
+        state = robots[group].read_joint_state() if sample is None else sample["joint_state"]
         expected = tuple(f"{group}_joint_{index}" for index in range(1, 8))
         if tuple(state.joint_names) != expected:
             raise ValueError(f"{group} 实测关节顺序与 RealMan 模型不一致")
@@ -439,10 +446,10 @@ def build_live_microwave_collision_scene(
         joints[group] = values.tolist()
         if group in overrides:
             width = float(overrides[group])
-            source = "confirmed_execution_endpoint"
+            source = retained_width_source(grippers[group], width)
         else:
             try:
-                width = float(grippers[group].read_width_m())
+                width = float(grippers[group].read_width_m() if sample is None else sample["width_m"])
             except (ValueError, RuntimeError) as exc:
                 raise ValueError(f"{group} 夹爪状态读取失败: {exc}") from exc
             source = "sdk_live_read"
@@ -450,7 +457,20 @@ def build_live_microwave_collision_scene(
             raise ValueError(f"{group} 夹爪开口必须是非负有限米数")
         widths[group] = width
         width_sources[group] = source
-    sampled_at_ms = time.time() * 1000.
+        stamps = ({"started_at_unix_ms": started_ms, "sampled_at_unix_ms": time.time() * 1000.,
+                   "started_monotonic_s": started_mono, "ended_monotonic_s": time.monotonic()}
+                  if sample is None else {key: sample[key] for key in (
+                      "started_at_unix_ms", "sampled_at_unix_ms", "started_monotonic_s", "ended_monotonic_s")})
+        if (not all(math.isfinite(float(v)) for v in stamps.values())
+                or stamps["sampled_at_unix_ms"] < stamps["started_at_unix_ms"]
+                or not 0 <= time.monotonic() - stamps["started_monotonic_s"] <= age_limit
+                or not 0 <= stamps["ended_monotonic_s"] - stamps["started_monotonic_s"] <= age_limit
+                or abs(stamps["started_at_unix_ms"] - observed.timestamp_ms) > age_limit * 1000.):
+            raise ValueError(f"{group} 机器人状态过期或与相机帧不同步")
+        if sample is not None and sample["width_source"] != source:
+            raise ValueError("夹爪并行采样来源与本次复用声明不一致")
+        sample_times[group] = stamps
+    sampled_at_ms = max(row["sampled_at_unix_ms"] for row in sample_times.values())
     if sampled_at_ms - now_ms > age_limit * 1000.:
         raise ValueError("读取两臂状态耗时超过现场快照有效期")
 
@@ -463,6 +483,8 @@ def build_live_microwave_collision_scene(
         microwave_root_anchor=anchor,
     )
     completed_at_ms = time.time() * 1000.
+    if any(time.monotonic() - row["started_monotonic_s"] > age_limit for row in sample_times.values()):
+        raise ValueError("碰撞场景导出完成时机器人状态已过期")
     if completed_at_ms - observed.timestamp_ms > age_limit * 1000.:
         raise ValueError("碰撞场景导出完成时物体观测已过期，必须重新采集")
     for key, title in required_angles:
@@ -472,6 +494,8 @@ def build_live_microwave_collision_scene(
         raise ValueError("碰撞场景导出完成时微波炉本体锚点已过期")
     result["provenance"]["live_state"] = {
         "robot_sampled_at_unix_ms": sampled_at_ms,
+        "robot_sample_times": sample_times,
+        "state_sampling_mode": "parallel_with_vision" if robot_samples is not None else "serial",
         "gripper_width_sources": width_sources,
         "declared_microwave_pose_mesh_path": str(microwave_pose_mesh_path),
         "door": checked_angles["door"], "knob": checked_angles["knob"],
@@ -488,6 +512,11 @@ def build_live_microwave_collision_scene(
         json.dumps(result["provenance"], ensure_ascii=False, indent=2,
                    allow_nan=False) + "\n", encoding="utf-8",
     )
+    # 从未发令的另一侧夹爪也保留首次实测值，后续仅刷新关节和场景。
+    # 与执行后稳定终态区分来源；任何夹爪命令都会撤销这两个缓存。
+    for group, source in width_sources.items():
+        if source == "sdk_live_read":
+            grippers[group].initial_observed_width_m = widths[group]
     return result
 
 
@@ -504,7 +533,7 @@ def make_live_microwave_observer(
     camera_calibration: Mapping | None = None,
     include_knob: bool = True,
     operation_perception=None,
-    recover_session=None,
+    recover_session=None, capture_session=None, state_sampler=None,
 ) -> Callable[[], dict]:
     """生成子任务与完整 Task 共用的同步现场观测回调。
 
@@ -519,12 +548,14 @@ def make_live_microwave_observer(
     sequence = count()
 
     def observe(*, gripper_width_overrides: Mapping[str, float] | None = None) -> dict:
+        gripper_width_overrides = endpoint_overrides(grippers, gripper_width_overrides)
         folder = base / f"{next(sequence):04d}"
         if operation_perception is not None:
             operation_perception.prepare_capture()
         capture = capture_frozen_scene_frame(
             output_dir=folder / "capture", endpoint=camera_endpoint,
             expected_serial=expected_serial,
+            **({"capture_session": capture_session} if capture_session is not None else {}),
         )
         if camera_calibration is not None:
             from PIL import Image
@@ -532,64 +563,69 @@ def make_live_microwave_observer(
             camera_record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
             with Image.open(capture / "depth.png") as depth:
                 check_capture_camera(camera_record, camera_calibration, (depth.height, depth.width))
-        selected_sessions = (sessions if operation_perception is None else
-                             operation_perception.selected_sessions(sessions))
-        if selected_sessions:
-            observed = track_observed_scene_from_capture(
-                capture_dir=capture, pose_client=pose_client, sessions=selected_sessions,
-                side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
-                expected_serial=expected_serial, max_age_s=max_age_s,
-                output_dir=folder / "tracked",
-                **({"recover_session": recover_session} if recover_session is not None else {}),
-            )
-        else:
-            record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
-            observed = ObservedScene(
-                side, camera_id, int(record["frame_number"]),
-                float(record["captured_at_unix_ms"]), np.asarray(T_sdk_camera),
-                {}, {"camera": str(capture / "camera.json")}, True,
-            )
-        scoped_anchor = None
-        from .live_perception import HandleOrbitError
-        diagnostics_path = folder / "door_handle_diagnostics.json"
-        try:
-            if operation_perception is None:
-                canonical = getattr(angle_reader, "canonical_observation", None)
-                if canonical is not None:
-                    observed, _ = canonical(observed)
-                angles = angle_reader(observed)
+        from contextlib import nullcontext
+        # 相机帧冻结后启动设备采样；与 Pose HTTP 等待重叠，且不共享 cuRobo。
+        with (state_sampler.sample(gripper_width_overrides) if state_sampler is not None
+              else nullcontext(None)) as pending:
+            selected_sessions = (sessions if operation_perception is None else
+                                 operation_perception.selected_sessions(sessions))
+            if selected_sessions:
+                observed = track_observed_scene_from_capture(
+                    capture_dir=capture, pose_client=pose_client, sessions=selected_sessions,
+                    side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
+                    expected_serial=expected_serial, max_age_s=max_age_s,
+                    output_dir=folder / "tracked",
+                    **({"recover_session": recover_session} if recover_session is not None else {}),
+                )
             else:
-                observed, angles, scoped_anchor = operation_perception.consume(observed)
-        except HandleOrbitError as error:
+                record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
+                observed = ObservedScene(
+                    side, camera_id, int(record["frame_number"]),
+                    float(record["captured_at_unix_ms"]), np.asarray(T_sdk_camera),
+                    {}, {"camera": str(capture / "camera.json")}, True,
+                )
+            scoped_anchor = None
+            from .live_perception import HandleOrbitError
+            diagnostics_path = folder / "door_handle_diagnostics.json"
             try:
+                if operation_perception is None:
+                    canonical = getattr(angle_reader, "canonical_observation", None)
+                    if canonical is not None:
+                        observed, _ = canonical(observed)
+                    angles = angle_reader(observed)
+                else:
+                    observed, angles, scoped_anchor = operation_perception.consume(observed)
+            except HandleOrbitError as error:
+                try:
+                    diagnostics_path.write_text(
+                        json.dumps(error.diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                        encoding="utf-8",
+                    )
+                except OSError as write_error:
+                    # 诊断写盘失败不能覆盖首个感知拒绝；数值仍保留在原异常中。
+                    raise error from write_error
+                raise
+            # 校验失败也留下原始帧与数值；不能只在碰撞场景成功导出后才记录。
+            diagnostics = angles["door"].get("diagnostics")
+            if diagnostics is not None:
                 diagnostics_path.write_text(
-                    json.dumps(error.diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                    json.dumps(diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
                     encoding="utf-8",
                 )
-            except OSError as write_error:
-                # 诊断写盘失败不能覆盖首个感知拒绝；数值仍保留在原异常中。
-                raise error from write_error
-            raise
-        # 校验失败也留下原始帧与数值；不能只在碰撞场景成功导出后才记录。
-        diagnostics = angles["door"].get("diagnostics")
-        if diagnostics is not None:
-            diagnostics_path.write_text(
-                json.dumps(diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-                encoding="utf-8",
+            anchor = (scoped_anchor if operation_perception is not None else
+                      None if microwave_root_anchor_reader is None else
+                      microwave_root_anchor_reader(observed))
+            if observation_filter is not None:
+                observed = observation_filter(observed)
+            return build_live_microwave_collision_scene(
+                observed=observed, robots=robots, grippers=grippers,
+                angles=angles, scene_parameters={**static, "output_dir": folder / "scene"},
+                max_age_s=max_age_s, microwave_pose_mesh_path=microwave_pose_mesh_path,
+                microwave_root_anchor=anchor,
+                include_knob=include_knob,
+                gripper_width_overrides=gripper_width_overrides,
+                robot_samples=None if pending is None else pending.result(),
             )
-        anchor = (scoped_anchor if operation_perception is not None else
-                  None if microwave_root_anchor_reader is None else
-                  microwave_root_anchor_reader(observed))
-        if observation_filter is not None:
-            observed = observation_filter(observed)
-        return build_live_microwave_collision_scene(
-            observed=observed, robots=robots, grippers=grippers,
-            angles=angles, scene_parameters={**static, "output_dir": folder / "scene"},
-            max_age_s=max_age_s, microwave_pose_mesh_path=microwave_pose_mesh_path,
-            microwave_root_anchor=anchor,
-            include_knob=include_knob,
-            gripper_width_overrides=gripper_width_overrides,
-        )
 
     if operation_perception is not None:
         observe.begin_operation = operation_perception.begin_operation

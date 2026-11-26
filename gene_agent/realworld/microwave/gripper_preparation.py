@@ -1,4 +1,4 @@
-"""现场抓碗前的显式右夹爪初始化；不依赖初始场景或起点开口读取。"""
+"""所有现场任务执行前的显式右夹爪初始化；不依赖起点开口读取。"""
 from __future__ import annotations
 
 import json
@@ -6,11 +6,13 @@ import math
 from pathlib import Path
 import time
 
+from gene_agent.realworld.gripper_state import invalidate_endpoint
+
 
 def prepare_right_gripper(gripper, *, output_dir):
     """首个操作直接发800，之后确认实测到位；不移动机械臂、不返程。
 
-    由入口仅在实际执行抓碗/装碗时调用。通信建立和本地参数校验
+    由入口在任意任务的实际执行启动时调用一次。通信建立和本地参数校验
     不属于现场状态检测；此函数发令前不读取任何夹爪反馈。
     """
     maximum = float(gripper.max_width_m)
@@ -30,6 +32,7 @@ def prepare_right_gripper(gripper, *, output_dir):
     save()
     try:
         print('右夹爪初始化：先下发800，再读取反馈确认；尚未进行场景检测。', flush=True)
+        invalidate_endpoint(gripper)
         gripper.command_width_m(target, blocking=True)
         report['status'] = 'confirming'
         start = time.monotonic()
@@ -41,8 +44,12 @@ def prepare_right_gripper(gripper, *, output_dir):
             if not math.isfinite(width):
                 raise ValueError('初始化反馈不是有限宽度')
             recent = [r['width_m'] for r in report['readings'][-3:]]
-            if (len(recent) == 3 and all(abs(w-target) <= maximum*.01 for w in recent)
+            if (len(recent) == 3
+                    and all((r["sdk_reading"] or {}).get("motion_complete", True)
+                            for r in report["readings"][-3:])
+                    and all(abs(w-target) <= maximum*.01 for w in recent)
                     and max(recent)-min(recent) <= maximum*.005):
+                gripper.confirmed_endpoint_width_m = width
                 report.update(status='confirmed', measured_end_width_m=width)
                 print('右夹爪800初始化到位，开始后续现场检测。', flush=True)
                 return report

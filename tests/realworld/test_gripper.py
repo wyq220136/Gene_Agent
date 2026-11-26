@@ -18,7 +18,7 @@ class FakeGripperSdk:
         return self.next_code
 
     def rm_get_gripper_state(self):
-        return 0, {"actpos": self.position, "status": 0}
+        return 0, {"actpos": self.position, "status": 1, "mode": 3}
 
     def rm_set_gripper_pick_on(self, speed, force, blocking, mode):
         self.calls.append(("pick_on", speed, force, blocking, mode))

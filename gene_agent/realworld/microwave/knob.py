@@ -71,8 +71,6 @@ def _wait_handoff_error(
     new_width = float(new["gripper_widths_m"][group])
     if not math.isfinite(old_width) or not math.isfinite(new_width):
         return "等待时夹爪开口读数无效"
-    if not allow_gripper_motion and abs(old_width - new_width) > max_width_error_m:
-        return "等待时夹爪开口意外变化"
     return None
 
 

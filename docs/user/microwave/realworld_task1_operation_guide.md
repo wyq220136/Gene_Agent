@@ -578,6 +578,9 @@ MUJOCO_GL=egl "$PY" "$PWD/tools/viewers/recording/record_skill_run_video.py" \
 
 ## 8. 真机执行
 
+所有带 `--execute --yes` 的任务入口，统一先将右夹爪设为 SDK 开口值 **800**，确认反馈稳定到位后再构建现场观测并进入任务。该动作不依赖发令前的夹爪开口读取，每次命令启动只执行一次；`all`、`load_bowl`、`unload_bowl` 内部子阶段不重复重置。初始化失败立即停止，记录见 `right_gripper_preparation.json`。仅预检或 `--plan-only` 不发送该命令。独立持物任务也先初始化，持物确认以初始化后的现场为准。
+
+
 现场确认急停、通信、初态和完整碰撞模型后，先测试单个子任务：
 
 ```bash
@@ -682,3 +685,17 @@ collision mesh 在本任务内以内容地址复用 OBJ；strict/contact/预测�
 这只对齐候选输入；后续仍检查最终抓取IK、pregrasp IK与关节状态排序、碰撞路径、接近段以及抬升可行性。碰撞模式沿用原运行配置，未改变任何碰撞开关。若仍无可执行候选，查看candidate_selection.json与candidate_diagnostics.json区分生成数、几何过滤后数量及规划阶段失败，不能把生成有160候选当作抓取成功。
 
 离线同一历史有效场景：旧筛选160→0，其中112个候选角度在45～70度之外；新入口160→160。该证据不代表本次尚未同步的现场失败已完成真机回归。
+
+
+## 2026-11-26 性能优化
+
+P0/P1/P2 已接入真机入口，原运行命令不变。批次容量、精确规划复用、相机连接复用、并行状态采集及检查结果见 [性能优化与验证](performance_optimization.md)。
+
+
+### 所有 sub-task 的夹爪终态交接
+
+`all` 与独立子任务统一使用公共真机 Runtime：每条夹爪命令只下发一次，显式阻塞等待返回；随后查询 `rm_get_gripper_state`，确认运动已停止且连续三次开口稳定，才写入 `measured_end_width_m`。RealMan 的 `mode=4/5` 表示仍在运动，不能因为 `actpos` 短暂相同就放行；`mode=1/2/3/6` 为静止或力控停止。`status` 是在线状态，不是到位信号。位置模式仍验证目标到位，力控夹取不要求等于规划闭合宽度。超时或命令失败则终止该阶段。
+
+后续场景刷新继续采集新相机帧、物体位姿和关节；同一夹爪连接在没有新夹爪命令时，复用已确认的实测开口，来源标为 `confirmed_execution_endpoint`。这不是命令目标值，也不是重新测得的开口。未发令的另一侧夹爪保留首次现场实测值，来源为 `retained_initial_observation`，也不在每帧重复查询。各子任务及其交接不再比较两帧夹爪开口或比较 `measured_end_width_m` 与 `observed_after.gripper_width_m`。新夹爪命令发出前立即撤销旧终态，成功确认后再更新；重连后重新读取。命令起点校验、关节连续性和抓取/放置等物体后置检查保留。
+
+此复用策略以程序之外没有人工/其他进程操作夹爪为前提；现场外部改动后应重新建立任务连接。控制指令仍为 0～1000，反馈接受范围仍为 -10～1500。SDK 字段说明：https://develop.realman-robotics.com/robot/apipython/struct/gripperState/

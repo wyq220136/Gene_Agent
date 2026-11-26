@@ -33,7 +33,7 @@ def _rig(monkeypatch, *, fault=False, invalid_end=False):
             events.append("grasp")
             if fault: raise RuntimeError("SDK 17")
             self.closing=True
-        def command_width_m(self, width):
+        def command_width_m(self, width, *, blocking=True):
             events.append("position")
     gripper=Gripper()
     robot=SimpleNamespace(group="right",read_joint_state=lambda: START)
@@ -67,12 +67,12 @@ def test_force_grasp_waits_before_freezing_end_width_and_handoff(monkeypatch):
     assert abs(execution["measured_end_width_m"]-execution["target_width_m"])>.005
 
 
-def test_width_change_after_settling_still_blocks_handoff(monkeypatch):
+def test_width_change_is_not_compared_again_after_settling(monkeypatch):
     runtime,kw,_=_rig(monkeypatch)
     execution=runtime.run_gripper_stage("close",execute=True,**kw)
     error=execution_handoff_error(_scene(1,.041),_scene(2,.044),execution,
         max_joint_error_rad=.02,max_width_error_m=.005)
-    assert error and "开口" in error
+    assert error is None
 
 
 def test_pick_can_reuse_confirmed_width_without_comparing_a_second_read(monkeypatch):
@@ -82,7 +82,6 @@ def test_pick_can_reuse_confirmed_width_without_comparing_a_second_read(monkeypa
     error=execution_handoff_error(
         _scene(1,.041),_scene(2,.044),execution,
         max_joint_error_rad=.02,max_width_error_m=.005,
-        compare_gripper_endpoint=False,
     )
     assert error is None
 
@@ -131,7 +130,7 @@ def test_motion_handoff_rejects_invalid_gripper_feedback():
     assert error and "夹爪" in error
 
 
-@pytest.mark.parametrize("width,allowed,expected",[(.024,True,None),(.024,False,"开口"),
+@pytest.mark.parametrize("width,allowed,expected",[(.024,True,None),(.024,False,None),
                                                   (float("nan"),True,"读数")])
 def test_knob_wait_checks_match_the_active_physical_phase(width,allowed,expected):
     from gene_agent.realworld.microwave.knob import _wait_handoff_error

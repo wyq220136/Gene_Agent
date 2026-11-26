@@ -20,7 +20,7 @@ from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.perception_modules.camera.camera_client import CameraClient
 from gene_agent.perception_modules.interactive_realworld_perception import save_capture
 
-from .perception import _object_pose_path, load_observed_scene, ObservedScene
+from .perception import _object_pose_path, ObservedScene
 from gene_agent.perception_modules.pose_est.pose_client import PoseSessionMissing
 
 
@@ -32,9 +32,45 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+class FrozenCaptureSession:
+    """惰性复用相机连接；保留每次采集的哨兵帧，确保运动后获取新曝光。"""
+    def __init__(self, endpoint, expected_serial):
+        self.endpoint, self.expected_serial = endpoint, expected_serial
+        self.client = None
+        self.closed = False
+
+    def capture(self):
+        if self.closed:
+            raise RuntimeError("相机采集会话已关闭")
+        try:
+            if self.client is None:
+                self.client = CameraClient(self.endpoint)
+                if self.client.info().get("serial") != self.expected_serial:
+                    raise ValueError("camera server 设备序列号与指定相机不一致")
+            previous = self.client.get_frame()
+            packet = self.client.get_frame()
+            if packet.frame_number <= previous.frame_number:
+                raise ValueError("camera server 没有返回更新的采集帧")
+            if previous.serial != self.expected_serial or packet.serial != self.expected_serial:
+                raise ValueError("采集帧的相机序列号与指定相机不一致")
+            return packet
+        except BaseException:
+            if self.client is not None:
+                self.client.close()
+                self.client = None
+            raise
+
+    def close(self):
+        self.closed = True
+        if self.client is not None:
+            self.client.close()
+            self.client = None
+
+
 def capture_frozen_scene_frame(
     *, output_dir: str | Path, endpoint: str, expected_serial: str,
-    now_ms: float | None = None,
+    now_ms: float | None = None, capture_session: FrozenCaptureSession | None = None,
 ) -> Path:
     """从 camera server 等到一帧新图，只保存它并记录主机采集时刻。
 
@@ -45,19 +81,15 @@ def capture_frozen_scene_frame(
     output = Path(output_dir).expanduser().resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError("采集目录已有内容；新现场帧必须使用新目录")
-    client = CameraClient(endpoint)
+    session = capture_session or FrozenCaptureSession(endpoint, expected_serial)
+    if (session.endpoint, session.expected_serial) != (endpoint, expected_serial):
+        raise ValueError("复用相机会话与本次采集配置不一致")
     try:
-        if client.info().get("serial") != expected_serial:
-            raise ValueError("camera server 设备序列号与指定相机不一致")
-        # 新 client 的首请求可能立刻返回缓存帧。先取一帧作哨兵，
-        # 第二次请求由 CameraClient 等待帧号变化后才会返回。
-        previous = client.get_frame()
-        packet = client.get_frame()
-        if packet.frame_number == previous.frame_number:
-            raise ValueError("camera server 没有返回更新的采集帧")
+        packet = session.capture()
         captured_at = time.time() * 1000. if now_ms is None else float(now_ms)
     finally:
-        client.close()
+        if capture_session is None:
+            session.close()
     if packet.serial != expected_serial:
         raise ValueError("采集帧的相机序列号与指定相机不一致")
     if not math.isfinite(captured_at) or captured_at < 0:
@@ -189,10 +221,14 @@ def track_observed_scene_from_capture(
         "recovered_session_objects": recovered,
         "claim": "多个 tracking session 使用同一冻结 RGB-D；不证明位姿精度或资产标定",
     }, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    return load_observed_scene(
-        output, side=side, object_ids=tuple(responses), camera_id=str(camera_id),
-        max_age_s=age_limit, now_ms=verified_now, require_matched_frame=True,
+    return ObservedScene(
+        side, str(camera_id), frame, timestamp, T_camera,
+        {object_id: validate_pose(T_camera @ pose, field_name=f"T_sdk_{object_id}")
+         for object_id, pose in responses.items()},
+        {"camera": str(camera_output),
+         **{object_id: str(_object_pose_path(output, object_id)) for object_id in responses}}, True,
     )
+
 
 
 __all__ = ["capture_frozen_scene_frame", "track_observed_scene_from_capture"]

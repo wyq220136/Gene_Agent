@@ -369,6 +369,19 @@ class _BowlGeometryCheckedAdapter(CuroboPlannerAdapter):
         mujoco.mj_forward(case.model, self.geometry_data)
 
     def plan(self, request):
+        from gene_agent.skills.library.pick.pregrasp_search import PregraspRequestCache
+        # 本 adapter 的模型、碰撞快照、安装参数在单次筛选内固定。
+        # 缓存的是完成实际几何复核后的结果，严格层和接触层不共享。
+        cache = self.__dict__.setdefault("_checked_plans", {})
+        key = PregraspRequestCache.key(request)
+        if key in cache:
+            return PregraspRequestCache.reuse(request, cache[key])
+        result = self._plan_checked(request)
+        PregraspRequestCache.validate(request, result)
+        cache[key] = result
+        return result
+
+    def _plan_checked(self, request):
         result = super().plan(request)
         if (not result.success or result.trajectory is None
                 or resolve_collision_mode() is not CollisionMode.FULL):

@@ -325,7 +325,6 @@ def run_observed_bowl_grasp(
                 scene, next_scene, execution,
                 max_joint_error_rad=max_start_error_rad,
                 max_width_error_m=max_gripper_width_error_m,
-                compare_gripper_endpoint=name not in {"open", "close"},
             )
             if error is not None:
                 row["status"] = "failed"
@@ -377,10 +376,6 @@ def _post_grasp_continuity_error(
     joint_error = float(np.max(np.abs(previous_q - current_q)))
     if joint_error > max_joint_error_rad:
         return f"抓取后活动臂关节变化 {joint_error:.5f} rad"
-    width = float(scene["provenance"]["gripper_widths_m"][group])
-    width_error = abs(width - float(last["gripper_width_m"]))
-    if not math.isfinite(width_error) or width_error > max_width_error_m:
-        return f"抓取后夹爪开口变化 {width_error:.5f} m"
     old_pose = validate_pose(last["bowl_pose_world"], field_name="抓取后 Bowl pose")
     new_pose = validate_pose(
         scene["provenance"]["aligned_object_poses_world"]["Bowl/Bowl_0"],

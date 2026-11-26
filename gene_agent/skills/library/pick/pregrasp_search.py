@@ -20,7 +20,16 @@ class PregraspRequestCache:
         payload = request.to_dict()
         # ID 仅用于追踪；其余字段都参与精确比较，尤其包括起点、场景和种子。
         payload.pop("request_id")
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        # 只规范 IEEE 正负零；不做舍入，不合并近似姿态或不同约束。
+        def normalize(value):
+            if isinstance(value, float) and value == 0.:
+                return 0.0
+            if isinstance(value, dict):
+                return {k: normalize(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [normalize(v) for v in value]
+            return value
+        return json.dumps(normalize(payload), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
     @staticmethod
     def validate(request: MotionRequest, result: MotionResult) -> None:
@@ -37,7 +46,9 @@ class PregraspRequestCache:
                            "scope": "single_grasp_plan",
                        }})
 
-    def evaluate_candidates(self, requests: tuple[MotionRequest, ...]) -> tuple[MotionResult, ...]:
+    def evaluate_candidates(self, requests: tuple[MotionRequest, ...], *, batch_size=None) -> tuple[MotionResult, ...]:
+        if batch_size is not None and (type(batch_size) is not int or batch_size < 1):
+            raise ValueError("batch_size 必须为正整数")
         keys = tuple(self.key(request) for request in requests)
         pending: dict[str, MotionRequest] = {}
         for key, request in zip(keys, requests):
@@ -45,7 +56,18 @@ class PregraspRequestCache:
                 pending.setdefault(key, request)
         # 批内重复也先筛掉；整批命中时完全不进入后端。
         if pending:
-            fresh = self.planner.evaluate_candidates(tuple(pending.values()))
+            unique = tuple(pending.values())
+            size = batch_size or len(unique)
+            fresh_rows = []
+            for offset in range(0, len(unique), size):
+                chunk = unique[offset:offset + size]
+                rows = tuple(self.planner.evaluate_candidates(chunk))
+                if len(rows) != len(chunk):
+                    raise RuntimeError("planner 返回的 pregrasp IK 数量与候选不一致")
+                for request, result in zip(chunk, rows):
+                    self.validate(request, result)
+                fresh_rows.extend(rows)
+            fresh = tuple(fresh_rows)
             if len(fresh) != len(pending):
                 raise RuntimeError("planner 返回的 pregrasp IK 数量与候选不一致")
             for request, result in zip(pending.values(), fresh):

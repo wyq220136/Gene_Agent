@@ -350,3 +350,32 @@ def test_session_registration_uses_current_mask_and_existing_mesh(tmp_path,monke
                                               pose_client=Client(),camera_id="0")
     assert result["ok"] is True and calls==["segment","unload","register"]
     assert (capture/"session_recovery/Bowl/Bowl_0/registration.json").is_file()
+
+
+def test_reused_camera_connection_keeps_new_exposure_and_checks_serial(tmp_path, monkeypatch):
+    from gene_agent.realworld import pose_tracking as module
+    from gene_agent.perception_modules.camera.live_rgbd_protocol import FramePacket
+    opened, infos, closed = [], [], []
+    class Camera:
+        def __init__(self, endpoint):
+            opened.append(endpoint); self.frame = 0; self.serial = "camera-1"
+        def info(self): infos.append(True); return {"serial": self.serial}
+        def get_frame(self):
+            self.frame += 1
+            return FramePacket(rgb=np.zeros((2,2,3), dtype=np.uint8), depth=np.ones((2,2), dtype=np.float32),
+                               frame_number=self.frame, timestamp_ms=float(self.frame), serial=self.serial,
+                               intrinsic_matrix=np.eye(3))
+        def close(self): closed.append(True)
+    monkeypatch.setattr(module, "CameraClient", Camera)
+    session=module.FrozenCaptureSession("camera", "camera-1")
+    for index in range(2):
+        module.capture_frozen_scene_frame(output_dir=tmp_path/str(index), endpoint="camera",
+            expected_serial="camera-1", capture_session=session)
+    assert opened == ["camera"] and len(infos) == 1 and closed == []
+    assert json.loads((tmp_path/"1/camera.json").read_text())["frame_number"] == 4
+    session.client.serial = "different-camera"
+    with pytest.raises(ValueError, match="序列号"):
+        module.capture_frozen_scene_frame(output_dir=tmp_path/"bad", endpoint="camera",
+            expected_serial="camera-1", capture_session=session)
+    assert closed == [True] and session.client is None
+    session.close()

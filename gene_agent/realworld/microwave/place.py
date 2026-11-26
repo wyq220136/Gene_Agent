@@ -271,12 +271,9 @@ def run_observed_table_place(
                 if (np.max(np.abs(
                         np.asarray(_observed_start(released_scene).positions_rad)
                         - np.asarray(_observed_start(settled_scene).positions_rad)
-                    )) > max_start_error_rad
-                        or abs(float(old_source["gripper_widths_m"][group])
-                               - float(new_source["gripper_widths_m"][group]))
-                        > max_gripper_width_error_m):
+                    )) > max_start_error_rad):
                     return stop("release", "observed_state_discontinuity",
-                                "松爪等待期间机械臂或夹爪状态变化")
+                                "松爪等待期间机械臂状态变化")
                 report["settle_observation"] = _summary(settled_scene)
                 return {"success": True}
             if name == 'release_check':

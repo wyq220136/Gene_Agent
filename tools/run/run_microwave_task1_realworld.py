@@ -640,9 +640,9 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                           )}
                 return connect_realman(config["robot_ips"][side], **kwargs)
 
-            # 抓碗前第一条夹爪操作直接设800，不以初始开口/场景检测为前提。
-            # 已持碗的插入/取出/放置流程不自动改变夹爪。
-            prepare_right = execute and subtask in {"pick_bowl", "load_bowl"}
+            # 所有实际执行入口统一先设右夹爪800，再构建观测和进入任务。
+            # 每次启动只做一次；组合任务内部不重置，以保留阶段间持物交接。
+            prepare_right = bool(execute)
             with measure_runtime("device_connection", "connect_and_prepare_arms"):
                 connections = {}
                 if prepare_right:
@@ -670,10 +670,18 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         robots = {side: connection.robot for side, connection in connections.items()}
         grippers = {side: connection.gripper for side, connection in connections.items()}
         camera = config["camera"]
+        from gene_agent.realworld.pose_tracking import FrozenCaptureSession
+        from gene_agent.realworld.state_sampling import RobotStateSampler
+        capture_session = FrozenCaptureSession(camera["endpoint"], camera["serial"])
+        state_sampler = RobotStateSampler(robots, grippers)
+        # LIFO：先停止采样，再关闭相机，最后断开机器人。
+        stack.callback(capture_session.close)
+        stack.callback(state_sampler.close)
         observer = make_live_microwave_observer(
             output_dir=output / "observations",
             camera_endpoint=camera["endpoint"], expected_serial=camera["serial"],
             pose_client=PoseClient(config["pose_server"]),
+            capture_session=capture_session, state_sampler=state_sampler,
             sessions=config["pose_sessions"], side=camera["side"],
             camera_id=camera["camera_id"], T_sdk_camera=camera["T_sdk_camera"],
             robots=robots, grippers=grippers, angle_reader=read_angles,

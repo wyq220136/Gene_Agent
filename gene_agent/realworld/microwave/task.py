@@ -189,10 +189,6 @@ def run_observed_door_return_default_tcp(
         )
         if mismatch:
             return stop("observed_state_discontinuity", mismatch)
-        width_error = abs(float(new_source["gripper_widths_m"][group])
-                          - float(old_source["gripper_widths_m"][group]))
-        if width_error > max_gripper_width_error_m:
-            return stop("observed_state_discontinuity", "撤离期间夹爪开口意外变化")
         angle_error = abs(float(new_source["door_angle_rad"])
                           - float(old_source["door_angle_rad"]))
         if angle_error > max_door_angle_error_rad:
@@ -214,7 +210,6 @@ def run_observed_door_return_default_tcp(
                 "source_frame_number": new_source["source_frame_number"],
                 "collision_snapshot_sha256": after["snapshot"]["snapshot_sha256"],
                 "door_angle_error_rad": angle_error,
-                "gripper_width_error_m": width_error,
                 "microwave_translation_m": translation,
                 "microwave_rotation_rad": rotation,
             },

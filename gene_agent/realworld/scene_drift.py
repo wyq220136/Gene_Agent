@@ -132,7 +132,6 @@ def compare_scene_drift(
     if set(joints_before) != set(joints_after) or set(widths_before) != set(widths_after):
         failures.append("机器人或夹爪组名单已变化")
     joint_errors = {}
-    width_errors = {}
     for group in sorted(set(joints_before) & set(joints_after)):
         old = np.asarray(joints_before[group], dtype=float)
         new = np.asarray(joints_after[group], dtype=float)
@@ -143,12 +142,8 @@ def compare_scene_drift(
         if error > limits.max_robot_joint_error_rad:
             failures.append(f"{group} 臂关节已偏离规划状态")
     for group in sorted(set(widths_before) & set(widths_after)):
-        error = abs(float(widths_after[group]) - float(widths_before[group]))
-        if not math.isfinite(error):
+        if not all(math.isfinite(float(width)) for width in (widths_before[group], widths_after[group])):
             raise ValueError(f"{group} 夹爪读数无效")
-        width_errors[group] = error
-        if error > limits.max_gripper_width_error_m:
-            failures.append(f"{group} 夹爪开口已偏离规划状态")
     articulated_errors = {}
     for name in ("door_angle_rad", "knob_angle_rad"):
         part = "door" if name == "door_angle_rad" else "knob"
@@ -186,7 +181,7 @@ def compare_scene_drift(
         "table_translation_m": table_translation,
         "table_rotation_rad": table_rotation,
         "joint_error_rad": joint_errors,
-        "gripper_width_error_m": width_errors,
+        "gripper_width_policy": "reuse_confirmed_endpoint",
         "articulated_angle_error_rad": articulated_errors,
     }
     return CheckResult(
@@ -233,16 +228,26 @@ def bind_live_scene_guard(
         planned_scene = last_scene
 
         def recheck() -> CheckResult:
-            result = compare_scene_drift(
-                planned_scene, observe_collision_scene(), limits=limits,
-            )
+            current_scene = observe_collision_scene()
+            result = compare_scene_drift(planned_scene, current_scene, limits=limits)
+            provenance = current_scene["provenance"]
+            group = runtime.robot.group
+            live = provenance.get("live_state") or {}
+            stamps = live.get("robot_sample_times", {}).get(group)
+            sample = None if not stamps else {
+                "group": group, **stamps,
+                "joint_positions_rad": provenance["joint_positions_by_group_rad"][group],
+                "width_m": provenance["gripper_widths_m"][group],
+                "width_source": live.get("gripper_width_sources", {}).get(group)}
             return CheckResult(
                 result.status, result.source,
                 {**result.evidence,
-                 "planned_stage_snapshot_sha256": stage_snapshot_sha256},
+                 "planned_stage_snapshot_sha256": stage_snapshot_sha256,
+                 "robot_sample": sample},
                 result.reason,
             )
 
+        recheck.provides_robot_sample = True
         runtime.pre_execute_scene_check = recheck
         return runtime
 

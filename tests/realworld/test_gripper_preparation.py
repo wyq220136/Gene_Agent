@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from gene_agent.realworld.microwave import gripper_preparation as prep
+from gene_agent.realworld.microwave.task import SUBTASK_NAMES
 
 
 class Gripper:
@@ -52,13 +53,16 @@ def test_failed_confirmation_stops_without_retrying_command(tmp_path, monkeypatc
     assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'failed'
 
 
+@pytest.mark.parametrize('subtask', (*SUBTASK_NAMES, 'all'))
 @pytest.mark.parametrize('execute', [False, True])
-def test_entry_prepares_before_left_connection_and_observer(tmp_path, monkeypatch, execute):
+def test_entry_prepares_before_left_connection_and_observer(tmp_path, monkeypatch, execute, subtask):
     from test_live_cli import _full_site_config, load_site_config
     from tools.run import run_microwave_task1_realworld as cli
     events = []
     path, _ = _full_site_config(tmp_path)
-    config = load_site_config(path, subtask='pick_bowl', execute=execute, no_knob=False)
+    prepare_held = subtask in {'insert_bowl', 'place_bowl_on_table'}
+    config = load_site_config(path, subtask=subtask, execute=execute, no_knob=False,
+                              prepare_held_bowl=prepare_held)
     monkeypatch.setattr(prep.time, 'sleep', lambda _: None)
     @contextmanager
     def connect(ip, **kwargs):
@@ -71,7 +75,8 @@ def test_entry_prepares_before_left_connection_and_observer(tmp_path, monkeypatc
     monkeypatch.setattr('gene_agent.realworld.devices.arms.realman.connection.connect_realman', connect)
     monkeypatch.setattr('gene_agent.realworld.microwave.scene.make_live_microwave_observer', observer)
     with pytest.raises(ObserverReached):
-        cli.run_site(config, subtask='pick_bowl', output_dir=tmp_path/'run', execute=execute)
+        cli.run_site(config, subtask=subtask, output_dir=tmp_path/'run', execute=execute,
+                     prepare_held_bowl=prepare_held)
     if execute:
         assert events == ['connect_right', 'command800', 'read', 'read', 'read', 'connect_left', 'observer']
     else:

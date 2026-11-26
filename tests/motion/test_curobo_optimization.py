@@ -85,9 +85,9 @@ def test_ik_bucket_never_discards_targets():
         25,
         25,
         25,
-        119,
-        119,
-        120,
+        128,
+        128,
+        128,
     ]
     with pytest.raises(ValueError):
         ik_bucket_size(0)
@@ -346,3 +346,10 @@ def test_copied_context_cannot_reenter_closed_or_foreign_owner():
         assert errors == [True]
     with pytest.raises(RuntimeError):
         ctx.run(current_optimization)
+
+
+def test_ik_buckets_cover_fragmented_pregrasp_batches():
+    from gene_agent.motion.curobo.optimization import ik_bucket_size
+    assert {ik_bucket_size(n) for n in range(26, 129)} == {128}
+    assert ik_bucket_size(160) == 160
+    assert all(ik_bucket_size(n) >= n for n in range(1, 1025))

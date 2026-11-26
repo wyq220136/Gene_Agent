@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+from gene_agent.realworld.gripper_state import invalidate_endpoint
+
 
 class RealmanGripperAdapter:
     """SDK 注入后才可发命令；构造本身不会连接或移动夹爪。
@@ -22,6 +24,7 @@ class RealmanGripperAdapter:
         # 反馈容许范围与可下发位置范围分离；不改变原1000满量程换算。
         self.max_feedback_width_m = 1.5 * width
         self.last_reading = None
+        self.confirmed_endpoint_width_m = None
 
     @staticmethod
     def _scaled(value: float, *, name: str) -> int:
@@ -41,6 +44,7 @@ class RealmanGripperAdapter:
         if not math.isfinite(width) or not 0.0 <= width <= self.max_width_m:
             raise ValueError(f"夹爪开口必须在 [0, {self.max_width_m}] m 范围内")
         position = self._scaled(width / self.max_width_m, name="opening")
+        invalidate_endpoint(self)
         self._check(self.sdk.rm_set_gripper_position(position, blocking, 3),
                     action="位置控制")
 
@@ -60,6 +64,8 @@ class RealmanGripperAdapter:
         self.last_reading = {
             "raw": value, "actpos": position, "width_m": width,
             "negative_endpoint_clamped": position < 0,
+            # mode=4/5 仍在运动；status 仅表示在线，不是到位信号。
+            "motion_complete": state.get("mode") in (1, 2, 3, 6),
         }
         return width
 
@@ -68,6 +74,7 @@ class RealmanGripperAdapter:
         """沿用旧版连续夹取命令；速度与力保持原 0～1 归一化含义。"""
         sdk_speed = self._scaled(speed, name="speed")
         sdk_force = self._scaled(force, name="force")
+        invalidate_endpoint(self)
         if continuous:
             code = self.sdk.rm_set_gripper_pick_on(sdk_speed, sdk_force, blocking, 3)
         else:
@@ -76,4 +83,5 @@ class RealmanGripperAdapter:
 
     def release(self, *, blocking: bool = True) -> None:
         """沿用旧版固定速度 500 的松爪命令。"""
+        invalidate_endpoint(self)
         self._check(self.sdk.rm_set_gripper_release(500, blocking, 3), action="松开")

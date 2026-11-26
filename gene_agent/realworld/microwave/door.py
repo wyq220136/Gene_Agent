@@ -68,11 +68,6 @@ def _measured_end_matches_scene(
         actual_width = execution.get("measured_end_width_m")
         if actual_width is None:
             return "夹爪阶段没有实测终点开口"
-        group = scene["snapshot"]["active_group"]
-        current_width = float(scene["provenance"]["gripper_widths_m"][group])
-        error = abs(float(actual_width) - current_width)
-        if error > max_width_error_m:
-            return f"新现场夹爪开口与执行终点不一致：{error:.5f} m"
     return None
 
 

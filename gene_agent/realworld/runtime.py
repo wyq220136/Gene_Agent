@@ -17,6 +17,7 @@ from gene_agent.feedback.runtime_timing import timed_runtime_call
 from gene_agent.motion.model import JointState
 from gene_agent.skills.runtime.planning import SkillStage
 from gene_agent.tasks.checks import CheckResult
+from gene_agent.realworld.gripper_state import retained_width, invalidate_endpoint
 
 
 class RealWorldRuntime:
@@ -69,6 +70,40 @@ class RealWorldRuntime:
             "canfd_frequency_hz": frequency,
             "tcp_speed_mps": requested,
         }
+
+    def _sample_from_recheck(self, recheck):
+        sample = ((recheck or {}).get("evidence") or {}).get("robot_sample")
+        if not isinstance(sample, dict) or sample.get("group") != self.robot.group:
+            return None
+        try:
+            age = time.monotonic() - float(sample["started_monotonic_s"])
+            if not math.isfinite(age) or not 0 <= age <= .25:
+                return None
+            return sample
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _read_start(self, recheck):
+        sample = self._sample_from_recheck(recheck)
+        if sample is None:
+            return self.robot.read_joint_state()
+        return JointState(tuple(f"{self.robot.group}_joint_{i}" for i in range(1, 8)),
+                          tuple(sample["joint_positions_rad"]))
+
+    def _read_start_width(self, recheck):
+        width = retained_width(self.gripper)
+        if width is not None:
+            return float(width)
+        sample = self._sample_from_recheck(recheck)
+        if sample is None or sample.get("width_source") != "sdk_live_read":
+            return float(self.gripper.read_width_m())
+        return float(sample["width_m"])
+
+    def _early_recheck(self, stage, execute):
+        if execute and getattr(self.pre_execute_scene_check, "provides_robot_sample", False):
+            failure, evidence = self._check_live_scene(stage)
+            return failure, evidence, True
+        return None, None, False
 
     @staticmethod
     def _failed(stage: str, code: str, message: str, *, details=None) -> dict:
@@ -124,8 +159,11 @@ class RealWorldRuntime:
         trajectory = result.trajectory
         if trajectory is None:
             return self._failed(stage.name, "trajectory_missing", "规划结果没有关节轨迹")
+        failure, recheck, checked_early = self._early_recheck(stage.name, execute)
+        if failure is not None:
+            return failure
         try:
-            measured_start = self.robot.read_joint_state()
+            measured_start = self._read_start(recheck)
         except Exception as error:
             return self._failed(stage.name, "robot_state_error", f"读取真机状态失败：{error}")
         if request.start.joint_names != measured_start.joint_names:
@@ -164,7 +202,8 @@ class RealWorldRuntime:
         }
         if not execute:
             return record
-        failure, recheck = self._check_live_scene(stage.name)
+        if not checked_early:
+            failure, recheck = self._check_live_scene(stage.name)
         if failure is not None:
             return failure
         if recheck is not None:
@@ -220,8 +259,11 @@ class RealWorldRuntime:
         speed = float(speed_scale)
         if not math.isfinite(delta) or not math.isfinite(speed) or speed <= 0:
             return self._failed(stage, "invalid_command", "末关节增量或速度无效")
+        failure, recheck, checked_early = self._early_recheck(stage, execute)
+        if failure is not None:
+            return failure
         try:
-            measured = self.robot.read_joint_state()
+            measured = self._read_start(recheck)
         except Exception as error:
             return self._failed(stage, "robot_state_error", f"读取真机状态失败：{error}")
         if measured.joint_names != planned_start.joint_names:
@@ -256,7 +298,8 @@ class RealWorldRuntime:
         }
         if not execute:
             return record
-        failure, recheck = self._check_live_scene(stage)
+        if not checked_early:
+            failure, recheck = self._check_live_scene(stage)
         if failure is not None:
             return failure
         if recheck is not None:
@@ -297,7 +340,7 @@ class RealWorldRuntime:
         max_width_error_m: float, planned_scene_snapshot_sha256: str,
         execute: bool = False, command_mode: str = "position",
         grasp_force: float = 0.5, grasp_settle_time_s: float = 1.5,
-        confirm_stable_endpoint: bool = False,
+        confirm_stable_endpoint: bool = True,
         endpoint_stability_samples: int = 3,
         endpoint_stability_tolerance_m: float = 0.0005,
         endpoint_stability_timeout_s: float = 2.0,
@@ -313,8 +356,8 @@ class RealWorldRuntime:
         settle = float(grasp_settle_time_s)
         if not math.isfinite(settle) or settle < 0:
             raise ValueError("闭爪稳定等待时间必须是非负有限秒数")
-        if type(confirm_stable_endpoint) is not bool:
-            raise ValueError("夹爪终点稳定确认开关必须为 bool")
+        if confirm_stable_endpoint is not True:
+            raise ValueError("所有夹爪阶段必须确认稳定终态")
         stable_samples = int(endpoint_stability_samples)
         stable_tolerance = float(endpoint_stability_tolerance_m)
         stable_timeout = float(endpoint_stability_timeout_s)
@@ -344,9 +387,12 @@ class RealWorldRuntime:
         if (not all(math.isfinite(v) for v in (target, planned_width))
                 or not 0 <= target <= maximum or not 0 <= planned_width <= feedback_maximum):
             return self._failed(stage, "gripper_width_invalid", "夹爪开口超出配置范围")
+        failure, recheck, checked_early = self._early_recheck(stage, execute)
+        if failure is not None:
+            return failure
         try:
-            measured_joints = self.robot.read_joint_state()
-            measured_width = float(self.gripper.read_width_m())
+            measured_joints = self._read_start(recheck)
+            measured_width = self._read_start_width(recheck)
         except Exception as error:
             return self._failed(stage, "robot_state_error", f"读取真机起点失败：{error}")
         if measured_joints.joint_names != planned_start.joint_names:
@@ -383,7 +429,8 @@ class RealWorldRuntime:
         }
         if not execute:
             return record
-        failure, recheck = self._check_live_scene(stage)
+        if not checked_early:
+            failure, recheck = self._check_live_scene(stage)
         if failure is not None:
             return failure
         if recheck is not None:
@@ -397,8 +444,9 @@ class RealWorldRuntime:
             )))
             if current.joint_names != measured_joints.joint_names or drift > self.max_start_error_rad:
                 return self._failed(stage, "start_state_mismatch", "发令前机械臂起点变化")
+            invalidate_endpoint(self.gripper)
             if command_mode == "grasp":
-                self.gripper.grasp(force=force)
+                self.gripper.grasp(force=force, blocking=True)
                 # 连续力控命令返回后仍可能继续闭合。沿用 AffordToolAct
                 # 的1.5秒稳定期，再冻结实测终态，避免正常闭合被下一帧
                 # handoff 判成开口突变；不能将规划闭合宽度当力控到位值。
@@ -406,9 +454,9 @@ class RealWorldRuntime:
                     time.sleep(settle)
                 record["grasp_settle_completed"] = True
             elif command_mode == "release":
-                self.gripper.release()
+                self.gripper.release(blocking=True)
             else:
-                self.gripper.command_width_m(target)
+                self.gripper.command_width_m(target, blocking=True)
             confirmation_started = time.monotonic()
             readings = []
             while True:
@@ -419,12 +467,13 @@ class RealWorldRuntime:
                     "elapsed_s": time.monotonic() - confirmation_started,
                     "width_m": measured_end_width,
                     "sdk_reading": getattr(self.gripper, "last_reading", None),
+                    "motion_complete": (getattr(self.gripper, "last_reading", None) or {}).get(
+                        "motion_complete", True),
                 })
-                if not confirm_stable_endpoint:
-                    break
                 recent = readings[-stable_samples:]
                 endpoint_is_stable = (
                     len(recent) == stable_samples
+                    and all(row["motion_complete"] for row in recent)
                     and max(row["width_m"] for row in recent)
                     - min(row["width_m"] for row in recent) <= stable_tolerance
                 )
@@ -452,13 +501,12 @@ class RealWorldRuntime:
                 if poll_interval:
                     time.sleep(poll_interval)
             record["endpoint_confirmation"] = {
-                "method": ("blocking_command_plus_stable_actpos"
-                           if confirm_stable_endpoint else "blocking_command_single_actpos"),
+                "method": "blocking_command_plus_stable_actpos",
                 "confirmed": True,
-                "required_stable_samples": stable_samples if confirm_stable_endpoint else 1,
-                "stability_tolerance_m": stable_tolerance if confirm_stable_endpoint else None,
-                "timeout_s": stable_timeout if confirm_stable_endpoint else None,
-                "poll_interval_s": poll_interval if confirm_stable_endpoint else None,
+                "required_stable_samples": stable_samples,
+                "stability_tolerance_m": stable_tolerance,
+                "timeout_s": stable_timeout,
+                "poll_interval_s": poll_interval,
                 "readings": readings,
                 "duration_s": time.monotonic() - confirmation_started,
             }
@@ -471,6 +519,8 @@ class RealWorldRuntime:
             if record.get("endpoint_confirmation") is not None:
                 failure["endpoint_confirmation"] = record["endpoint_confirmation"]
             return failure
+        # 只发布确认成功的实测终态；场景刷新不再查询夹爪。
+        self.gripper.confirmed_endpoint_width_m = measured_end_width
         record.update({
             "status": "executed", "measured_end_width_m": measured_end_width,
             "claim": "夹爪命令已下发并读取开口；夹持物体需另查后置条件",

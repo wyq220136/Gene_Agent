@@ -262,17 +262,9 @@ def run_observed_bowl_extract(
                                     "闭爪等待后没有取得更新的现场观测帧")
                     old_joints = np.asarray(_observed_start(scene).positions_rad)
                     new_joints = np.asarray(_observed_start(settled).positions_rad)
-                    old_width = float(old_source["gripper_widths_m"]["right"])
-                    new_width = float(new_source["gripper_widths_m"]["right"])
                     if np.max(np.abs(old_joints - new_joints)) > max_start_error_rad:
                         return stop("close", "observed_state_discontinuity",
                                     "闭爪等待期间机械臂关节变化")
-                    # 若仍在执行显式闭爪稳定等待，开口变化正是预期行为。
-                    # 稳定后重新冻结真实开口，随后必须通过当前帧夹持检查。
-                    if (not remaining
-                            and abs(old_width - new_width) > max_gripper_width_error_m):
-                        return stop("close", "observed_state_discontinuity",
-                                    "闭爪稳定后夹爪开口意外变化")
                     scene = settled
                     report["grasp_settle_observation"] = _summary(scene)
                 return {'success': True}

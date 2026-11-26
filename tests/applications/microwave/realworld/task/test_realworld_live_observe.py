@@ -296,13 +296,18 @@ def test_live_knob_reading_above_180_degrees_uses_asset_limit(tmp_path, monkeypa
     assert result["provenance"]["knob_angle_rad"] == pytest.approx(3.5)
 
 
-def test_scene_observer_refreshes_frame_and_articulated_state_on_every_call(tmp_path, monkeypatch):
+@pytest.mark.parametrize("parallel", [False, True])
+def test_scene_observer_refreshes_frame_and_articulated_state_on_every_call(tmp_path, monkeypatch, request, parallel):
     """独立/组合子任务反复调用时，不能复用上段门角、物体 pose 或目录。"""
     from gene_agent.realworld.microwave import scene as module
     from gene_agent.realworld.microwave.scene import make_live_microwave_observer
     monkeypatch.setattr(module.time, "time", lambda: 1000.)
     observed, robots, grippers, angles, static = _inputs(tmp_path)
     del static["output_dir"]
+    from gene_agent.realworld.state_sampling import RobotStateSampler
+    sampler = RobotStateSampler(robots, grippers) if parallel else None
+    if sampler is not None:
+        request.addfinalizer(sampler.close)
     captures = []
 
     def capture_frame(*, output_dir, **_kwargs):
@@ -329,7 +334,7 @@ def test_scene_observer_refreshes_frame_and_articulated_state_on_every_call(tmp_
         pose_client=object(), sessions={"Bowl/Bowl_0": "bowl",
                                         "Microwave/Microwave_0": "microwave"},
         side="right", camera_id="0", T_sdk_camera=np.eye(4),
-        robots=robots, grippers=grippers,
+        robots=robots, grippers=grippers, state_sampler=sampler,
         angle_reader=lambda _scene: {
             **angles, "door": {**angles["door"],
                                "angle_rad": .3 + .1 * (len(captures) - 1)}},
@@ -337,7 +342,17 @@ def test_scene_observer_refreshes_frame_and_articulated_state_on_every_call(tmp_
         microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj",
     )
     first = observer()
+    # 所有 sub-task 共享该 observer；发布执行终态后，后续帧只感知场景和关节。
+    for group, gripper in grippers.items():
+        if group == "right":
+            gripper.confirmed_endpoint_width_m = .041
+        def no_read():
+            raise AssertionError("命令之后没有新夹爪动作，不能重复查询")
+        gripper.read_width_m = no_read
     second = observer()
+    assert second["provenance"]["gripper_widths_m"]["right"] == .041
+    assert second["provenance"]["live_state"]["gripper_width_sources"]["right"] == "confirmed_execution_endpoint"
+    assert second["provenance"]["live_state"]["state_sampling_mode"] == ("parallel_with_vision" if parallel else "serial")
     assert first["provenance"]["source_frame_number"] == 73
     assert second["provenance"]["source_frame_number"] == 74
     assert second["provenance"]["door_angle_rad"] == pytest.approx(.4)
@@ -403,3 +418,24 @@ def test_changed_camera_calibration_rejects_same_aligned_poses(tmp_path, monkeyp
     )
     assert result.status == "fail"
     assert "标定" in result.reason
+
+
+@pytest.mark.parametrize("bad", ["stale", "future", "width_source"])
+def test_parallel_robot_sample_rejects_stale_or_misattributed_data(tmp_path, monkeypatch, bad):
+    from gene_agent.realworld.microwave import scene as module
+    from gene_agent.realworld.state_sampling import RobotStateSampler
+    monkeypatch.setattr(module.time, "time", lambda: 1000.)
+    observed, robots, grippers, angles, static = _inputs(tmp_path)
+    sampler = RobotStateSampler(robots, grippers)
+    try:
+        with sampler.sample() as pending:
+            samples = pending.result()
+    finally:
+        sampler.close()
+    if bad == "stale": samples["right"]["started_monotonic_s"] -= 10.
+    elif bad == "future": samples["right"]["started_monotonic_s"] += 10.
+    else: samples["right"]["width_source"] = "confirmed_execution_endpoint"
+    with pytest.raises(ValueError, match="过期|来源"):
+        build_live_microwave_collision_scene(observed=observed, robots=robots, grippers=grippers,
+            angles=angles, scene_parameters=static, max_age_s=2.,
+            microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj", robot_samples=samples)
