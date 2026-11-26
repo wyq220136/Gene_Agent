@@ -89,8 +89,8 @@ class Probe:
             if state.get(key) != expected:
                 raise ValueError(f'夹爪 {key}={state.get(key)!r}，期望 {expected}; raw={state!r}')
         position = state.get('actpos')
-        if isinstance(position, bool) or not isinstance(position, (float, int)) or not math.isfinite(position) or not 0 <= position <= 1000:
-            raise ValueError(f'夹爪 actpos 无效，反馈范围应为 0～1000; raw={state!r}')
+        if isinstance(position, bool) or not isinstance(position, (float, int)) or not math.isfinite(position) or not -10 <= position <= 1500:
+            raise ValueError(f'夹爪 actpos 无效，反馈范围应为 -10～1500; raw={state!r}')
         return state
 
     def command(self, name, *args):
@@ -179,6 +179,8 @@ def run(args, sdk):
             state = probe.gripper()
             if state.get('mode') not in (1, 2, 3):
                 raise RuntimeError('夹爪非空闲状态，拒绝微动')
+            if not 0 <= state['actpos'] <= 1000:
+                raise ValueError('起点反馈超出0～1000指令范围，无法精确往返，拒绝夹爪微动')
             start = int(round(state['actpos']))
             target = start + args.gripper_step
             if not 0 <= target <= 1000:

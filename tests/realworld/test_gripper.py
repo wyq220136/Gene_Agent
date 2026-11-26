@@ -353,10 +353,50 @@ def test_gripper_feedback_and_command_use_original_scale(position):
     assert sdk.calls == [("position", position, True, 3)]
 
 
-@pytest.mark.parametrize("position", [-1, 1001, 1003, 1500, float("nan"), float("inf")])
+@pytest.mark.parametrize("position", [-11, 1501, float("nan"), float("inf")])
 def test_gripper_feedback_outside_original_range_rejected(position):
     sdk = FakeGripperSdk()
     sdk.position = position
-    with pytest.raises(ValueError, match="1000"):
+    with pytest.raises(ValueError, match="1500"):
         RealmanGripperAdapter(sdk, max_width_m=.08).read_width_m()
     assert not sdk.calls
+
+
+@pytest.mark.parametrize("position", [-10, -1, 1003, 1500])
+def test_feedback_tolerance_does_not_expand_commands(position):
+    sdk = FakeGripperSdk(); sdk.position = position
+    gripper = RealmanGripperAdapter(sdk, max_width_m=.08)
+    assert gripper.read_width_m() == pytest.approx(max(0, position) / 1000 * .08)
+    assert gripper.last_reading["actpos"] == position
+    assert gripper.last_reading["negative_endpoint_clamped"] == (position < 0)
+    for width in [-.0001, .08024, .12]:
+        with pytest.raises(ValueError):
+            gripper.command_width_m(width)
+    assert not sdk.calls
+
+
+def test_runtime_accepts_1003_feedback_but_rejects_1003_target():
+    from gene_agent.motion.model import JointState
+    from gene_agent.realworld.runtime import RealWorldRuntime
+    start = JointState(tuple(f"right_joint_{i}" for i in range(1, 8)), (0.,)*7)
+    class Robot:
+        group = "right"
+        def read_joint_state(self): return start
+    class Sdk(FakeGripperSdk):
+        def rm_set_gripper_position(self, position, blocking, mode):
+            self.calls.append(("position", position, blocking, mode))
+            self.position = 1003
+            return 0
+    sdk = Sdk(); sdk.position = 1003
+    runtime = RealWorldRuntime(Robot(), scene_snapshot_sha256="scene", max_start_error_rad=.02,
+                              tcp_height_fn=lambda _: .2, min_tcp_z_m=.08,
+                              gripper=RealmanGripperAdapter(sdk, max_width_m=.08))
+    common = dict(group="right", planned_start=start, planned_start_width_m=.08024,
+                  max_width_error_m=.005, planned_scene_snapshot_sha256="scene", execute=True)
+    result = runtime.run_gripper_stage("open", target_width_m=.08, **common)
+    assert result["status"] == "executed"
+    assert result["measured_end_width_m"] == pytest.approx(.08024)
+    assert sdk.calls == [("position", 1000, True, 3)]
+    result = runtime.run_gripper_stage("open", target_width_m=.08024, **common)
+    assert result["failure"]["code"] == "gripper_width_invalid"
+    assert len(sdk.calls) == 1

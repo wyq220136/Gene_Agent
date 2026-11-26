@@ -333,8 +333,9 @@ class RealWorldRuntime:
         target = float(target_width_m)
         planned_width = float(planned_start_width_m)
         maximum = float(self.gripper.max_width_m)
+        feedback_maximum = float(getattr(self.gripper, "max_feedback_width_m", maximum))
         if (not all(math.isfinite(v) for v in (target, planned_width))
-                or not 0 <= target <= maximum or not 0 <= planned_width <= maximum):
+                or not 0 <= target <= maximum or not 0 <= planned_width <= feedback_maximum):
             return self._failed(stage, "gripper_width_invalid", "夹爪开口超出配置范围")
         try:
             measured_joints = self.robot.read_joint_state()
@@ -405,11 +406,12 @@ class RealWorldRuntime:
             readings = []
             while True:
                 measured_end_width = float(self.gripper.read_width_m())
-                if not math.isfinite(measured_end_width) or not 0 <= measured_end_width <= maximum:
+                if not math.isfinite(measured_end_width) or not 0 <= measured_end_width <= feedback_maximum:
                     raise ValueError("夹爪实测终点开口无效")
                 readings.append({
                     "elapsed_s": time.monotonic() - confirmation_started,
                     "width_m": measured_end_width,
+                    "sdk_reading": getattr(self.gripper, "last_reading", None),
                 })
                 if not confirm_stable_endpoint:
                     break

@@ -20,7 +20,7 @@ python tools/diagnostics/check_realman_api.py --ip ROBOT_IP --group left
 python tools/diagnostics/check_realman_api.py --ip ROBOT_IP --group right
 ```
 
-记录 `rm_get_joint_degree`、`rm_get_gripper_state` 的完整原始返回。某项读取失败仍尝试其他只读项。不会设置夹爪行程、电压、使能，也不会开合或移动机械臂。检查 status=1、enable_state=1（兼容旧字段 enable）、error=0、actpos 反馈在 0～1000；SDK 成功码不等于夹爪自身在线。
+记录 `rm_get_joint_degree`、`rm_get_gripper_state` 的完整原始返回。某项读取失败仍尝试其他只读项。不会设置夹爪行程、电压、使能，也不会开合或移动机械臂。检查 status=1、enable_state=1（兼容旧字段 enable）、error=0、actpos 原始反馈在 -10～1500；SDK 成功码不等于夹爪自身在线。
 
 ## 2. 单关节微动并返回
 
@@ -55,15 +55,20 @@ API 语义参考：https://develop.realman-robotics.com/robot/apipython/struct/g
 
 ## 当前读取方式与现场报告
 
-- 夹爪开口：rm_get_gripper_state 的 actpos，反馈/位置指令均为0～1000；宽度 = actpos / 1000 × max_width_m。enable_state为Python SDK使能字段，兼容旧enable字段。
+- 夹爪开口：rm_get_gripper_state 的 actpos，原始反馈允许-10～1500，位置指令仍严格为0～1000；几何宽度 = max(0, actpos) / 1000 × max_width_m。enable_state为Python SDK使能字段，兼容旧enable字段。
 - 机械臂关节：rm_get_joint_degree；原任务的夹爪空间位姿由 rm_algo_forward_kinematics 加已标定 T_flange_tcp 变换计算。
 - 自检已移除 rm_get_current_arm_state，不再将该综合接口的-3作为自检失败条件。原任务夹爪读取本来就不依赖它。
 - 位置、抓取、释放命令仅返回整数状态码，到位事件也不包含actpos/实测TCP。因此不能从命令返回值获得动作后位置，仍保留必要的实测终态采样。已有执行层返回 measured_end_width_m，后续阶段可复用经确认的终态；该字段来源于实测，不能用命令目标伪造。
 
-现场 right-1795683836435607586.json 的actpos=1003直接来自rm_get_gripper_state。恢复0～1000后仍会拒绝这一反馈；移除综合状态查询不代表解决此独立越界问题。
+现场 right-1795683836435607586.json 的actpos=1003直接来自rm_get_gripper_state。当前范围允许1003反馈；动作终点检查也区分反馈上限与指令上限，目标到位误差检查保持不变。
 
 ```bash
 python tools/diagnostics/check_realman_api.py --ip 169.254.128.19 --group right --samples 5
 ```
 
 多轮读取不会发运动；原始值在calls，各轮检查在samples。请同步新版程序后运行。
+
+
+当前反馈容许范围为用户指定的软件策略，不是新的硬件标定。-10～0反馈不能作为负几何开口，映射为0；原始actpos及修正标记保存在适配器last_reading，动作终点报告readings.sdk_reading也保留它们。正反馈不截断，1003按8cm配置换算为0.08024m，1500为0.12m。自检calls始终保存原始返回。
+
+夹爪往返自检若起点反馈在0～1000之外，会拒绝运动以免返程发出非法目标。普通任务仍可下发合法目标；不扩大SDK位置、力、速度或行程配置范围。不使用rm_get_current_arm_state。
