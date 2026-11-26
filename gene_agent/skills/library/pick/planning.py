@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Sequence
+from itertools import islice
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -113,6 +114,16 @@ def _first_valid_pregrasps(eligible, context, settings, cache, attempts):
             yield item, final, target
 
 
+_IK_SCREEN_BATCH_SIZE = 128
+
+
+def _candidate_batches(records):
+    """按需展开；成功批次截止后不再生成后续请求。"""
+    records = iter(records)
+    while batch := tuple(islice(records, _IK_SCREEN_BATCH_SIZE)):
+        yield batch
+
+
 class GraspSkill:
     def plan(
         self,
@@ -146,15 +157,39 @@ class GraspSkill:
                 CollisionPolicy(), seed=context.seed,
             ) for item in selected
         )
+        stop_on_batch = settings.pregrasp_search == "first_successful_batch"
+        requested_count = len(requests)
+        final_batches = 0
         if final_ik_evidence is None:
-            results = grasp_planner.evaluate_candidates(requests)
+            if stop_on_batch:
+                collected = []
+                for batch in _candidate_batches(requests):
+                    batch_results = tuple(grasp_planner.evaluate_candidates(batch))
+                    if len(batch_results) != len(batch):
+                        raise RuntimeError("planner 返回的 IK 结果数量与候选不一致")
+                    if any(result.request_id != request.request_id or result.operation is not MotionOperation.IK
+                           for request, result in zip(batch, batch_results)):
+                        raise RuntimeError("planner 的批 IK 结果顺序或 operation 不匹配")
+                    collected.extend(batch_results)
+                    final_batches += 1
+                    if any(result.success for result in batch_results):
+                        break
+                results = tuple(collected)
+            else:
+                results = grasp_planner.evaluate_candidates(requests)
         else:
             evidence = tuple(final_ik_evidence)
-            if (len(evidence) != len(requests) or any(
-                    old_request.to_dict() != request.to_dict()
-                    for (old_request, _), request in zip(evidence, requests))):
+            prefix_allowed = (stop_on_batch and bool(evidence)
+                              and len(evidence) % _IK_SCREEN_BATCH_SIZE == 0
+                              and any(result.success for _, result in evidence))
+            if (len(evidence) > len(requests)
+                    or (len(evidence) != len(requests) and not prefix_allowed)
+                    or any(old_request.to_dict() != request.to_dict()
+                           for (old_request, _), request in zip(evidence, requests))):
                 raise ValueError("复用最终IK证据的请求与当前场景/起点/目标不一致")
             results = tuple(result for _, result in evidence)
+        if stop_on_batch:
+            selected, requests = selected[:len(results)], requests[:len(results)]
         if len(results) != len(requests):
             raise RuntimeError("planner 返回的 IK 结果数量与候选不一致")
         attempts: list[dict] = []
@@ -163,6 +198,15 @@ class GraspSkill:
                 raise RuntimeError("planner 的批 IK 结果顺序或 operation 不匹配")
             attempts.append({"candidate_id": item.candidate_id, "stage": "final_grasp_ik",
                              "request": request.to_dict(), "result": result.to_dict()})
+
+        if stop_on_batch:
+            attempts.append({"stage": "ik_batch_screening", "phase": "final_grasp_ik",
+                "policy": "first_successful_batch", "batch_size": _IK_SCREEN_BATCH_SIZE,
+                "requested_count": requested_count, "checked_count": len(results),
+                "remaining_count": requested_count - len(results),
+                "backend_batch_count": final_batches,
+                "reused_evidence": final_ik_evidence is not None,
+                "stopped_on_success": any(result.success for result in results)})
 
         eligible = tuple(
             (item, ik_request.target)
@@ -185,7 +229,7 @@ class GraspSkill:
             # 旧 Viser 先按顺序为所有最终 IK 可达的 grasp 生成 17 个
             # pregrasp，再以 128 为一批做 IK；第一个成功批次中的首个可达
             # 候选就是最终选项。随后执行阶段若路径失败，不偷偷换 grasp。
-            records = tuple(
+            records = (
                 (item, final, pregrasp, index, MotionRequest(
                     f"{item.candidate_id}:pregrasp_ik_{index:02d}",
                     MotionOperation.IK, context.group, context.start,
@@ -201,11 +245,15 @@ class GraspSkill:
             viable: list[tuple[
                 GraspProposal, PoseTarget, PoseTarget, float, float, float, int, JointState,
             ]] = []
-            for offset in range(0, len(records), 128):
-                batch = records[offset:offset + 128]
+            pregrasp_batches = backend_pregrasp_batches = checked_pregrasps = 0
+            stopped_pregrasps = False
+            for batch in _candidate_batches(records):
+                pregrasp_batches += 1
+                checked_pregrasps += len(batch)
                 batch_requests = tuple(row[4] for row in batch)
                 prechecks = (pregrasp_cache.evaluate_candidates(batch_requests) if pregrasp_cache is not None
                              else planner.evaluate_candidates(batch_requests))
+                backend_pregrasp_batches += int(any(not result.metrics.get("request_reuse") for result in prechecks))
                 if len(prechecks) != len(batch):
                     raise RuntimeError("planner 返回的 pregrasp IK 数量与候选不一致")
                 for (item, final, pregrasp, branch_index, request), result in zip(batch, prechecks):
@@ -238,9 +286,17 @@ class GraspSkill:
                         float(posture.get("joint_travel_sum_rad", 0.)),
                         branch_index, result.goal_state,
                     ))
-                # 未启用姿态连续性约束时严格保留旧版“第一个 IK 成功即停”。
-                if viable and settings.max_pregrasp_joint_travel_rad is None:
+                # 真机对齐首个成功批次；行程门槛保留，只在已求解批次中挑选。
+                if viable and (stop_on_batch or settings.max_pregrasp_joint_travel_rad is None):
+                    stopped_pregrasps = True
                     break
+            if stop_on_batch:
+                attempts.append({"stage": "ik_batch_screening", "phase": "pregrasp_ik",
+                    "policy": "first_successful_batch", "batch_size": _IK_SCREEN_BATCH_SIZE,
+                    "checked_count": checked_pregrasps, "checked_batch_count": pregrasp_batches,
+                    "backend_batch_count": backend_pregrasp_batches,
+                    "stopped_on_success": stopped_pregrasps,
+                    "viable_count": len(viable), "ranking_scope": "checked_batches_only"})
             if settings.max_pregrasp_joint_travel_rad is not None:
                 candidate_rank = {
                     item.candidate_id: index for index, item in enumerate(selected)
@@ -252,6 +308,7 @@ class GraspSkill:
                 attempts.append({
                     "stage": "candidate_joint_state_ranking",
                     "source": "current_executed_joint_state",
+                    "scope": "first_successful_batch" if stop_on_batch else "all_checked_candidates",
                     "ranking_keys": [
                         "maximum_joint_travel_rad", "joint_travel_l2_rad",
                         "joint_travel_sum_rad", "knowledge_candidate_rank",

@@ -510,7 +510,12 @@ def plan_bowl_grasp_stages(
             candidate_postcheck=postgrasp_check if profile.align_before_approach else None,
             pregrasp_request_cache=pregrasp_cache,
         )
+        stopped_on_pregrasp_batch = (
+            profile.pregrasp_search == "first_successful_batch"
+            and any(row.get("stage") == "ik_batch_screening" and row.get("phase") == "pregrasp_ik"
+                    and row.get("stopped_on_success") for row in result.attempts))
         if (profile.align_before_approach and result.selected_candidate_id is None
+                and not stopped_on_pregrasp_batch
                 and any(row["stage"] == "final_grasp_ik" and row["result"]["success"]
                         for row in result.attempts)):
             from gene_agent.motion.model import motion_request_from_dict, motion_result_from_dict

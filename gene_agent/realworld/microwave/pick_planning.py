@@ -165,7 +165,7 @@ def plan_observed_bowl_grasp_stages(
     settings = load_grasp_settings(effective_profile, profile_name)
     settings = replace(
         settings, max_grasp_candidates=len(case.candidates),
-        pregrasp_search="batch_all", align_before_approach=True, deduplicate_pregrasp=True,
+        pregrasp_search="first_successful_batch", align_before_approach=True, deduplicate_pregrasp=True,
     )
     output.mkdir(parents=True, exist_ok=True)
     body, position, normal = _selection_geometry(case)
@@ -196,7 +196,8 @@ def plan_observed_bowl_grasp_stages(
         "candidate_parameters": target["candidate_parameters"],
         "generated_candidate_count": len(case.candidates),
         "pregrasp_search": settings.pregrasp_search,
-        "selection_stop_condition": "joint_state_rank_then_full_prefix_and_lift_feasibility",
+        "selection_stop_condition": "first_successful_ik_batch_then_checked_prefix",
+        "candidate_ranking_scope": "first_successful_pregrasp_batch",
         "pregrasp_request_reuse_scope": "single_grasp_selection_exact_request_except_id",
         "deduplicate_pregrasp": settings.deduplicate_pregrasp,
     }
@@ -240,6 +241,7 @@ def plan_observed_bowl_grasp_stages(
     reuse_count = sum(bool(row.get("result", {}).get("metrics", {}).get("request_reuse"))
                       for row in search_attempts)
     evidence.update(
+        ik_batch_screening=[row for row in selected.plan.attempts if row.get("stage") == "ik_batch_screening"],
         pregrasp_search_summary={
             "logical_requests": len(search_attempts),
             "backend_evaluated_requests": len(search_attempts) - reuse_count,

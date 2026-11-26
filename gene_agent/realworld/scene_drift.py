@@ -81,6 +81,18 @@ def compare_scene_drift(
                        ("pose_source_modes", "物体位姿来源")):
         if before.get(key) != after.get(key):
             failures.append(f"{label}已变化")
+    # “复用”必须指向同一份旧证据，不能只保持标签而替换锚点来源/时间。
+    refresh = after.get("perception_refresh") or {}
+    if refresh.get("retained_cabinet_anchor") is True:
+        old_anchor = before.get("microwave_root_anchor")
+        new_anchor = after.get("microwave_root_anchor")
+        if not old_anchor or old_anchor != new_anchor:
+            failures.append("复用的微波炉固定锚点或来源已变化")
+    old_records = (before.get("perception_refresh") or {}).get("object_observations", {})
+    new_records = refresh.get("object_observations", {})
+    for name in refresh.get("retained_object_ids", ()):
+        if not old_records.get(name) or old_records.get(name) != new_records.get(name):
+            failures.append(f"{name} 复用的原始观测来源已变化")
     for key, label in (("active_group", "活动臂"), ("world_frame", "世界坐标系")):
         if old_snapshot[key] != new_snapshot[key]:
             failures.append(f"{label}已变化")

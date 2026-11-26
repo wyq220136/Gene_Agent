@@ -207,3 +207,97 @@ def test_shared_cache_reuses_same_id_on_fallback_with_zero_duration():
     assert not first.success and not second.success
     assert len(planner.calls) == 1
     assert second.duration_s == 0 and second.metrics["request_reuse"]["source_request_id"] == req.request_id
+
+
+def batch_stop_settings():
+    return replace(settings(), pregrasp_search="first_successful_batch",
+                   max_grasp_candidates=300, deduplicate_pregrasp=True)
+
+
+def many_proposals(count=200):
+    return tuple(proposal(f"g{index:03d}", .2 + index * .001) for index in range(count))
+
+
+def test_first_successful_batch_stops_both_final_and_pregrasp_with_joint_limits_enabled():
+    planner = Planner()
+    generated = []
+    from gene_agent.skills.library.pick.planning import _legacy_pregrasp_targets
+    def targets(final, distance):
+        generated.append(final.matrix.copy())
+        return _legacy_pregrasp_targets(final, distance)
+    plan = GraspSkill().plan(planner, many_proposals(), context(), batch_stop_settings(),
+                             pregrasp_target_generator=targets)
+    batches = [batch for kind, batch in planner.calls if kind == "batch"]
+    assert [len(batch) for batch in batches] == [128, 128]
+    assert len(generated) == 6  # 只展开填满一批所需的 grasp，后续 122 个不生成。
+    assert plan.selected_candidate_id is not None
+    assert all(plan.stage(name).status == "planned" for name in ("pregrasp", "approach", "close"))
+    screens = {row["phase"]: row for row in plan.attempts if row["stage"] == "ik_batch_screening"}
+    assert screens["final_grasp_ik"]["checked_count"] == 128
+    assert screens["final_grasp_ik"]["remaining_count"] == 72
+    assert screens["pregrasp_ik"]["stopped_on_success"]
+    assert plan.stage("pregrasp").request.joint_target is not None
+
+
+def test_final_batch_search_continues_only_while_previous_batch_has_no_success():
+    class LateFinal(Planner):
+        def result(self, req):
+            result = super().result(req)
+            if req.request_id.endswith(":final_ik") and int(req.request_id[1:4]) < 128:
+                return replace(result, success=False, goal_state=None,
+                    failure=MotionFailure(MotionFailureKind.GOAL_IK_NO_SOLUTION, "无解"))
+            return result
+    planner = LateFinal()
+    plan = GraspSkill().plan(planner, many_proposals(130), context(), batch_stop_settings())
+    batches = [batch for kind, batch in planner.calls if kind == "batch"]
+    assert [len(batch) for batch in batches] == [128, 2, 46]
+    assert plan.selected_candidate_id in {"g128", "g129"}
+
+
+def test_pregrasp_batch_with_only_rejected_postures_does_not_bypass_joint_limits():
+    class LatePosture(Planner):
+        def result(self, req):
+            result = super().result(req)
+            if ":pregrasp_ik_" in req.request_id and int(req.request_id[1:4]) < 6:
+                return replace(result, goal_state=JointState(("j1",), (3.,)))
+            return result
+    planner = LatePosture()
+    plan = GraspSkill().plan(planner, many_proposals(), context(), batch_stop_settings())
+    batches = [batch for kind, batch in planner.calls if kind == "batch"]
+    assert [len(batch) for batch in batches] == [128, 128, 128]
+    assert int(plan.selected_candidate_id[1:]) >= 6
+    assert any(row["stage"] == "pregrasp_posture_check" and not row["result"]["success"]
+               for row in plan.attempts)
+
+
+def test_failed_paths_in_successful_batch_do_not_resume_later_ik_batches():
+    class NoPaths(Planner):
+        def plan(self, req):
+            result = super().plan(req)
+            if req.operation is MotionOperation.PLAN:
+                return replace(result, success=False, trajectory=None,
+                    failure=MotionFailure(MotionFailureKind.PATH_NOT_FOUND, "无路径"))
+            return result
+    planner = NoPaths()
+    plan = GraspSkill().plan(planner, many_proposals(), context(), batch_stop_settings())
+    assert plan.selected_candidate_id is None
+    assert [len(batch) for kind, batch in planner.calls if kind == "batch"] == [128, 128]
+    assert any(row["stage"] == "ik_batch_screening" and row["phase"] == "pregrasp_ik"
+               and row["stopped_on_success"] for row in plan.attempts)
+
+
+def test_partial_final_batch_evidence_is_reused_without_another_final_search():
+    from gene_agent.motion.model import motion_request_from_dict, motion_result_from_dict
+    planner = Planner()
+    proposals = many_proposals()
+    first = GraspSkill().plan(planner, proposals, context(), batch_stop_settings())
+    evidence = tuple((motion_request_from_dict(row["request"]), motion_result_from_dict(row["result"]))
+                     for row in first.attempts if row["stage"] == "final_grasp_ik")
+    calls_before = len(planner.calls)
+    second = GraspSkill().plan(planner, proposals, context(), batch_stop_settings(), final_ik_evidence=evidence)
+    assert second.selected_candidate_id is not None
+    assert not any(req.request_id.endswith(":final_ik")
+                   for _, batch in planner.calls[calls_before:] for req in batch)
+    screen = next(row for row in second.attempts if row["stage"] == "ik_batch_screening"
+                  and row["phase"] == "final_grasp_ik")
+    assert screen["reused_evidence"] and screen["backend_batch_count"] == 0

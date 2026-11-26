@@ -619,9 +619,12 @@ def test_door_only_refreshes_at_entry_contact_motion_and_post_contact(prepared_n
     _, angles, _ = scope.consume(_partial_observation(record, {setup.MICROWAVE}, door=.2))
     assert angles["door"]["angle_rad"] == pytest.approx(.2)
     assert scope.selected_sessions(record["sessions"]) == {}
+    _, retained_angles, _ = scope.consume(_partial_observation(record, set(), frame=2))
+    assert retained_angles["door"]["angle_rad"] == pytest.approx(.2)
+    assert retained_angles["door"]["observed_at_unix_ms"] == angles["door"]["observed_at_unix_ms"]
     scope.after_door_phase("pregrasp")
     assert scope.selected_sessions(record["sessions"]) == {}
-    for frame, phase in enumerate(("pull_0", "post_contact", "push_1", "door_complete", "failure"), 2):
+    for frame, phase in enumerate(("pull_0", "post_contact", "push_1", "door_complete", "failure"), 3):
         scope.after_door_phase(phase)
         assert set(scope.selected_sessions(record["sessions"])) == {setup.MICROWAVE}
         value, angles, _ = scope.consume(_partial_observation(record, {setup.MICROWAVE}, frame=frame, door=.3))
@@ -675,7 +678,8 @@ def test_transition_runs_no_object_estimation_and_rejects_unknown_scope(prepared
         scope.begin_operation("unknown")
 
 
-def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_knob, tmp_path, monkeypatch):
+@pytest.mark.parametrize("operation", ["pick_bowl", "open_door"])
+def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_knob, tmp_path, monkeypatch, operation):
     import time
     from gene_agent.motion.model import JointState
     from gene_agent.realworld.microwave import scene
@@ -691,9 +695,9 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
                         "captured_at_unix_ms":time.time()*1000.})
         return folder
     def track(**kw):
-        assert set(kw["sessions"]) == {setup.BOWL}
+        assert set(kw["sessions"]) == ({setup.BOWL} if operation == "pick_bowl" else {setup.MICROWAVE})
         from dataclasses import replace
-        return replace(_partial_observation(record,{setup.BOWL},frame=ticks[-1]),
+        return replace(_partial_observation(record,set(kw["sessions"]),frame=ticks[-1]),
                        timestamp_ms=time.time()*1000.)
     class Robot:
         def __init__(self, side): self.side=side
@@ -719,17 +723,22 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
             "accepted_support_size_xyz_m":[*assets["support"]["size_xy_m"],assets["support"]["height_m"]],
             "accepted_support_center_xy_local_m":assets["support"]["center_xy_local_m"],
             "accepted_table_thickness_m":assets["table_thickness_m"],"active_group":"right"})
-    observer.begin_operation("pick_bowl")
+    observer.begin_operation(operation)
     first,second=observer(),observer()
     for value in (first,second):
         provenance=value["provenance"]
         assert provenance["all_objects_same_frame"] is False
-        assert provenance["live_state"]["door"]["observed_at_unix_ms"] == 0.
-        assert provenance["live_state"]["door"]["observed"] is False
-        assert provenance["pose_source_modes"][setup.MICROWAVE] == "retained_operation_state"
+        assert provenance["live_state"]["door"]["observed_at_unix_ms"] == first["provenance"]["live_state"]["door"]["observed_at_unix_ms"]
+        assert provenance["live_state"]["door"].get("observed", True) is (operation == "open_door" and value is first)
+        assert provenance["pose_source_modes"][setup.MICROWAVE] == "verified_stationary_anchor"
         assert any(row["body_name"].startswith("microwave") for row in value["snapshot"]["records"])
         assert any(row["body_name"]=="bowl" for row in value["snapshot"]["records"])
     assert second["provenance"]["source_frame_number"] > first["provenance"]["source_frame_number"]
+
+    from gene_agent.realworld.scene_drift import compare_scene_drift, SceneDriftLimits
+    checked = compare_scene_drift(first, second, limits=SceneDriftLimits(.005,.15,.02,.005,.05))
+    assert checked.status == "pass", checked.reason
+    assert second["provenance"]["perception_refresh"]["retained_cabinet_anchor"] is True
 
 
 def test_guard_forwards_operation_and_door_phase_hooks():

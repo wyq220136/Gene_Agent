@@ -103,3 +103,37 @@ def test_raw_door_angle_change_is_not_hidden_by_planning_grid():
     result = compare_scene_drift(planned, current, limits=LIMITS)
     assert result.status == "fail"
     assert result.evidence["articulated_angle_error_rad"]["door_angle_rad"] > .05
+
+
+def _retained_anchor_pair():
+    planned, current = _scene(10), _scene(11)
+    for scene in (planned, current):
+        p = scene["provenance"]
+        p["pose_source_modes"] = {"Microwave/Microwave_0": "verified_stationary_anchor"}
+        p["microwave_root_anchor"] = dict(source="fixed-frame-10", verified_at_unix_ms=1010.,
+                                          T_world_scene_asset=np.eye(4).tolist())
+        p["perception_refresh"] = dict(retained_cabinet_anchor=True,
+            retained_object_ids=["Microwave/Microwave_0"], object_observations={
+                "Microwave/Microwave_0": dict(frame_number=10, observed_at_unix_ms=1010., source="pose-10.json")})
+    return planned, current
+
+
+def test_same_anchor_retention_passes_but_changed_source_does_not():
+    planned, current = _retained_anchor_pair()
+    assert compare_scene_drift(planned, current, limits=LIMITS).status == "pass"
+    current["provenance"]["microwave_root_anchor"]["source"] = "different-source"
+    result = compare_scene_drift(planned, current, limits=LIMITS)
+    assert result.status == "fail" and "固定锚点" in result.reason
+
+
+def test_retained_observation_cannot_replace_original_measurement():
+    planned, current = _retained_anchor_pair()
+    current["provenance"]["perception_refresh"]["object_observations"]["Microwave/Microwave_0"]["frame_number"] = 9
+    result = compare_scene_drift(planned, current, limits=LIMITS)
+    assert result.status == "fail" and "原始观测来源" in result.reason
+
+
+def test_source_type_change_is_still_rejected():
+    planned, current = _retained_anchor_pair()
+    current["provenance"]["pose_source_modes"]["Microwave/Microwave_0"] = "same_frame"
+    assert compare_scene_drift(planned, current, limits=LIMITS).status == "fail"

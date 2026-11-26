@@ -70,6 +70,17 @@ def _finite_scalar(value: float, *, name: str) -> float:
     return number
 
 
+def _object_pose_source_modes(object_ids, anchor_record, refresh):
+    """来源身份与本轮是否刷新分开；复用固定锚点不改变其来源类型。"""
+    retained = set((refresh or {}).get("retained_object_ids", ()))
+    return {
+        name: ("verified_stationary_anchor"
+               if name == "Microwave/Microwave_0" and anchor_record is not None
+               else "retained_operation_state" if name in retained else "same_frame")
+        for name in object_ids
+    }
+
+
 def build_observed_collision_scene(
     observed: ObservedScene, *, T_world_sdk: np.ndarray,
     T_perception_object_scene_asset: Mapping[str, np.ndarray],
@@ -264,11 +275,8 @@ def build_observed_collision_scene(
         "source_camera_id": observed.camera_id,
         "source_side": observed.side,
         "source_paths": source_paths,
-        "pose_source_modes": {
-            name: ("verified_stationary_anchor" if name == "Microwave/Microwave_0"
-                   and anchor_record is not None else "same_frame")
-            for name in aligned
-        },
+        "pose_source_modes": _object_pose_source_modes(
+            aligned, anchor_record, observed.perception_refresh),
         "microwave_root_anchor": anchor_record,
         "perception_refresh": observed.perception_refresh,
         "all_objects_same_frame": not bool(observed.perception_refresh),
@@ -474,9 +482,6 @@ def build_live_microwave_collision_scene(
         source = result["provenance"]
         source["claim"] = "当前机器人实测状态、当前操作对象与明确来源的静态复用状态；非全部对象同帧"
         source["perception_refresh"] = refresh
-        for name in refresh["retained_object_ids"]:
-            if name in source["pose_source_modes"]:
-                source["pose_source_modes"][name] = "retained_operation_state"
         source["live_state"]["claim"] = "未刷新的对象、关节和固定柜体沿用原来源及时间；不代表当前帧测量"
     output = Path(scene_parameters["output_dir"]).resolve()
     (output / "observed_scene_provenance.json").write_text(

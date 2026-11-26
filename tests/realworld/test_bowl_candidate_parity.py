@@ -114,7 +114,8 @@ def test_real_afford_candidates_bypass_simulation_geometry_filter(tmp_path, monk
     displayed = real.build_observed_bowl_grasp_proposals(scene)["proposals"]
     assert [p.candidate_id for p in displayed] == [p.candidate_id for p in real_proposals]
     assert real_settings.max_grasp_candidates == 160
-    assert real_settings.pregrasp_search == "batch_all"
+    assert real_settings.pregrasp_search == "first_successful_batch"
+    assert real_settings.deduplicate_pregrasp is True
     assert real_settings.align_before_approach is True
     assert real_seed == sim_seed == 123
     assert report["generated_candidate_count"] == 160

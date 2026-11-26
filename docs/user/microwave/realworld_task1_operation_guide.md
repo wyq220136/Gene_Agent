@@ -467,13 +467,13 @@ TCP限高至实测桌面上方50–70 mm后再派生pregrasp。IK、碰撞、关
 
 ### 抓碗筛选的停止条件与请求复用
 
-真机 `pick_bowl` 当前使用 `batch_all` 和 `align_before_approach=True`：先做最终抓取IK，再展开可达候选的pregrasp分支，按关节状态指标排序并尝试pregrasp路径、接近段和后续抬升可行性。`first_valid_prefix`是共享Skill支持的可选策略，不是当前真机入口的生效配置；以本轮candidate_selection.json中的pregrasp_search和selection_stop_condition为准。
+真机 `pick_bowl` 默认使用 `first_successful_batch`：最终 grasp IK 与 pregrasp IK 都按最多 128 个逻辑请求分批求解，发现首个包含可用候选的成功批次就停止后续批次。pregrasp 的关节行程门槛继续有效；整批没有通过现有门槛的候选才尝试下一批。后续 pregrasp 请求按需生成，不提前穷举。已命中去重缓存的请求不会再次进入 cuRobo。
 
-4 档深度（15、25、28、30 mm）来自 `data/task_1/realworld/pick_bowl.json` 的 AffordToolAct 真机配置。它们与 8 方位、5 倾角共生成 160 个抓取候选；这些是备选范围，不表示必须求解所有 pregrasp 和路径。此次保留全部几何备选及碰撞、关节行程和直线接近约束。
+截止后仅在已经检查的候选中做排序和轨迹规划，pregrasp、原位对齐、直线 approach、碰撞和预测 lift 仍须通过原有检查，才可交给执行流程。若首个可用批次内不能生成合格前缀，正常失败，不继续求解后续 IK 批次，也不另启水平入口搜索。只有原批筛完全没有可用 pregrasp 时才保留既有水平 fallback；fallback 复用原最终 IK 证据。是否真机发令仍由 `--execute --yes` 控制。
 
-完全相同的 pregrasp IK / 路径请求在进入 cuRobo 前去重，成功或失败都可在本轮筛选内复用。比较包含目标矩阵、起始关节、场景快照、碰撞策略、种子、规划模式等全部请求字段，只排除追踪 ID，不对位姿取整；新一轮规划或上下文变化不会沿用旧结果。复用的失败仅表示沿用这次求解结论，不证明目标绝对不可达。
+4 档深度（15、25、28、30 mm）与 8 方位、5 倾角仍生成 160 个原始候选，作为备选范围。找到成功批次后未检查的候选会记为未到达，不记作失败，也不宣称已全部求解。
 
-运行命令不变，使用本节的首段预检命令及新的 `OUT` 即可。`candidate_selection.json` / `selection.json` 中的 `pregrasp_search`、`selection_stop_condition` 和 `pregrasp_search_summary` 记录策略、实际展开候选数、逻辑请求数、后端计算数及复用数。`plan.attempts[].result.metrics.request_reuse` 标明来源 `source_request_id`；复用结果的 `duration_s` 为 0，原始耗时保存在 `source_duration_s`。`motion_requests/` 仅记录实际送入后端的请求；未展开阶段在候选索引的 `not_reached` 中标明，不算规划失败。
+运行命令不变，使用新的 `OUT`。`selection.json` 中 `pregrasp_search`、`selection_stop_condition`、`candidate_ranking_scope` 和 `ik_batch_screening` 记录实际策略、检查数、剩余数/提前截止及批次数；`pregrasp_search_summary` 记录实际后端计算/复用数。完整相同上下文的成功和失败结果仍可复用，复用耗时为 0，原始求解耗时另行保留。
 
 ### 7.2 完整 Task1 plan_only 与预览视频
 
@@ -630,7 +630,7 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 
 ### 请求与碰撞资产复用
 
-真机当前 `batch_all` 筛选启用 `deduplicate_pregrasp=True`，不改变全局关节排序、显式关节目标、原位对齐和 lift 可行性检查。pregrasp IK/路径请求只在全部求解字段相同（追踪 ID 除外）时复用；成功和失败均缓存，水平入口 fallback 共享本次缓存，复用耗时为 0。新现场、起点、目标、seed、策略、关节目标变化会形成不同请求。运行命令不变。
+真机当前 `first_successful_batch` 筛选启用 `deduplicate_pregrasp=True`，保留已检查批次内部的关节排序、显式关节目标、原位对齐和 lift 可行性检查。pregrasp IK/路径请求只在全部求解字段相同（追踪 ID 除外）时复用；成功和失败均缓存，水平入口 fallback 共享本次缓存，复用耗时为 0。新现场、起点、目标、seed、策略、关节目标变化会形成不同请求。运行命令不变。
 
 collision mesh 在本任务内以内容地址复用 OBJ；strict/contact/预测场景分别保存自己的位姿，不重复导出同一局部几何。文件哈希结合 dev/inode/size/mtime_ns/ctime_ns 与 inode 变更事件核对；同大小改写、恢复 mtime、替换和缺失都会使复用失效。监测不可用（例如 inotify 配额耗尽）时安全重读，不只靠时间戳命中，不要求修改主机参数；重读确认内容相同后仍跳过重复 OBJ 序列化和写盘。读取中变化会拒绝复用。所有缓存随任务释放。baseline 入口也有任务内资产/哈希缓存。
 

@@ -43,10 +43,10 @@ class GraspSettings:
             raise ValueError("max_grasp_candidates 至少为 1")
         if self.candidate_selection not in {"plan_candidate", "legacy_ik"}:
             raise ValueError("candidate_selection 只支持 plan_candidate 或 legacy_ik")
-        if self.pregrasp_search not in {"batch_all", "first_valid_prefix"}:
-            raise ValueError("pregrasp_search 只支持 batch_all 或 first_valid_prefix")
-        if self.pregrasp_search == "first_valid_prefix" and self.candidate_selection != "legacy_ik":
-            raise ValueError("first_valid_prefix 需要 legacy_ik 的局部姿态候选")
+        if self.pregrasp_search not in {"batch_all", "first_valid_prefix", "first_successful_batch"}:
+            raise ValueError("pregrasp_search 只支持 batch_all、first_valid_prefix 或 first_successful_batch")
+        if self.pregrasp_search != "batch_all" and self.candidate_selection != "legacy_ik":
+            raise ValueError("提前截止模式需要 legacy_ik 的局部姿态候选")
         if (self.max_pregrasp_joint_travel_rad is not None
                 and (not np.isfinite(float(self.max_pregrasp_joint_travel_rad))
                      or float(self.max_pregrasp_joint_travel_rad) <= 0)):
