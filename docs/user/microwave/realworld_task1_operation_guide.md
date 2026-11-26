@@ -467,7 +467,7 @@ TCP限高至实测桌面上方50–70 mm后再派生pregrasp。IK、碰撞、关
 
 ### 抓碗筛选的停止条件与请求复用
 
-真机 `pick_bowl` 默认使用 `first_valid_prefix`：最终抓取 IK 保留单次批筛；随后沿原候选顺序逐个展开抓取候选，每个最多 17 个 pregrasp IK 分支，在该候选内部仍按关节行程排序。只要 pregrasp 路径和直线 approach 都通过现有检查，就立即采用，不继续展开其他抓取候选；仅 IK 成功不会触发截止。路径失败或关节行程检查未通过时继续尝试。
+真机 `pick_bowl` 当前使用 `batch_all` 和 `align_before_approach=True`：先做最终抓取IK，再展开可达候选的pregrasp分支，按关节状态指标排序并尝试pregrasp路径、接近段和后续抬升可行性。`first_valid_prefix`是共享Skill支持的可选策略，不是当前真机入口的生效配置；以本轮candidate_selection.json中的pregrasp_search和selection_stop_condition为准。
 
 4 档深度（15、25、28、30 mm）来自 `data/task_1/realworld/pick_bowl.json` 的 AffordToolAct 真机配置。它们与 8 方位、5 倾角共生成 160 个抓取候选；这些是备选范围，不表示必须求解所有 pregrasp 和路径。此次保留全部几何备选及碰撞、关节行程和直线接近约束。
 
@@ -645,3 +645,12 @@ OUT=runs/realworld/task1_no_knob_$(date +%Y%m%d-%H%M%S)
 - 各阶段计划、SDK 执行结果、人工确认和异常 traceback。
 
 反馈问题时提供实际命令、解释器和上述输出目录，不要只提交最后一行异常。
+
+
+### 候选筛选与 AffordToolAct 对齐（2026-11-26）
+
+真机先生成8方位×5倾角×4深度=160个Bowl候选，按SDK -X优先、-Y其次排序；保留AffordToolAct的桌面净空50～70mm限高。候选进入规划前不再调用仿真base_side_bowl_proposals，不以45～70度桌面夹角、近基座侧、仿真接触支点半径/高度/切向容差或双指跨沿条件硬删候选。仿真自己的筛选不变。
+
+这只对齐候选输入；后续仍检查最终抓取IK、pregrasp IK与关节状态排序、碰撞路径、接近段以及抬升可行性。碰撞模式沿用原运行配置，未改变任何碰撞开关。若仍无可执行候选，查看candidate_selection.json与candidate_diagnostics.json区分生成数、几何过滤后数量及规划阶段失败，不能把生成有160候选当作抓取成功。
+
+离线同一历史有效场景：旧筛选160→0，其中112个候选角度在45～70度之外；新入口160→160。该证据不代表本次尚未同步的现场失败已完成真机回归。

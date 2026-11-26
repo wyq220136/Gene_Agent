@@ -19,12 +19,11 @@ from scipy.spatial.transform import Rotation
 
 from gene_agent.tasks.policies.microwave_task.planning.bowl import PickBowlCase, prepare_grasp_stage_snapshots
 from gene_agent.tasks.policies.microwave_task.planning.grasp import (
-    active_arm_base_reference, base_side_bowl_proposals, bowl_grasp_geometry_metrics,
+    active_arm_base_reference, legacy_bowl_proposals, bowl_grasp_geometry_metrics,
     plan_bowl_grasp_stages,
 )
 from gene_agent.tasks.policies.microwave_task.planning.bowl_candidates import (
-    BOWL_AUTO_GRASP_PROFILE, BOWL_GRASP_TABLE_ANGLE_RANGE_DEG,
-    BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
+    BOWL_AUTO_GRASP_PROFILE,
 )
 from .bowl_candidates import observed_bowl_candidates
 from gene_agent.knowledge.geometry import validate_pose
@@ -46,19 +45,13 @@ _ROOT = Path(__file__).resolve().parents[3]
 _PROFILE_PATH = _ROOT / "data/task_1/skills/skill_profiles.json"
 
 
-def _affordtoolact_simulation_filtered_proposals(case, position, normal):
-    """保留 AffordToolAct TCP 定义，仅套用与其坐标语义兼容的仿真筛选。
+def _affordtoolact_proposals(case):
+    """保留已按SDK -X/-Y排序的全部候选，不套用仿真接触代理阈值。
 
-    AffordToolAct 的 TCP 原点包含指长补偿，且 +Z 方向与仿真候选的接触轴
-    符号不同，因此不使用仿真生成器专属的接触高度和外向轴硬阈值；桌面
-    45°~70°、近基座侧、碗沿半径及双指跨沿条件仍由同一筛选器检查。
+    observed_bowl_candidates 已按 AffordToolAct 生成、排序和限高。
+    此处仅转换数据结构；可达性、碰撞、路径和后续抬升由规划层检验。
     """
-    return base_side_bowl_proposals(
-        case.candidates, object_pose_world=case.bowl_pose,
-        base_position_world=position, table_normal_world=normal,
-        min_external_approach_alignment=-1.0,
-        rim_height_tolerance_m=0.03,
-    )
+    return legacy_bowl_proposals(case.candidates)
 
 
 def _bowl_target(collision_scene: Mapping) -> dict:
@@ -121,12 +114,9 @@ def _selection_geometry(case):
 
 
 def build_observed_bowl_grasp_proposals(collision_scene: Mapping) -> dict:
-    """生成 AffordToolAct 160 候选，再应用仿真抓碗几何约束。"""
+    """保留 AffordToolAct 的全部160候选及SDK方向优先级。"""
     case, target = _observed_case(collision_scene, ".")
-    _, position, normal = _selection_geometry(case)
-    target["proposals"] = _affordtoolact_simulation_filtered_proposals(
-        case, position, normal,
-    )
+    target["proposals"] = _affordtoolact_proposals(case)
     return target
 
 
@@ -180,16 +170,20 @@ def plan_observed_bowl_grasp_stages(
         "input_state_id": target["collision_snapshot_sha256"],
         "bowl_pose_world": case.bowl_pose.tolist(),
         "candidate_generation_order_policy": target["candidate_parameters"]["candidate_order_policy"],
-        "candidate_order_policy": "affordtoolact_8x5x4_then_simulation_geometry_ranking",
+        "candidate_order_policy": target["candidate_parameters"]["candidate_order_policy"],
         "right_arm_base_reference_body": body,
         "right_arm_base_position_world": position.tolist(),
         "grasp_table_angle_definition": "acute angle(TCP +Z, actual scene_table plane)",
-        "grasp_table_angle_constraint_enabled": True,
-        "grasp_table_angle_allowed_deg": list(BOWL_GRASP_TABLE_ANGLE_RANGE_DEG),
-        "grasp_table_angle_preferred_deg": BOWL_GRASP_PREFERRED_TABLE_ANGLE_DEG,
-        "simulation_geometry_pruning_enabled": True,
+        "grasp_table_angle_constraint_enabled": False,
+        "grasp_table_angle_allowed_deg": None,
+        "grasp_table_angle_preferred_deg": None,
+        "simulation_geometry_pruning_enabled": False,
         "geometry_filter_compatibility": {
-            "enabled": ["base_side", "table_angle_45_70", "rim_radius", "finger_rim_straddle"],
+            "enabled": [],
+            "disabled_simulation_only": [
+                "base_side", "table_angle_45_70", "rim_radius",
+                "finger_rim_straddle", "rim_height", "contact_tangent",
+            ],
             "affordtoolact_specific": [
                 "external_axis_sign_not_hard_filtered",
                 "tcp_origin_finger_length_height_compensation",
@@ -199,16 +193,15 @@ def plan_observed_bowl_grasp_stages(
         "candidate_parameters": target["candidate_parameters"],
         "generated_candidate_count": len(case.candidates),
         "pregrasp_search": settings.pregrasp_search,
-        "selection_stop_condition": "simulation_joint_state_rank_then_full_prefix_and_lift_feasibility",
+        "selection_stop_condition": "joint_state_rank_then_full_prefix_and_lift_feasibility",
         "pregrasp_request_reuse_scope": None,
     }
     evidence_path = output / "candidate_selection.json"
     from gene_agent.feedback.realworld_diagnostics import write_candidate_inventory
     from gene_agent.motion.recording import current_motion_recording
-    ordered_proposals = _affordtoolact_simulation_filtered_proposals(
-        case, position, normal,
-    )
+    ordered_proposals = _affordtoolact_proposals(case)
     evidence["geometry_filtered_candidate_count"] = len(ordered_proposals)
+    evidence["geometry_rejected_candidate_count"] = len(case.candidates) - len(ordered_proposals)
     candidate_order = [item.candidate_id for item in ordered_proposals]
     inventory_ref = write_candidate_inventory(output, case.candidates, candidate_order=candidate_order)
     evidence["candidate_diagnostics_ref"] = str(inventory_ref)
@@ -218,7 +211,7 @@ def plan_observed_bowl_grasp_stages(
             collision_scene, case.candidates, target["candidate_parameters"], effective_profile, seed)
     try:
         selected = plan_bowl_grasp_stages(
-            case, settings, seed=seed, enforce_table_angle=True,
+            case, settings, seed=seed, enforce_table_angle=False,
             proposals=ordered_proposals,
         )
     except Exception as error:

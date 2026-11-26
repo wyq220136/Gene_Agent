@@ -146,3 +146,21 @@ def test_explicit_proposals_skip_only_geometry_and_still_prepare_collision(monke
             case, SimpleNamespace(max_grasp_candidates=160, open_width_m=.041),
             proposals=grasp.legacy_bowl_proposals(candidates), enforce_table_angle=False,
         )
+
+
+def test_live_selection_keeps_all_candidates_from_old_zero_candidate_case():
+    from gene_agent.realworld.microwave.pick_planning import _affordtoolact_proposals
+    bowl = np.asarray(FAILURE_BOWL_POSES[1])
+    candidates, _ = observed_bowl_candidates(_scene(), bowl, pose_source="frozen_observation")
+    # 同一历史初态在旧真机仿真过滤中160→0；新入口应保持全部候选及原顺序。
+    with pytest.raises(ValueError, match="没有满足"):
+        grasp.base_side_bowl_proposals(
+            candidates, object_pose_world=bowl, base_position_world=np.zeros(3),
+            table_normal_world=np.array([0., 0., 1.]),
+            min_external_approach_alignment=-1., rim_height_tolerance_m=.03,
+        )
+    proposals = _affordtoolact_proposals(SimpleNamespace(candidates=candidates))
+    assert len(proposals) == 160
+    assert [p.candidate_id for p in proposals] == [c["candidate_id"] for c in candidates]
+    for candidate, proposal in zip(candidates, proposals):
+        np.testing.assert_array_equal(candidate["T_world_tcp"], proposal.tcp_pose_world)

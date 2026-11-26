@@ -1,4 +1,4 @@
-"""冻结同一场景：真机保留 AffordToolAct 生成，并复用仿真后续筛选。"""
+"""冻结同一场景：真机保留 AffordToolAct 候选，仿真继续使用其几何筛选。"""
 
 import json
 from pathlib import Path
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("dx,dy,yaw_deg", [(0., 0., 0.), (.07, -.03, 35.), (-.03, .06, -60.)])
-def test_real_afford_generation_then_simulation_geometry_filter(tmp_path, monkeypatch, dx, dy, yaw_deg):
+def test_real_afford_candidates_bypass_simulation_geometry_filter(tmp_path, monkeypatch, dx, dy, yaw_deg):
     config = json.loads((ROOT / "config/scenes/task_1.json").read_text())
     bowl = np.array(config["objects"]["bowl"]["simulation_nominal_pose"], dtype=float)
     bowl[:2, 3] += [dx, dy]
@@ -62,6 +62,7 @@ def test_real_afford_generation_then_simulation_geometry_filter(tmp_path, monkey
         _, base = grasp.active_arm_base_reference(current)
         if proposals is None:
             assert len(seen) == 0
+            assert enforce_table_angle is True
             proposals = grasp.base_side_bowl_proposals(
                 current.candidates, object_pose_world=current.bowl_pose,
                 base_position_world=base,
@@ -70,8 +71,9 @@ def test_real_afford_generation_then_simulation_geometry_filter(tmp_path, monkey
             )
         else:
             assert len(current.candidates) == 160
-            assert len(proposals) == 32
-        assert enforce_table_angle is True
+            assert len(proposals) == 160
+            assert enforce_table_angle is False
+            assert [p.candidate_id for p in proposals] == [c["candidate_id"] for c in current.candidates]
         seen.append((current.candidates, proposals, settings, seed))
         return SimpleNamespace(
             plan=UnselectedPlan(), proposals=proposals,
@@ -94,7 +96,7 @@ def test_real_afford_generation_then_simulation_geometry_filter(tmp_path, monkey
     real_candidates, real_proposals, real_settings, real_seed = seen[1]
     assert len(sim_candidates) == len(case.candidates) == 48
     assert len(real_candidates) == 160
-    assert len(real_proposals) == 32
+    assert len(real_proposals) == 160
     reopened = load_pick_bowl_case(case.output_dir)
     for expected, displayed, loaded in zip(sim_candidates, case.candidates, reopened.candidates):
         assert displayed["candidate_id"] == loaded["candidate_id"] == expected["candidate_id"]
@@ -116,19 +118,26 @@ def test_real_afford_generation_then_simulation_geometry_filter(tmp_path, monkey
     assert real_settings.align_before_approach is True
     assert real_seed == sim_seed == 123
     assert report["generated_candidate_count"] == 160
-    assert report["geometry_filtered_candidate_count"] == 32
-    assert report["grasp_table_angle_constraint_enabled"] is True
-    assert report["grasp_table_angle_allowed_deg"] == [45., 70.]
-    assert report["grasp_table_angle_preferred_deg"] == 55.
-    assert report["simulation_geometry_pruning_enabled"] is True
+    assert report["geometry_filtered_candidate_count"] == 160
+    assert report["grasp_table_angle_constraint_enabled"] is False
+    assert report["grasp_table_angle_allowed_deg"] is None
+    assert report["grasp_table_angle_preferred_deg"] is None
+    assert report["simulation_geometry_pruning_enabled"] is False
     assert {item.parameters["depth_m"] for item in real_proposals} == {.015, .025, .028, .03}
+    angles = []
     for item in real_proposals:
         metrics = grasp.bowl_grasp_geometry_metrics(
             item, object_pose_world=case.bowl_pose,
             base_position_world=grasp.active_arm_base_reference(case)[1],
             table_normal_world=case.data.geom("scene_table").xmat.reshape(3, 3)[:, 2],
         )
-        assert 45. - 1e-9 <= metrics["table_angle_deg"] <= 70. + 1e-9
+        angles.append(metrics["table_angle_deg"])
+    assert any(angle > 70. for angle in angles)
+    evidence = json.loads((tmp_path / "real/candidate_selection.json").read_text())
+    assert evidence["simulation_geometry_pruning_enabled"] is False
+    assert evidence["grasp_table_angle_constraint_enabled"] is False
+    assert evidence["geometry_filtered_candidate_count"] == 160
+    assert evidence["geometry_rejected_candidate_count"] == 0
     assert len(report["candidate_parameters"]["candidate_targets"]) == 160
     assert len(report["candidate_parameters"]["profile_sha256"]) == 64
     np.testing.assert_array_equal(case.data.qpos, frozen_qpos)
