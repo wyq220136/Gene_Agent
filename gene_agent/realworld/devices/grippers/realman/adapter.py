@@ -42,7 +42,7 @@ class RealmanGripperAdapter:
                     action="位置控制")
 
     def read_width_m(self) -> float:
-        """读取 SDK `actpos`，按同一最大开口换算成米。"""
+        """用夹爪专用状态接口读取 actpos；反馈和指令均限0～1000。"""
         value = self.sdk.rm_get_gripper_state()
         if isinstance(value, tuple):
             code, state = value
@@ -51,7 +51,8 @@ class RealmanGripperAdapter:
             state = value
         position = float(state["actpos"])
         if not math.isfinite(position) or not 0.0 <= position <= 1000.0:
-            raise ValueError("RealMan 返回的夹爪位置无效")
+            raise ValueError(f"RealMan 返回的夹爪位置无效: actpos={position!r}, "
+                             f"反馈要求有限且在 [0, 1000]; raw={value!r}")
         return position / 1000.0 * self.max_width_m
 
     def grasp(self, *, speed: float = 1.0, force: float = 0.5,

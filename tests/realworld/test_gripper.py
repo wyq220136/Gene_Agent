@@ -339,3 +339,24 @@ def test_realman_connection_uses_old_sdk_handshake_and_owns_disconnect():
     connection.close()
     connection.close()
     assert sdk.deleted == 1
+
+
+@pytest.mark.parametrize("position", [0, 500, 1000])
+def test_gripper_feedback_and_command_use_original_scale(position):
+    sdk = FakeGripperSdk()
+    sdk.position = position
+    gripper = RealmanGripperAdapter(sdk, max_width_m=.08)
+    width = gripper.read_width_m()
+    assert width == pytest.approx(position / 1000 * .08)
+    assert not sdk.calls
+    gripper.command_width_m(width)
+    assert sdk.calls == [("position", position, True, 3)]
+
+
+@pytest.mark.parametrize("position", [-1, 1001, 1003, 1500, float("nan"), float("inf")])
+def test_gripper_feedback_outside_original_range_rejected(position):
+    sdk = FakeGripperSdk()
+    sdk.position = position
+    with pytest.raises(ValueError, match="1000"):
+        RealmanGripperAdapter(sdk, max_width_m=.08).read_width_m()
+    assert not sdk.calls

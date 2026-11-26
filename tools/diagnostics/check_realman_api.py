@@ -20,6 +20,7 @@ def parser():
     p.add_argument('--delta-deg', type=float, default=0.5, help='有符号角度，绝对值 0.2～1 度')
     p.add_argument('--gripper-step', type=int, default=5, help='有符号 SDK 行程，绝对值 1～10；正值张开')
     p.add_argument('--output', type=Path, default=None)
+    p.add_argument('--samples', type=int, default=1, help='只读采样轮数，1～20；各轮间隔0.5秒')
     return p
 
 
@@ -28,6 +29,8 @@ def validate(args):
     ipaddress.IPv4Address(args.ip)
     if not 1 <= args.port <= 65535:
         raise ValueError('端口越界')
+    if not 1 <= args.samples <= 20 or (args.action != 'read' and args.samples != 1):
+        raise ValueError('samples 必须为1～20，多轮采样仅用于 read 模式')
     if args.action != 'read' and not args.execute:
         raise ValueError('运动模式必须显式提供 --execute')
     if args.action == 'read' and args.execute:
@@ -51,7 +54,7 @@ class Probe:
         self.save()  # 下发之前记录意图，异常退出也能定位最后一个 API。
         try:
             value = getattr(self.sdk, name)(*args)
-            row['raw'] = value
+            row['raw'] = {'id': value.id} if name == 'rm_create_robot_arm' else value
             print(f'{name}: {value!r}', flush=True)
             return value
         except BaseException as exc:
@@ -63,7 +66,8 @@ class Probe:
     def query(self, name):
         value = self.call(name)
         if not isinstance(value, tuple) or len(value) != 2 or value[0] != 0:
-            raise ValueError(f'{name} 返回失败或格式异常: {value!r}')
+            hint = '（SDK 数据解析失败；随附数值不可作为实测状态）' if isinstance(value, tuple) and value and value[0] == -3 else ''
+            raise ValueError(f'{name} 返回失败或格式异常{hint}: {value!r}')
         return value[1]
 
     def joints(self):
@@ -77,15 +81,25 @@ class Probe:
         # SDK 返回成功不等于末端夹爪在线/可用。
         if not isinstance(state, dict):
             raise ValueError(f'夹爪状态格式无效: {state!r}')
-        for key, expected in [('status', 1), ('enable', 1), ('error', 0)]:
+        # API2 Python 的字段为 enable_state；旧 JSON 协议使用 enable。
+        enable_key = 'enable_state' if 'enable_state' in state else 'enable'
+        if 'enable_state' in state and 'enable' in state and state['enable_state'] != state['enable']:
+            raise ValueError(f'夹爪使能字段冲突; raw={state!r}')
+        for key, expected in [('status', 1), (enable_key, 1), ('error', 0)]:
             if state.get(key) != expected:
                 raise ValueError(f'夹爪 {key}={state.get(key)!r}，期望 {expected}; raw={state!r}')
         position = state.get('actpos')
         if isinstance(position, bool) or not isinstance(position, (float, int)) or not math.isfinite(position) or not 0 <= position <= 1000:
-            raise ValueError(f'夹爪 actpos 无效，范围应为 0～1000; raw={state!r}')
+            raise ValueError(f'夹爪 actpos 无效，反馈范围应为 0～1000; raw={state!r}')
         return state
 
     def command(self, name, *args):
+        # 接收反馈范围独立于指令范围，防止返程误下发1003等反馈值。
+        if name == 'rm_set_gripper_position':
+            target = args[0]
+            if (isinstance(target, bool) or not isinstance(target, (int, float))
+                    or not math.isfinite(target) or not 0 <= target <= 1000):
+                raise ValueError(f'夹爪位置指令必须在 [0, 1000]: {target!r}')
         code = self.call(name, *args)
         if code != 0:
             raise RuntimeError(f'{name} 失败: {code!r}')
@@ -118,7 +132,8 @@ def run(args, sdk):
     output = args.output or Path(__file__).resolve().parents[2] / 'runs/tmp/realman_api' / time.strftime('%Y%m%d-%H%M%S') / f'{args.group}-{time.time_ns()}.json'
     output.parent.mkdir(parents=True, exist_ok=True)
     report = {'group': args.group, 'ip': args.ip, 'action': args.action,
-              'options': vars(args), 'status': 'running', 'calls': [], 'checks': {}}
+              'options': vars(args), 'status': 'running', 'calls': [], 'checks': {},
+              'schema_version': 3, 'samples': [], 'metadata': {}}
     probe = Probe(sdk, report, output)
     connected, moving = False, False
     try:
@@ -127,13 +142,27 @@ def run(args, sdk):
         if getattr(handle, 'id', -1) <= 0:
             raise RuntimeError(f'连接失败: handle_id={getattr(handle, "id", None)}')
         connected = True
-        for label, query in [('joints', probe.joints), ('gripper', probe.gripper),
-                             ('arm_state', lambda: probe.query('rm_get_current_arm_state'))]:
-            try:
-                report['checks'][label] = {'ok': True, 'value': query()}
-            except Exception as exc:
-                report['checks'][label] = {'ok': False, 'error': str(exc)}
-        if not all(c['ok'] for c in report['checks'].values()):
+        # 版本采集为辅助证据；缺少该接口不会覆盖主要状态检查结果。
+        for name in ['rm_api_version', 'rm_get_arm_software_info']:
+            if callable(getattr(sdk, name, None)):
+                try:
+                    report['metadata'][name] = probe.call(name)
+                except Exception as exc:
+                    report['metadata'][name] = {'error': repr(exc)}
+        for sample_index in range(args.samples):
+            checks = {}
+            report['samples'].append({'index': sample_index, 'checks': checks})
+            for label, query in [('joints', probe.joints), ('gripper', probe.gripper)]:
+                try:
+                    checks[label] = {'ok': True, 'value': query()}
+                except Exception as exc:
+                    checks[label] = {'ok': False, 'error': str(exc)}
+            if sample_index == 0:
+                report['checks'] = checks  # 保留旧报告入口，详细结果见 samples。
+            probe.save()
+            if sample_index + 1 < args.samples:
+                time.sleep(.5)
+        if not all(c['ok'] for sample in report['samples'] for c in sample['checks'].values()):
             raise RuntimeError('初始状态检查失败；详细原始返回见 calls，不发送运动')
         if args.action == 'joint':
             start = probe.joints()

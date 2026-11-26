@@ -433,7 +433,10 @@ def build_live_microwave_collision_scene(
             width = float(overrides[group])
             source = "confirmed_execution_endpoint"
         else:
-            width = float(grippers[group].read_width_m())
+            try:
+                width = float(grippers[group].read_width_m())
+            except (ValueError, RuntimeError) as exc:
+                raise ValueError(f"{group} 夹爪状态读取失败: {exc}") from exc
             source = "sdk_live_read"
         if not math.isfinite(width) or width < 0:
             raise ValueError(f"{group} 夹爪开口必须是非负有限米数")
