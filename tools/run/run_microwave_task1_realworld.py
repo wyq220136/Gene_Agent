@@ -626,16 +626,26 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                           )}
                 return connect_realman(config["robot_ips"][side], **kwargs)
 
-            connections = {
-                side: stack.enter_context(connect_side(side))
-                for side in ("left", "right")
-            }
+            # 抓碗前第一条夹爪操作直接设800，不以初始开口/场景检测为前提。
+            # 已持碗的插入/取出/放置流程不自动改变夹爪。
+            prepare_right = execute and subtask in {"pick_bowl", "load_bowl"}
+            connections = {}
+            if prepare_right:
+                from gene_agent.realworld.microwave.gripper_preparation import prepare_right_gripper
+                connections["right"] = stack.enter_context(connect_side("right"))
+                prepare_right_gripper(connections["right"].gripper, output_dir=output)
+            for side in ("left", "right"):
+                if side not in connections:
+                    connections[side] = stack.enter_context(connect_side(side))
         except Exception as error:
             (output / "entry_result.json").write_text(json.dumps({
                 "schema_version": 1, "status": "failed", "success": False,
                 "site_config_sha256": config["source_sha256"],
                 "failure": {
-                    "code": "connection_failed",
+                    "code": ("right_gripper_preparation_failed"
+                             if (output / "right_gripper_preparation.json").exists()
+                             and json.loads((output / "right_gripper_preparation.json").read_text())["status"] == "failed"
+                             else "connection_failed"),
                     "message": f"{type(error).__name__}: {error}",
                     "traceback": traceback.format_exc(),
                 },
