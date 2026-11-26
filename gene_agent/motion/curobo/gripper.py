@@ -60,9 +60,9 @@ def _transform(position,rotation):
 
 def _source_config(group):
     from pathlib import Path
-    import yaml
+    from .config_io import load_robot_yaml
     path=Path(__file__).resolve().parents[3]/f'assets/robots/realman/config/realman_{group}.yml'
-    return yaml.safe_load(path.read_text()),hashlib.sha256(path.read_bytes()).hexdigest()
+    return load_robot_yaml(path)
 
 
 def _legacy_tool_spheres_tcp(group,robot_metadata,spheres):

@@ -62,12 +62,15 @@ def _scene_structure(snapshot: dict) -> list[dict]:
     return result
 
 
-def _scene_pose_digest(snapshot: dict) -> str:
+def _scene_pose_digest(snapshot: dict, *, exact: bool = False) -> str:
     """对实际送入 cuRobo 的 world pose 签名，不依赖可选诊断 records。"""
     rows = []
     for kind, obstacles in sorted(snapshot["scene_model"].items()):
         for name, raw in sorted(obstacles.items()):
             rows.append({"kind": kind, "name": name, "pose": raw.get("pose")})
+    if exact:
+        from .reusable import exact_digest
+        return exact_digest(rows)
     return _digest(rows)
 
 
@@ -114,7 +117,8 @@ def _geometry_reuse_settings(settings):
 
 
 def _planner_key(settings: dict, snapshot: dict, planner_options: dict,
-                 *, reuse_gripper_geometry: bool = False, reuse_contact_policy: bool = False) -> str:
+                 *, reuse_gripper_geometry: bool = False, reuse_contact_policy: bool = False,
+                 exact: bool = False) -> str:
     # 完整有效 robot_config 覆盖 Pika lock_joints；只看 collision sphere
     # 哈希会漏掉不同夹爪开口对应的锁定关节值。
     identity_settings = dict(_geometry_reuse_settings(settings) if reuse_gripper_geometry else settings)
@@ -145,6 +149,9 @@ def _planner_key(settings: dict, snapshot: dict, planner_options: dict,
         "scene_scope": snapshot.get("scope"),
         "mounting_contact_policy": {} if reuse_contact_policy else snapshot.get("mounting_contact_policy") or {},
     }
+    if exact:
+        from .reusable import exact_digest
+        return exact_digest(identity)
     return _digest(identity)
 
 
@@ -187,6 +194,7 @@ class CuroboPlannerPool:
         self.reuse_contact_policy = bool(reuse_contact_policy and getattr(planner_factory, "supports_contact_policy_update", False))
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
         self._stage_owner = None
+        self._optimization_owner = None
 
     def __enter__(self):
         return self
@@ -210,6 +218,11 @@ class CuroboPlannerPool:
     def acquire(self, settings: dict, snapshot: dict, **planner_options) -> PlannerLease:
         if self._stage_owner is not None:
             raise RuntimeError("pool已有活跃stage，不能在阶段中切换共享求解器")
+        from .optimization import current_optimization
+        owner = current_optimization()
+        if owner is not self._optimization_owner:
+            self.clear()
+            self._optimization_owner = owner
         started = time.perf_counter()
         mode = resolve_collision_mode(planner_options.get("collision_mode", snapshot.get("collision_mode")))
         if mode is CollisionMode.ROBOT_ONLY:
@@ -219,12 +232,16 @@ class CuroboPlannerPool:
             planner_options = {**planner_options, "collision_mode": mode.value}
         key = _planner_key(settings, snapshot, planner_options,
                            reuse_gripper_geometry=self.reuse_gripper_geometry,
-                           reuse_contact_policy=self.reuse_contact_policy)
+                           reuse_contact_policy=self.reuse_contact_policy, exact=owner is not None)
         gripper_id = (settings.get("gripper_snapshot") or {}).get("snapshot_id")
         held_digest = hashlib.sha256(json.dumps(settings.get("held_object"),sort_keys=True,allow_nan=False).encode()).hexdigest()
-        pose_digest = _scene_pose_digest(snapshot)
+        pose_digest = _scene_pose_digest(snapshot, exact=owner is not None)
         policy = snapshot.get("mounting_contact_policy") or {}
-        policy_digest = _digest(policy)
+        if owner is not None:
+            from .reusable import exact_digest
+            policy_digest = exact_digest(policy)
+        else:
+            policy_digest = _digest(policy)
         entry = self._entries.get(key)
         if entry is not None:
             self._entries.move_to_end(key)
@@ -326,6 +343,14 @@ class CuroboPlannerPool:
             self._dispose(entry.planner)
 
 
+def _session_planner(**settings):
+    from .optimization import current_optimization, create_planner
+    return (create_planner if current_optimization() is not None else SynchronousPlanner)(**settings)
+
+
+_session_planner.supports_contact_policy_update = True
+
+
 class CuroboPlanningSession:
     """应用装配入口；每次只绑定一个冻结stage，复用原有有界pool。"""
 
@@ -341,7 +366,7 @@ class CuroboPlanningSession:
             raise ValueError("显式session碰撞模式与外层motion配置冲突")
         self._owns_pool = planner_pool is None
         self._pool = planner_pool if planner_pool is not None else CuroboPlannerPool(
-            planner_factory=SynchronousPlanner, max_entries=max_entries)
+            planner_factory=_session_planner, max_entries=max_entries)
         self._closed = False
         self._active = None
 

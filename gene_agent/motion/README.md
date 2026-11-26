@@ -1,5 +1,7 @@
 # Skill 怎样调用运动规划
 
+真机微波炉 cuRobo 的复用优化范围、对照开关和离线验收见[提速说明](../../docs/developer/motion/curobo_performance_optimization.md)；该模式不改变任务动作或 perception 流程，也不等同于真机性能验收。
+
 写新Skill从本页开始。推荐使用 `StageMotion`，它绑定本阶段的关节起点、场景、
 seed和模式，返回已有 `MotionResult`。所有规划都不下发机械臂或夹爪命令。
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from gene_agent.motion.curobo.scene import planner_scene_options
+from gene_agent.motion.curobo.optimization import create_planner
 
 from dataclasses import dataclass
 import json
@@ -284,7 +285,8 @@ def run_pick_bowl_planning(
     settings = load_realman_motion_config(
         "right", metadata["robot"], gripper_snapshot=snapshot.get("gripper_snapshot")
     )
-    planner = SynchronousPlanner(
+    planner = create_planner(
+        _baseline_factory=SynchronousPlanner,
         **settings,
         **planner_scene_options(snapshot),
         planner_mode=PlannerMode.CUDA_GRAPH_BENCHMARK,
@@ -405,7 +407,8 @@ def plan_pick_bowl_candidate(
         "right", case.metadata["robot"],
         gripper_snapshot=snapshot.get("gripper_snapshot"),
     )
-    planner = SynchronousPlanner(
+    planner = create_planner(
+        _baseline_factory=SynchronousPlanner,
         **settings,
         **planner_scene_options(snapshot),
         planner_mode=PlannerMode.CUDA_GRAPH_BENCHMARK,

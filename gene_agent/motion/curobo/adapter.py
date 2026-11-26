@@ -158,7 +158,8 @@ class CuroboPlannerAdapter:
         }
         for key in ("collision_mode", "environment_collision_enabled", "planning_attachment_enabled",
                     "self_collision_check", "collision_verification", "start_state_check",
-                    "planner_cache", "timing", "pivot_path_metrics"):
+                    "planner_cache", "timing", "pivot_path_metrics", "optimization_mode",
+                    "ik_batch_capacity"):
             if key in raw:
                 metrics[key] = raw[key]
         if raw.get("linear_path_metrics") is not None:

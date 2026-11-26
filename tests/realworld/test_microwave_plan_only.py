@@ -188,6 +188,8 @@ def test_live_entry_reads_once_and_never_constructs_runtime(observed_scene, tmp_
         calls.append("observe")
         return observed_scene
     def plan(scene, **kwargs):
+        from gene_agent.motion.curobo.optimization import current_optimization
+        assert current_optimization() is not None
         assert scene is observed_scene
         calls.append("plan")
         return {"status":"planned","success":True,"task_success":None}
@@ -204,6 +206,8 @@ def test_live_entry_reads_once_and_never_constructs_runtime(observed_scene, tmp_
     assert result["status"]=="planned"
     assert calls.count("observe")==1 and calls.count("plan")==1
     assert ("close","left") in calls and ("close","right") in calls
+    optimization = json.loads((tmp_path / 'live_preview/planning_optimization.json').read_text())
+    assert optimization['mode'] == 'single_reuse' and optimization['closed']
 
 
 def test_shared_hold_geometry_accepts_prediction_without_physical_success(observed_scene, tmp_path):

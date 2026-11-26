@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from gene_agent.motion.curobo.scene import planner_scene_options
+from gene_agent.motion.curobo.optimization import create_planner
 from gene_agent.motion.configuration import CollisionMode, resolve_collision_mode
 
 import json
@@ -395,7 +396,8 @@ def plan_bowl_grasp_stages(
         settings = load_realman_motion_config(
             "right", robot, gripper_snapshot=stage_snapshot.get("gripper_snapshot"),
         )
-        planner = SynchronousPlanner(
+        planner = create_planner(
+            _baseline_factory=SynchronousPlanner,
             **settings, **planner_scene_options(stage_snapshot),
             planner_mode=PlannerMode.CUDA_GRAPH_BENCHMARK, random_seed=seed,
         )
@@ -475,7 +477,8 @@ def run_pick_bowl_skill_planning(case: PickBowlCase, *, seed: int = 123) -> dict
         attached_settings = load_realman_motion_config(
             "right", robot, gripper_snapshot=attached_scene.get("gripper_snapshot"),
         )
-        attached_planner = SynchronousPlanner(
+        attached_planner = create_planner(
+            _baseline_factory=SynchronousPlanner,
             **attached_settings,
             **planner_scene_options(attached_scene),
             attachment_spheres_tool=attachment["spheres_link_m"],

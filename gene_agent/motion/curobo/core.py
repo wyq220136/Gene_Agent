@@ -14,11 +14,11 @@ from typing import Sequence
 
 import numpy as np
 from scipy.spatial.transform import Rotation
-import yaml
 
 from ..path_metrics import measure_linear_tcp_path, measure_pivot_tcp_path
 from ..configuration import CollisionMode, resolve_collision_mode, collision_mode_metadata
 from .approximate import ApproximateIKBudget, plan_with_approximate_ik
+from .config_io import load_robot_yaml
 
 from ..model import (
     JointState as MotionJointState,
@@ -149,7 +149,7 @@ def load_realman_motion_config(group: str, robot_metadata: dict, *, gripper_snap
                     link_from_tcp=robot_metadata["transforms"][group]["link_from_tcp"],
                     tool_frame="link_7")
     asset = ROOT / "assets/robots/realman"
-    config = yaml.safe_load((asset / "config" / f"realman_{group}.yml").read_text())
+    config, _ = load_robot_yaml(asset / "config" / f"realman_{group}.yml")
     kin = config["kinematics"]
     kin["urdf_path"] = str(asset / "urdf" / f"realman_{group}.urdf")
     kin["asset_root_path"] = str(asset / "urdf")
@@ -544,6 +544,8 @@ class SynchronousPlanner:
         self.link_from_tcp = np.asarray(link_from_tcp, float)
         self.tool_frame = tool_frame
         self.scene_model = copy.deepcopy(scene_model)
+        from .world_update import mesh_content_hashes
+        self._scene_mesh_hashes = mesh_content_hashes(self.scene_model)
         self.diagnostic_output_dir = (
             Path(diagnostic_output_dir).resolve()
             if diagnostic_output_dir is not None else
@@ -670,10 +672,13 @@ class SynchronousPlanner:
         policy = copy.deepcopy(mounting_contact_policy or {})
         if policy != self.mounting_contact_policy:
             raise ValueError("mounting contact policy 改变必须先调用 update_contact_policy 或重建 planner")
-        from .world_update import pose_updates, apply_pose_updates
-        updates = pose_updates(self.scene_model, scene_model)
+        from .world_update import pose_updates, mesh_content_hashes
+        current_mesh_hashes = mesh_content_hashes(scene_model)
+        updates = pose_updates(self.scene_model, scene_model,
+                               previous_mesh_hashes=getattr(self, '_scene_mesh_hashes', {}),
+                               current_mesh_hashes=current_mesh_hashes)
         if updates is not None:
-            from curobo.types import Pose
+            from .batch_world import apply_batch
             names = {name for objects in scene_model.values() for name in objects}
             worlds = []
             for solver in (self._planner, self._ik, *self._ik_batches.values()):
@@ -685,7 +690,7 @@ class SynchronousPlanner:
                 body = set(policy.get("obstacle_names", []))
                 for label, world in self._validator.checkers.items():
                     worlds.append((world, body if label == "body" else names - body))
-            apply_pose_updates(worlds, updates, Pose.from_list)
+            apply_batch(worlds, updates)
         else:
             from curobo._src.geom.types import SceneCfg
             scene_cfg = SceneCfg.create(copy.deepcopy(scene_model))
@@ -693,6 +698,7 @@ class SynchronousPlanner:
                 if solver is not None:
                     solver.update_world(scene_cfg)
         self.scene_model = copy.deepcopy(scene_model)
+        self._scene_mesh_hashes = current_mesh_hashes
         self.scene_scope = str(scene_scope)
         self.scene_snapshot_sha256 = str(scene_snapshot_sha256)
         from .gripper import gripper_result_metadata
@@ -1963,6 +1969,10 @@ class SynchronousPlanner:
             diagnostic_label=diagnostic_label,
         )
 
+    def _ik_batch_capacity(self, count):
+        """基线保持原批次；复用引擎只覆盖图容量，不改变真实候选。"""
+        return count
+
     def solve_ik_batch(
         self,
         joint_names,
@@ -1989,6 +1999,7 @@ class SynchronousPlanner:
             raise ValueError("diagnose_failures 必须是布尔值或 when_no_success")
         started = time.perf_counter()
         count = len(targets)
+        batch_count = self._ik_batch_capacity(count)
         common = dict(
             **self.gripper_metadata, operation="ik", joint_names=self.joint_names,
             scene_scope=self.scene_scope,
@@ -1996,7 +2007,7 @@ class SynchronousPlanner:
             planner_mode=self.planner_mode.value,
             use_cuda_graph=self.runtime_options["use_cuda_graph"],
             random_seed=self.random_seed,
-            batch_size=count,
+            batch_size=count, ik_batch_capacity=batch_count,
         )
         try:
             from contextlib import nullcontext
@@ -2019,6 +2030,7 @@ class SynchronousPlanner:
 
             common["start_state_check"] = start_check
             goals = [self._goal(target, target_frame) for target in targets]
+            goals.extend([goals[-1]] * (batch_count - count))
             goal = GoalToolPose(
                 tool_frames=goals[0].tool_frames,
                 position=self.torch.cat([item.position for item in goals], dim=0),
@@ -2026,27 +2038,27 @@ class SynchronousPlanner:
             )
             start = self._state(joint_names, positions)
             batch_start = JointState.from_position(
-                start.position.expand(count, -1).clone(),
+                start.position.expand(batch_count, -1).clone(),
                 joint_names=self.planner_joint_names,
             )
-            if count not in self._ik_batches:
-                self._ik_batches[count] = InverseKinematics(InverseKinematicsCfg.create(
+            if batch_count not in self._ik_batches:
+                self._ik_batches[batch_count] = InverseKinematics(InverseKinematicsCfg.create(
                     robot=copy.deepcopy(self.robot_config), scene_model=self.scene_model,
                     collision_cache=self.collision_cache,
                     optimizer_collision_activation_distance=self.optimizer_collision_activation_distance,
                     self_collision_check=True, num_seeds=16,
-                    max_batch_size=count, **self.runtime_options,
+                    max_batch_size=batch_count, **self.runtime_options,
                 ))
-            solver = self._ik_batches[count]
+            solver = self._ik_batches[batch_count]
             with optimizer_mounting_mask(solver.kinematics, self.mounting_contact_policy) if self._validator else nullcontext():
                 raw = solver.solve_pose(goal, current_state=batch_start)
             self.torch.cuda.synchronize()
 
-            success = raw.success.detach().cpu().numpy().reshape(count, -1)[:, 0].astype(bool)
-            feasible = raw.feasible.detach().cpu().numpy().reshape(count, -1)[:, 0].astype(bool)
-            position_error = raw.position_error.detach().cpu().numpy().reshape(count, -1)[:, 0]
-            rotation_error = raw.rotation_error.detach().cpu().numpy().reshape(count, -1)[:, 0]
-            solutions = self._solution_positions(raw.js_solution).reshape(count, -1, len(self.joint_names))[:, 0]
+            success = raw.success.detach().cpu().numpy().reshape(batch_count, -1)[:count, 0].astype(bool)
+            feasible = raw.feasible.detach().cpu().numpy().reshape(batch_count, -1)[:count, 0].astype(bool)
+            position_error = raw.position_error.detach().cpu().numpy().reshape(batch_count, -1)[:count, 0]
+            rotation_error = raw.rotation_error.detach().cpu().numpy().reshape(batch_count, -1)[:count, 0]
+            solutions = self._solution_positions(raw.js_solution).reshape(batch_count, -1, len(self.joint_names))[:count, 0]
             if not all(np.all(np.isfinite(values)) for values in (position_error, rotation_error, solutions)):
                 raise ValueError("cuRobo batch IK 返回非有限解或误差")
             # 后处理在同一调用内完成，避免逐候选 Python/GPU 往返。

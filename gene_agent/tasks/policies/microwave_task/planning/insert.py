@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from gene_agent.motion.curobo.scene import planner_scene_options
+from gene_agent.motion.curobo.optimization import create_planner
 
 import json
 from pathlib import Path
@@ -109,7 +110,8 @@ def _planner(
     config = load_realman_motion_config(
         "right", robot, gripper_snapshot=snapshot["gripper_snapshot"],
     )
-    raw = SynchronousPlanner(
+    raw = create_planner(
+        _baseline_factory=SynchronousPlanner,
         **config, **planner_scene_options(snapshot),
         attachment_spheres_tool=sphere_link_m,
         planner_mode=PlannerMode.CUDA_GRAPH_BENCHMARK, random_seed=seed,

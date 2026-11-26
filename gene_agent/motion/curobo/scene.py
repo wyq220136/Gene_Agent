@@ -194,6 +194,15 @@ def _pose_list(transform):
 
 
 def _mesh_for_geom(model, geom_id, margin=0.0):
+    from .optimization import current_optimization
+    owner = current_optimization()
+    if owner is not None:
+        from .scene_mesh_cache import cached_mesh
+        return cached_mesh(owner, model, geom_id, margin, _build_mesh_for_geom)
+    return _build_mesh_for_geom(model, geom_id, margin)
+
+
+def _build_mesh_for_geom(model, geom_id, margin=0.0):
     """读取编译后 mesh 局部顶点，不能再应用源 STL 的 scale/mesh pose。
 
     MuJoCo 已把 mesh 的质心/主轴变换合并到 geom pose；data.geom_xmat 与

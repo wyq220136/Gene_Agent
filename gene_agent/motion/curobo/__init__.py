@@ -7,9 +7,11 @@ from .core import (
     summarize_ik_failure,
 )
 from .session import CuroboPlanningSession, CuroboPlannerPool
+from .optimization import create_planner, optimization_scope
 
 __all__ = [
     "CuroboPlanningSession", "CuroboPlannerPool",
+    "create_planner", "optimization_scope",
     "CuroboPlannerAdapter", "SynchronousPlanner", "add_attached_collision_spheres",
     "add_tcp_tool_frame", "classify_failure_detail", "classify_world_obstruction", "describe_start_failure",
     "empty_solver_result", "load_realman_motion_config", "ordered_positions",

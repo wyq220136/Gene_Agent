@@ -257,6 +257,9 @@ def capture_request_context(planner, request, snapshot):
         held_object=planner.held_object,attachment_spheres_tool=planner.attachment_spheres_tool,
         planner_mode=planner.planner_mode.value,random_seed=planner.random_seed,
         collision_mode=planner.collision_mode.value)
+    optimization = getattr(planner, 'optimization_mode', 'baseline')
+    if optimization != 'baseline':
+        replay.update(optimization_mode=optimization, planner_variant='v2')
     from pathlib import Path
     if planner.collision_mode.value == "robot_only":
         replay["robot_protection_scene"] = planner.scene_model
@@ -343,13 +346,26 @@ def save_planning_request(planner, requests, results, snapshot, output, *, invoc
     return path
 
 
+def _replay_backend(bundle):
+    """复用请求仍用相同的球布局和批次容量离线重放。"""
+    config = dict(bundle['replay_config'])
+    mode = config.pop('optimization_mode', 'baseline')
+    variant = config.pop('planner_variant', None)
+    from .adapter import CuroboPlannerAdapter
+    if mode == 'single_reuse' and variant == 'v2':
+        from .reusable import ReusablePlanner
+        return lambda **settings: ReusablePlanner(settings), CuroboPlannerAdapter, config
+    if mode != 'baseline' or variant not in (None, 'v2'):
+        raise ValueError('未知规划器或优化模式，不能离线重规划')
+    from .core import SynchronousPlanner
+    return SynchronousPlanner, CuroboPlannerAdapter, config
+
+
 def replan_bundle(path, output, *, warm_repeats=1, allow_code_change=False):
     """离线真实cuRobo重规划；沿用原约束和adapter，绝不调用执行器/仿真。"""
     from pathlib import Path
     import traceback
     from gene_agent.feedback.motion_diagnostics import validate_diagnostic_bundle
-    from .core import SynchronousPlanner
-    from .adapter import CuroboPlannerAdapter
     if not isinstance(warm_repeats, int) or not 0 <= warm_repeats <= 5:
         raise ValueError('warm_repeats须在0到5之间')
     source = Path(path).resolve()
@@ -363,7 +379,7 @@ def replan_bundle(path, output, *, warm_repeats=1, allow_code_change=False):
     requests = [request_from_dict(r) for r in requests]
     if requests[0].to_dict() != bundle['request']:
         raise ValueError('batch首个请求与现场request不一致')
-    config=bundle['replay_config']
+    planner_type, adapter_type, config = _replay_backend(bundle)
     for request in requests:
         if request.seed != config.get('random_seed') or request.planner_mode.value != config.get('planner_mode'):
             raise ValueError('请求seed/mode与保存的solver配置不一致')
@@ -374,9 +390,9 @@ def replan_bundle(path, output, *, warm_repeats=1, allow_code_change=False):
         dependency_coverage='package_sources' if bundle.get('dependency_hashes') else 'legacy_module_only',attempts=[])
     planner=None
     try:
-        started=time.perf_counter();planner=SynchronousPlanner(**config)
+        started=time.perf_counter();planner=planner_type(**config)
         report['wrapper_setup_s']=time.perf_counter()-started
-        adapter=CuroboPlannerAdapter(planner,group=requests[0].group,scene_revision=requests[0].scene.revision)
+        adapter=adapter_type(planner,group=requests[0].group,scene_revision=requests[0].scene.revision)
         for index in range(warm_repeats+1):
             planner.reset_seed()
             started=time.perf_counter()
@@ -402,13 +418,13 @@ def recheck_bundle(path, output, *, budget_s=5.):
     from pathlib import Path
     from gene_agent.feedback.motion_diagnostics import validate_diagnostic_bundle
     from gene_agent.motion.model import MotionRequest, JointState, PoseTarget, PlanningSceneRef, CollisionPolicy, CollisionAllowance, PivotLimits
-    from .core import SynchronousPlanner
     source=json.loads(Path(path).read_text());bundle=source.get('diagnostic',source)
     if not bundle:raise ValueError('历史记录缺完整诊断现场；只允许摘要读取')
     validate_diagnostic_bundle(bundle,verify_environment=True)
     out=Path(output);out.mkdir(parents=True,exist_ok=False)
     request=request_from_dict(bundle['request'])
-    planner=SynchronousPlanner(**bundle['replay_config'])
+    planner_type, _, config = _replay_backend(bundle)
+    planner=planner_type(**config)
     try:
         result=collect_failure_diagnostics(planner,request,bundle.get('raw_failure',{}),bundle['snapshot'],DiagnosticOptions(budget_s=budget_s))
         result['source_bundle']=str(Path(path).resolve());result['mode']='offline_candidate_recheck_no_motion'

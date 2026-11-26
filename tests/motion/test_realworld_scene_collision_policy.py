@@ -9,7 +9,7 @@ import pytest
 ROOT=Path(__file__).resolve().parents[2]
 
 
-def _settings(tmp_path):
+def _settings(tmp_path, width=.041):
     import mujoco
     from gene_agent.robots import build_robot,set_gripper_width
     from gene_agent.motion.curobo.core import load_realman_motion_config
@@ -19,7 +19,7 @@ def _settings(tmp_path):
     q=json.loads((ROOT/'config/robots/realman_right_default_pose.json').read_text())['joints_rad']
     for name,value in zip(robot['joint_groups']['right'],q):
         data.qpos[model.joint(name).qposadr[0]]=value
-    set_gripper_width(model,data,robot,'right',.041); mujoco.mj_forward(model,data)
+    set_gripper_width(model,data,robot,'right',width); mujoco.mj_forward(model,data)
     gripper=export_gripper_snapshot(model,data,robot,'right')
     return load_realman_motion_config('right',robot,gripper_snapshot=gripper),q
 
@@ -55,8 +55,15 @@ def _table_scene(tmp_path):
     return settings,q,mounting,scene,spheres
 
 
-def test_gpu_realworld_policy_matches_afford_but_keeps_other_links_and_self(tmp_path):
-    from gene_agent.motion.curobo import SynchronousPlanner
+@pytest.fixture(params=['baseline', 'single_reuse'])
+def planner_factory(request):
+    from gene_agent.motion.curobo import create_planner, optimization_scope
+    with optimization_scope(request.param):
+        yield create_planner
+
+
+def test_gpu_realworld_policy_matches_afford_but_keeps_other_links_and_self(tmp_path, planner_factory):
+    SynchronousPlanner = planner_factory
     settings,q,mounting,scene,spheres=_table_scene(tmp_path)
     planner=SynchronousPlanner(**settings,scene_model=scene,scene_scope='offline table policy control',
                                mounting_contact_policy=mounting)
@@ -101,10 +108,10 @@ def test_gpu_realworld_policy_matches_afford_but_keeps_other_links_and_self(tmp_
         planner.close()
 
 
-def test_gpu_realworld_scene_ignore_preserves_base_self_collision(tmp_path):
+def test_gpu_realworld_scene_ignore_preserves_base_self_collision(tmp_path, planner_factory):
     torch=pytest.importorskip('torch');pytest.importorskip('curobo')
     if not torch.cuda.is_available():pytest.skip('需要 CUDA 碰撞检查')
-    from gene_agent.motion.curobo import SynchronousPlanner
+    SynchronousPlanner = planner_factory
     settings,_=_settings(tmp_path)
     # 固定的限位内姿态，碰撞对涉及 base_link/link_1；仅优化期屏蔽会漏掉它。
     q=[1.9743019106203237,1.3684246032280196,-.34805140807256807,2.317011780010832,
@@ -127,8 +134,8 @@ def test_gpu_realworld_scene_ignore_preserves_base_self_collision(tmp_path):
         planner.close()
 
 
-def test_gpu_realworld_policy_reaches_ik_and_trajectory_on_supported_curobo(tmp_path):
-    from gene_agent.motion.curobo import SynchronousPlanner
+def test_gpu_realworld_policy_reaches_ik_and_trajectory_on_supported_curobo(tmp_path, planner_factory):
+    SynchronousPlanner = planner_factory
     settings,q,mounting,scene,_=_table_scene(tmp_path)
     planner=SynchronousPlanner(**settings,scene_model=scene,scene_scope='offline full solver table control',
         mounting_contact_policy={**mounting,'scene_collision_ignore_links':['base_link','link_1']})
@@ -144,3 +151,70 @@ def test_gpu_realworld_policy_reaches_ik_and_trajectory_on_supported_curobo(tmp_
         assert planner._planner.trajopt_solver.config.interpolation_dt==.025
     finally:
         planner.close()
+
+
+def test_gpu_reuse_keeps_exact_geometry_and_buffers_across_attachment_and_world_updates(tmp_path):
+    torch = pytest.importorskip('torch')
+    pytest.importorskip('curobo')
+    if not torch.cuda.is_available():
+        pytest.skip('需要 CUDA 复用引擎')
+    import trimesh
+    from gene_agent.motion.curobo import SynchronousPlanner, create_planner, optimization_scope
+    from gene_agent.motion.curobo.core import add_tcp_tool_frame, add_attached_collision_spheres
+    settings, q = _settings(tmp_path)
+    closed, _ = _settings(tmp_path, width=.02)
+    mesh = tmp_path / 'a.obj'
+    trimesh.creation.box(extents=[.05]*3).export(mesh)
+    other_mesh = tmp_path / 'b.obj'
+    other_mesh.write_bytes(mesh.read_bytes())
+    scene = {'cuboid': {'a': {'dims': [.1]*3, 'pose': [10.,10.,10.,1.,0.,0.,0.]}},
+             'mesh': {'mesh': {'file_path': str(mesh), 'pose': [11.,10.,10.,1.,0.,0.,0.]}}}
+    options = dict(scene_model=scene, scene_scope='offline reuse',
+                   scene_snapshot_sha256='first',
+                   mounting_contact_policy={'scene_collision_ignore_links':['base_link','link_1']})
+    with optimization_scope('single_reuse') as owner:
+        a = create_planner(**settings, **options)
+        target = a.fk(a.joint_names, q)
+        # 两种真实批次共用容量25的图，返回数量和顺序仍与输入一致。
+        one = a.solve_ik_batch(a.joint_names, q, [target], diagnose_failures=False)
+        assert len(one) == 1 and one[0]['success'], one
+        solver = owner.engine._ik_batches[25]
+        unreachable = target.copy()
+        unreachable[0, 3] += 3.
+        two = a.solve_ik_batch(a.joint_names, q, [target, unreachable], diagnose_failures=False)
+        assert len(two) == 2 and [row['success'] for row in two] == [True, False], two
+        assert owner.engine._ik_batches[25] is solver
+        large = a.solve_ik_batch(a.joint_names, q, [target] * 26, diagnose_failures=False)
+        assert len(large) == 26 and all(row['success'] for row in large), large
+        assert all(row['batch_size'] == 26 and row['ik_batch_capacity'] == 119 for row in large)
+        pointers = owner.engine.buffers()
+        mesh_hashes = dict(owner.engine._scene_mesh_hashes)
+        spheres = [[0., 0., .12, .01]]
+        moved = deepcopy(scene)
+        moved['cuboid']['a']['pose'][0] += .1
+        moved['mesh']['mesh']['file_path'] = str(other_mesh)
+        moved['mesh']['mesh']['pose'][1] += .1
+        b = create_planner(**closed, **{**options, 'scene_model': moved,
+            'scene_snapshot_sha256': 'held'}, attachment_spheres_tool=spheres)
+        np.testing.assert_allclose(b.fk(b.joint_names, q), target, atol=1e-7)
+        expected = add_attached_collision_spheres(
+            add_tcp_tool_frame(closed['robot_config'], b.tool_frame, b.link_from_tcp),
+            b.tool_frame, spheres)
+        actual = owner.engine.robot_config['kinematics']['collision_spheres']
+        for link, rows in expected['kinematics']['collision_spheres'].items():
+            assert actual[link][:len(rows)] == rows
+        assert len(actual[b.tool_frame]) - len(expected['kinematics']['collision_spheres'][b.tool_frame]) == 31
+        assert owner.engine.buffers() == pointers
+        assert b._scene_mesh_hashes == mesh_hashes
+        # 同一场景的真实碰撞结果与未填充的基线一致，含attachment。
+        baseline = SynchronousPlanner(**closed, **{**options, 'scene_model': moved},
+                                      attachment_spheres_tool=spheres)
+        try:
+            assert b._configuration_validity([q]) == baseline._configuration_validity([q])
+        finally:
+            baseline.close()
+        # 切回无持物阶段必须恢复原球，保留已捕获图的地址。
+        assert a._start_configuration_check(q)['valid']
+        assert owner.engine.attachment_spheres_tool is None
+        assert owner.engine.buffers() == pointers
+        assert owner.created == 1

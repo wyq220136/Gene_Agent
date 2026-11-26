@@ -489,6 +489,26 @@ def _record_entry_errors(output: Path, site_config_sha256: str):
         raise
 
 
+@contextmanager
+def _planning_acceleration(config, output):
+    """只管理规划资源；不参与观测、阶段选择或机器人执行。"""
+    from gene_agent.motion.curobo.optimization import optimization_scope
+    compatible = (config["active_group"] == "right"
+                  and current_motion_config().collision_mode.value == "full")
+    mode = config.get("curobo_optimization") or ("single_reuse" if compatible else "baseline")
+    if mode == "single_reuse" and not compatible:
+        raise ValueError("single_reuse仅支持右臂full碰撞配置")
+    owner = None
+    try:
+        with optimization_scope(mode) as owner:
+            yield
+    finally:
+        payload = owner.to_dict() if owner is not None else {"mode": mode}
+        (output / "planning_optimization.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8")
+
+
 @configured_motion("config")
 def run_site(config: dict, *, subtask: str, output_dir: str | Path,
              execute: bool, prepare_held_bowl: bool = False, plan_only: bool = False) -> dict:
@@ -534,7 +554,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         "claim": "仅记录输入来源；设备连接、规划和实际执行需另看阶段报告",
     }, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     from gene_agent.realworld.microwave.scene import make_live_microwave_observer
-    from gene_agent.motion.curobo.core import SynchronousPlanner
+    from gene_agent.motion.curobo.optimization import create_planner
     from gene_agent.motion.curobo.session import CuroboPlannerPool
     from gene_agent.perception_modules.pose_est.pose_client import PoseClient
     from gene_agent.realworld.devices.arms.realman.connection import connect_realman
@@ -578,6 +598,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             metadata={"subtask": subtask, "execute": bool(execute),
                       "plan_only": bool(plan_only), "active_group": config["active_group"],
                       "motion": current_motion_config().to_dict()}))
+        stack.enter_context(_planning_acceleration(config, output))
         try:
             gripper_payload = json.loads(
                 Path(config["gripper_config"]).read_text(encoding="utf-8")
@@ -652,7 +673,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             )
 
         pool = CuroboPlannerPool(
-            planner_factory=lambda **kwargs: SynchronousPlanner(**kwargs),
+            planner_factory=create_planner,
             max_entries=6,
         )
         try:
@@ -730,6 +751,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-age-s", type=float, default=5., help="真实采集帧有效期；不刷新旧时间戳")
     parser.add_argument("--speed-scale", type=float, default=.1)
     parser.add_argument("--collision-mode", choices=("full", "robot_only"))
+    parser.add_argument("--curobo-optimization", choices=("baseline", "single_reuse"),
+                        help="默认右臂full碰撞复用任务内引擎；baseline用于性能对照")
+    parser.add_argument("--no-freeze-import-gc", action="store_true",
+                        help="关闭独立命令启动时的导入对象GC冻结")
     parser.add_argument("--diagnostic-mode", choices=("off", "on_failure"), default="on_failure",
                         help="默认补充失败 FK/约束证据；off 仍保留原始请求与候选清单")
     parser.add_argument("--diagnostic-budget-s", type=float, default=5., help="单次失败的诊断软预算，秒")
@@ -778,6 +803,7 @@ def main(argv: list[str] | None = None) -> int:
     from gene_agent.motion.curobo.diagnostics import DiagnosticOptions
     diagnostic_options = DiagnosticOptions(mode=args.diagnostic_mode, budget_s=args.diagnostic_budget_s)
     config["diagnostics"] = asdict(diagnostic_options)
+    config["curobo_optimization"] = args.curobo_optimization
     if args.check_config:
         print("配置检查通过：已从感知/标定产物自动装配；尚未验证在线相机、Pose session 或真机")
         return 0
@@ -789,10 +815,20 @@ def main(argv: list[str] | None = None) -> int:
               Path("runs/realworld") / (
                   f"{args.subtask}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
               ))
-    report = run_site(config, subtask=args.subtask,
-                      output_dir=output, execute=args.execute,
-                      prepare_held_bowl=args.prepare_held_bowl,
-                      **({"plan_only": True} if args.plan_only else {}))
+    from gene_agent.motion.curobo.bootstrap import curobo_import_gc_scope
+    bootstrap = None
+    bootstrap_output_available = not output.exists() or not any(output.iterdir())
+    try:
+        with curobo_import_gc_scope(enabled=not args.no_freeze_import_gc) as bootstrap:
+            report = run_site(config, subtask=args.subtask,
+                              output_dir=output, execute=args.execute,
+                              prepare_held_bowl=args.prepare_held_bowl,
+                              **({"plan_only": True} if args.plan_only else {}))
+    finally:
+        if bootstrap is not None and bootstrap_output_available and output.is_dir():
+            (output / "planning_bootstrap.json").write_text(
+                json.dumps(bootstrap, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8")
     video_failed = False
     if args.video:
         try:

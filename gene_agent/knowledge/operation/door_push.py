@@ -6,6 +6,8 @@ from gene_agent._compat import strict_zip
 
 from dataclasses import dataclass
 import math
+import pickle
+from functools import lru_cache
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -235,6 +237,39 @@ def _tip_rotation_xy_search_order(
 
 
 def generate_mode_door_push_candidate_sets(
+    closed_panel_pose_world: np.ndarray,
+    *,
+    panel_width_m: float,
+    panel_height_m: float,
+    panel_thickness_m: float,
+    axis: AxisSpec,
+    mode: str,
+    start_angle_rad: float,
+    target_angle_rad: float,
+    step_rad: float,
+    reference_origin_world: np.ndarray,
+    overrides: dict | None = None,
+) -> tuple[DoorPushCandidateSet, ...]:
+    """按完整输入缓存纯几何；返回副本，不缓存 IK、碰撞或实测状态。"""
+    payload = pickle.dumps((closed_panel_pose_world, dict(
+        panel_width_m=panel_width_m, panel_height_m=panel_height_m,
+        panel_thickness_m=panel_thickness_m, axis=axis, mode=mode,
+        start_angle_rad=start_angle_rad, target_angle_rad=target_angle_rad,
+        step_rad=step_rad, reference_origin_world=reference_origin_world,
+        overrides=overrides,
+    )), protocol=5)
+    return pickle.loads(_cached_mode_candidate_sets(payload))
+
+
+@lru_cache(maxsize=8)
+def _cached_mode_candidate_sets(payload: bytes) -> bytes:
+    # 只反序列化本进程生成的数据；动态门角和所有位姿逐字节参与身份。
+    panel, parameters = pickle.loads(payload)
+    result = _generate_mode_door_push_candidate_sets(panel, **parameters)
+    return pickle.dumps(result, protocol=5)
+
+
+def _generate_mode_door_push_candidate_sets(
     closed_panel_pose_world: np.ndarray,
     *,
     panel_width_m: float,
