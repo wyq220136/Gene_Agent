@@ -23,13 +23,14 @@ class Gripper:
         return self.width
 
 
-def test_command_precedes_every_read_and_confirms(tmp_path, monkeypatch):
-    monkeypatch.setattr(prep.time, 'sleep', lambda _: None)
+def test_command_does_not_read_or_claim_verified_endpoint(tmp_path):
     events = []
     report = prep.prepare_right_gripper(Gripper(events), output_dir=tmp_path)
-    assert events == ['command800', 'read']
-    assert report['status'] == 'confirmed'
-    assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'confirmed'
+    assert events == ['command800']
+    assert report['status'] == 'command_completed'
+    assert report['endpoint_verified'] is False
+    assert report['measured_end_width_m'] is None and report['readings'] == []
+    assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'command_completed'
 
 
 def test_command_failure_never_reads(tmp_path):
@@ -42,15 +43,19 @@ def test_command_failure_never_reads(tmp_path):
     assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'failed'
 
 
-def test_failed_confirmation_stops_without_retrying_command(tmp_path, monkeypatch):
-    clock = iter(range(20))
-    monkeypatch.setattr(prep.time, 'monotonic', lambda: next(clock))
-    monkeypatch.setattr(prep.time, 'sleep', lambda _: None)
+def test_init_never_reads_feedback_and_invalidates_old_endpoint(tmp_path):
+    class NoRead(Gripper):
+        confirmed_endpoint_width_m = .08
+        initial_observed_width_m = .08
+        def read_width_m(self):
+            pytest.fail("初始化800之后禁止追加反馈检查")
     events = []
-    with pytest.raises(ValueError, match="800"):
-        prep.prepare_right_gripper(Gripper(events, .08024), output_dir=tmp_path)
-    assert events.count('command800') == 1
-    assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'failed'
+    gripper = NoRead(events)
+    report = prep.prepare_right_gripper(gripper, output_dir=tmp_path)
+    assert events == ['command800']
+    assert report['status'] == 'command_completed'
+    assert gripper.confirmed_endpoint_width_m is None
+    assert gripper.initial_observed_width_m is None
 
 
 @pytest.mark.parametrize('subtask', (*SUBTASK_NAMES, 'all'))
@@ -63,7 +68,6 @@ def test_entry_prepares_before_left_connection_and_observer(tmp_path, monkeypatc
     prepare_held = subtask in {'insert_bowl', 'place_bowl_on_table'}
     config = load_site_config(path, subtask=subtask, execute=execute, no_knob=False,
                               prepare_held_bowl=prepare_held)
-    monkeypatch.setattr(prep.time, 'sleep', lambda _: None)
     @contextmanager
     def connect(ip, **kwargs):
         events.append('connect_' + kwargs['group'])
@@ -78,7 +82,7 @@ def test_entry_prepares_before_left_connection_and_observer(tmp_path, monkeypatc
         cli.run_site(config, subtask=subtask, output_dir=tmp_path/'run', execute=execute,
                      prepare_held_bowl=prepare_held)
     if execute:
-        assert events == ['connect_right', 'command800', 'read', 'connect_left', 'observer']
+        assert events == ['connect_right', 'command800', 'connect_left', 'observer']
     else:
         assert events == ['connect_left', 'connect_right', 'observer']
 

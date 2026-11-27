@@ -578,7 +578,7 @@ MUJOCO_GL=egl "$PY" "$PWD/tools/viewers/recording/record_skill_run_video.py" \
 
 ## 8. 真机执行
 
-所有带 `--execute --yes` 的任务入口，统一先将右夹爪设为 SDK 开口值 **800**，阻塞命令返回并单次读取反馈到位后再构建现场观测并进入任务。该动作不依赖发令前的夹爪开口读取，每次命令启动只执行一次；`all`、`load_bowl`、`unload_bowl` 内部子阶段不重复重置。初始化失败立即停止，记录见 `right_gripper_preparation.json`。仅预检或 `--plan-only` 不发送该命令。独立持物任务也先初始化，持物确认以初始化后的现场为准。
+所有带 `--execute --yes` 的任务入口，统一先将右夹爪设为 SDK 开口值 **800**，阻塞命令返回后直接构建现场观测并进入任务，不再追加actpos读取或800±10到位复核。该动作不依赖发令前的夹爪开口读取，每次命令启动只执行一次；`all`、`load_bowl`、`unload_bowl` 内部子阶段不重复重置。SDK命令失败立即停止；命令成功不代表已测量到位，记录见 `right_gripper_preparation.json`。仅预检或 `--plan-only` 不发送该命令。独立持物任务也先初始化，持物确认以初始化后的现场为准。
 
 
 现场确认急停、通信、初态和完整碰撞模型后，先测试单个子任务：
@@ -694,7 +694,7 @@ P0/P1/P2 已接入真机入口，原运行命令不变。批次容量、精确�
 
 ### 所有 sub-task 的夹爪终态交接
 
-`all` 与独立子任务统一使用公共真机 Runtime，按 AffordToolAct 的命令时序更新夹爪：每条命令仅下发一次，SDK 阻塞返回；力控抓取再等待配置的稳定期（默认 1.5 秒），随后单次读取 `rm_get_gripper_state` 的实际开口，写入 `measured_end_width_m`。不再连续三次稳定采样或轮询 mode。位置模式仍核对目标到位；力控开口以实际反馈为准，不等于规划闭合宽度。SDK 失败或无效反馈仍停止阶段。右夹爪800初始化同样使用阻塞命令加单次反馈。
+`all` 与独立子任务统一使用公共真机 Runtime，按 AffordToolAct 的命令时序更新夹爪：每条命令仅下发一次，SDK 阻塞返回；力控抓取再等待配置的稳定期（默认 1.5 秒），随后单次读取 `rm_get_gripper_state` 的实际开口，写入 `measured_end_width_m`。不再连续三次稳定采样或轮询 mode。位置模式仍核对目标到位；力控开口以实际反馈为准，不等于规划闭合宽度。SDK 失败或无效反馈仍停止阶段。右夹爪800初始化仅等待阻塞命令返回，不做额外反馈检查；后续首次场景读取实际开口。初始化报告中status=command_completed、endpoint_verified=false，不会将800作为已确认实测终态。
 
 夹爪 TCP 位姿继续由实际机械臂关节和 FK 更新；开口仅在初次观测以及新夹爪命令后读取。两条命令之间复用实测终态，来源为 `confirmed_execution_endpoint`；未发令的另一侧保留首次实测值，标为 `retained_initial_observation`。新命令前撤销旧终态，失败后不沿用；重连重新读取。保留命令起点核对、关节连续性及物体操作后置检查。
 
