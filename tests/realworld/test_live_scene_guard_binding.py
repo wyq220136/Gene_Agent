@@ -175,3 +175,22 @@ def test_full_task_entry_binds_same_recheck_and_stops_at_first_failure(
     assert result["first_failure"]["code"] == "scene_recheck_failed"
     assert len(result["steps"]) == 1
     assert gripper.commands == []
+
+
+def test_guard_forwards_interaction_hook_to_runtime_once():
+    events = []
+    frames = iter(range(10, 20))
+    def raw_observe():
+        return _scene(next(frames))
+    raw_observe.before_interaction = lambda stage, kind: events.append((stage, kind))
+    def make_runtime(snapshot_hash):
+        return RealWorldRuntime(Robot(), scene_snapshot_sha256=snapshot_hash,
+            max_start_error_rad=.02, tcp_height_fn=lambda _: .2, min_tcp_z_m=.08,
+            gripper=Gripper(), before_interaction=raw_observe.before_interaction)
+    observe, factory = bind_live_scene_guard(raw_observe, make_runtime, limits=LIMITS)
+    assert observe.before_interaction == raw_observe.before_interaction
+    observe()
+    runtime = factory("derived-stage-hash")
+    result = _close(runtime)
+    assert result["success"]
+    assert events == [("close", "position")]

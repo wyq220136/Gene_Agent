@@ -538,7 +538,7 @@ def make_live_microwave_observer(
     """生成子任务与完整 Task 共用的同步现场观测回调。
 
     构造回调时不拍照、不连接机器人、不规划。每次调用都另建目录，
-    冻结新 RGB-D，按操作范围刷新物体、读取两臂状态并导出碰撞；上段
+    冻结新 RGB-D，消费交互事件刷新物体、读取两臂状态并导出碰撞；上段
     结束后重新调用即可消费实际终态，而不是预测的终点。
     """
     static = dict(scene_parameters)
@@ -630,6 +630,7 @@ def make_live_microwave_observer(
     if operation_perception is not None:
         observe.begin_operation = operation_perception.begin_operation
         observe.after_door_phase = operation_perception.after_door_phase
+        observe.before_interaction = operation_perception.before_interaction
     return observe
 
 

@@ -54,13 +54,10 @@ def test_force_grasp_waits_before_freezing_end_width_and_handoff(monkeypatch):
         "close",execute=True,confirm_stable_endpoint=True,**kw)
     assert execution["status"]=="executed"
     assert execution["measured_end_width_m"]==pytest.approx(.024)
-    assert events==[
-        "grasp",("settle",1.5),"read_end",("settle",.05),
-        "read_end",("settle",.05),"read_end",
-    ]
+    assert events==["grasp",("settle",1.5),"read_end"]
     confirmation=execution["endpoint_confirmation"]
     assert confirmation["confirmed"] is True
-    assert len(confirmation["readings"])==3
+    assert len(confirmation["readings"])==1
     assert execution_handoff_error(_scene(1,.041),_scene(2,.024),execution,
         max_joint_error_rad=.02,max_width_error_m=.005) is None
     # 力控夹持由物体决定宽度，不能拿规划的7mm闭合宽度当作到位条件。

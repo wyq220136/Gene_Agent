@@ -27,6 +27,7 @@ from gene_agent.motion.model import (
     motion_request_from_dict,
 )
 from gene_agent.realworld.planning import prepare_plan_only_context
+from gene_agent.realworld.devices.grippers.realman.adapter import bounded_opening_width
 from gene_agent.skills.runtime.planning import SkillStage
 from gene_agent.skills.library.knob.planning import KnobSkillSettings, RotateKnobSkill
 
@@ -104,10 +105,11 @@ def build_observed_knob_targets(
     if float(np.dot(axis_world, site_rotation[:, 2])) < .999:
         raise ValueError("knob site +Z 与关节正方向不一致")
     axis = AxisSpec(site.xpos.copy(), axis_world, "world", "compiled_mujoco_knob_joint")
+    maximum_width = float(collision_scene["robot_metadata"]["grippers"]["right"]["width_range_m"][1])
     settings = KnobSkillSettings(
         float(task["approach_distance_m"]), target_angle,
-        float(task["rotation_step_rad"]), float(task["open_width_m"]),
-        float(proposals[0].closing_width_m), float(task["release_width_m"]),
+        float(task["rotation_step_rad"]), bounded_opening_width(task["open_width_m"], maximum_width),
+        float(proposals[0].closing_width_m), bounded_opening_width(task["release_width_m"], maximum_width),
         tip_rotations_x_rad=tuple(dict.fromkeys(
             float(item.parameters.get("tip_x_rad", 0.)) for item in proposals
         )),

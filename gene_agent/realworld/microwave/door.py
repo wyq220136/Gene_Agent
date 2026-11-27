@@ -225,9 +225,7 @@ def run_observed_door_skill(
                 return save()
             previous_source = scene["provenance"]
             from .operation_perception import after_door_observation_phase
-            if skill_id != "handle_pull" and index == len(targets["phases"]) - 1:
-                after_door_observation_phase(observe_collision_scene, "door_complete")
-            elif phase.name.startswith(("pull_", "swing_", "push_")):
+            if phase.name.startswith(("pull_", "swing_", "push_")):
                 after_door_observation_phase(observe_collision_scene, phase.name)
             scene = observe_collision_scene()
             current_source = scene["provenance"]

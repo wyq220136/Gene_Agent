@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gene_agent.realworld.devices.grippers.realman.adapter import bounded_opening_width
+
 import json
 import math
 import time
@@ -229,8 +231,9 @@ def run_observed_bowl_insert(
                 return {"success": True}
             if name == 'release':
                 group = scene["snapshot"]["active_group"]
-                release_width = float(scene["robot_metadata"]["grippers"][group][
+                maximum_width = float(scene["robot_metadata"]["grippers"][group][
                     "width_range_m"][1])
+                release_width = bounded_opening_width(maximum_width, maximum_width)
                 runtime = make_runtime(scene["snapshot"]["snapshot_sha256"])
                 if execute:
                     observed = _command_end_state({}, name)
@@ -270,6 +273,9 @@ def run_observed_bowl_insert(
             if name == 'settle':
                 observed = _command_end_state({}, name)
                 time.sleep(settle_duration_s)
+                callback = getattr(observe_collision_scene, "before_interaction", None)
+                if callback is not None:
+                    callback("settle", "release_settled")
                 settled_scene = observe_collision_scene()
                 observed = _operation_state(settled_scene)
                 if (int(settled_scene["provenance"]["source_frame_number"])

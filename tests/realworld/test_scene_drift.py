@@ -137,3 +137,26 @@ def test_source_type_change_is_still_rejected():
     planned, current = _retained_anchor_pair()
     current["provenance"]["pose_source_modes"]["Microwave/Microwave_0"] = "same_frame"
     assert compare_scene_drift(planned, current, limits=LIMITS).status == "fail"
+
+
+def test_same_frame_to_retained_transition_requires_identical_pose_and_evidence():
+    from copy import deepcopy
+    name = "Bowl/Bowl_0"
+    planned, current = _scene(10), _scene(11)
+    for value in (planned, current):
+        source = value["provenance"]
+        source["pose_source_modes"] = {name: "same_frame"}
+        source["perception_refresh"] = {
+            "refresh_mode": "interaction_events", "retained_object_ids": [],
+            "object_observations": {name: {"frame_number": 10,
+                "observed_at_unix_ms": 1010., "source": "pose-10.json"}}}
+    source = current["provenance"]
+    source["pose_source_modes"][name] = "retained_operation_state"
+    source["perception_refresh"]["retained_object_ids"] = [name]
+    assert compare_scene_drift(planned, current, limits=LIMITS).passed
+    forged = deepcopy(current)
+    forged["provenance"]["aligned_object_poses_world"][name][0][3] += .001
+    result = compare_scene_drift(planned, forged, limits=LIMITS)
+    assert not result.passed and "复用的物体 pose" in result.reason
+    source["perception_refresh"]["object_observations"][name]["frame_number"] = 11
+    assert not compare_scene_drift(planned, current, limits=LIMITS).passed

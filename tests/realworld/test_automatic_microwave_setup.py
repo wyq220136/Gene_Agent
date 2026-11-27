@@ -600,6 +600,8 @@ def test_pick_refreshes_bowl_without_handle_orbit_and_keeps_original_times(prepa
     monkeypatch.setattr(LiveArticulationReader, "__call__",
                         lambda *a: pytest.fail("bowl observation invoked handle orbit"))
     for frame in (1, 2):
+        if frame == 2:
+            scope.before_interaction("approach", "motion")
         value, angles, anchor = scope.consume(_partial_observation(record, {setup.BOWL}, frame=frame))
         refresh = value.perception_refresh
         assert refresh["refreshed_object_ids"] == [setup.BOWL]
@@ -624,7 +626,7 @@ def test_door_only_refreshes_at_entry_contact_motion_and_post_contact(prepared_n
     assert retained_angles["door"]["observed_at_unix_ms"] == angles["door"]["observed_at_unix_ms"]
     scope.after_door_phase("pregrasp")
     assert scope.selected_sessions(record["sessions"]) == {}
-    for frame, phase in enumerate(("pull_0", "post_contact", "push_1", "door_complete", "failure"), 3):
+    for frame, phase in enumerate(("pull_0", "post_contact", "push_1"), 3):
         scope.after_door_phase(phase)
         assert set(scope.selected_sessions(record["sessions"])) == {setup.MICROWAVE}
         value, angles, _ = scope.consume(_partial_observation(record, {setup.MICROWAVE}, frame=frame, door=.3))
@@ -747,9 +749,13 @@ def test_guard_forwards_operation_and_door_phase_hooks():
     def observe(): return {}
     observe.begin_operation=lambda name:events.append(("operation",name))
     observe.after_door_phase=lambda name:events.append(("phase",name))
+    observe.before_interaction=lambda name,kind:events.append(("interaction",name,kind))
     wrapped,_=bind_live_scene_guard(observe,lambda _:None,limits=SceneDriftLimits(.005,.15,.02,.005,.05))
     wrapped.begin_operation("pick_bowl")
     wrapped.after_door_phase("post_contact")
+    wrapped.before_interaction("lift", "motion")
+    assert events[-1] == ("interaction", "lift", "motion")
+    events.pop()
     assert events == [("operation","pick_bowl"),("phase","post_contact")]
 
 
@@ -868,3 +874,66 @@ def test_old_geometry_record_requires_new_preparation(prepared_no_knob):
     setup.save_json(path, record)
     with pytest.raises(ValueError, match="旧准备记录"):
         setup.load_perception_setup(path)
+
+
+@pytest.mark.parametrize("operation,events,object_id", [
+    ("pick_bowl", [("approach", "motion"), ("close", "grasp"), ("lift", "motion")], setup.BOWL),
+    ("extract_bowl", [("grasp", "motion"), ("close", "grasp"), ("post_extract_1", "motion"),
+                      ("post_extract_2", "motion")], setup.BOWL),
+    ("insert_bowl", [("preplace", "motion"), ("insert", "motion"), ("release", "release"),
+                     ("settle", "release_settled")], setup.BOWL),
+    ("place_bowl_on_table", [("preplace", "motion"), ("place", "motion"), ("release", "release"),
+                             ("settle", "release_settled")], setup.BOWL),
+    ("open_door", [("handle_pull/02_pull_0", "motion"), ("push_open/03_push_1", "motion"),
+                   ("handle_pull/03_release", "release")], setup.MICROWAVE),
+])
+def test_interaction_events_refresh_once_and_keep_pose_between_commands(
+        prepared_no_knob, operation, events, object_id):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    scope.begin_operation(operation)
+    scope.consume(_partial_observation(record, {object_id}, frame=1))
+    retained = scope.records[object_id].copy()
+    for name, kind in [("open", "position"), ("pregrasp", "motion"),
+                       ("pre_extract_1", "motion"), ("retreat_1", "motion")]:
+        scope.before_interaction(name, kind)
+        assert scope.selected_sessions(record["sessions"]) == {}
+    scope.after_door_phase("door_complete")
+    scope.after_door_phase("failure")
+    value, _, _ = scope.consume(_partial_observation(record, set(), frame=2))
+    assert value.perception_refresh["object_observations"][object_id] == retained
+    scope.begin_operation(operation)
+    assert scope.selected_sessions(record["sessions"]) == {}
+    for frame, (name, kind) in enumerate(events, 3):
+        scope.before_interaction(name, kind)
+        assert set(scope.selected_sessions(record["sessions"])) == {object_id}
+        scope.consume(_partial_observation(record, {object_id}, frame=frame))
+        assert scope.selected_sessions(record["sessions"]) == {}
+
+
+def test_scope_keeps_unconsumed_interaction_across_operation_switch(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    scope.begin_operation("pick_bowl")
+    scope.consume(_partial_observation(record, {setup.BOWL}))
+    scope.before_interaction("lift", "motion")
+    scope.begin_operation("transition")
+    assert set(scope.selected_sessions(record["sessions"])) == {setup.BOWL}
+
+
+def test_knob_events_retain_other_objects_and_refresh_only_on_contact(prepared):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared
+    scope = OperationPerception(record, include_knob=True)
+    scope.begin_operation("rotate_knob")
+    scope.consume(_partial_observation(record, {setup.KNOB}))
+    for name, kind in [("pregrasp", "motion"), ("open", "position")]:
+        scope.before_interaction(name, kind)
+        assert scope.selected_sessions(record["sessions"]) == {}
+    for frame, (name, kind) in enumerate([("grasp", "motion"), ("close", "grasp"),
+                                         ("rotate_0", "last_joint"), ("release", "release")], 2):
+        scope.before_interaction(name, kind)
+        assert set(scope.selected_sessions(record["sessions"])) == {setup.KNOB}
+        scope.consume(_partial_observation(record, {setup.KNOB}, frame=frame))

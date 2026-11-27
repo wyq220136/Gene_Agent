@@ -37,6 +37,7 @@ from gene_agent.motion.model import (
     motion_result_from_dict,
 )
 from gene_agent.realworld.planning import prepare_plan_only_context
+from gene_agent.realworld.devices.grippers.realman.adapter import bounded_opening_width
 from gene_agent.skills.library.door.sequence import door_phases
 from gene_agent.skills.runtime.planning import SkillStage
 from gene_agent.skills.runtime.target_selection import plan_with_local_rotation_search
@@ -177,6 +178,9 @@ def build_observed_door_skill_targets(
     data.qpos[door_joint.qposadr[0]] = 0.0
     mujoco.mj_forward(model, data)
     case = SimpleNamespace(model=model, data=data, metadata=metadata, snapshot=snapshot)
+    maximum_width = float(metadata["robot"]["grippers"][snapshot["active_group"]]["width_range_m"][1])
+    config = {**config, "handle_open_width_m": bounded_opening_width(
+        config.get("handle_open_width_m", .08), maximum_width)}
     tuning = _load_tuning(_ROOT, config)
     from gene_agent.skills.library.door.sequence import door_skill_angle_range
     start_deg, target_deg = door_skill_angle_range(skill_id, config, observed_angle)
@@ -189,6 +193,8 @@ def build_observed_door_skill_targets(
         push_open=knowledge if skill_id == "push_open" else None,
         push_close=knowledge if skill_id == "push_close" else None,
     )
+    phases = tuple(replace(phase, gripper_width_m=bounded_opening_width(
+        phase.gripper_width_m, maximum_width)) for phase in phases)
     return {
         "skill_id": skill_id,
         "phases": phases,

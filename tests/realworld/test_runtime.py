@@ -96,3 +96,21 @@ def test_runtime_rejects_live_state_reset_before_execution():
     outcome = _runtime(robot).run_motion_stage(_stage(), execute=True)
     assert outcome["failure"]["code"] == "start_state_mismatch"
     assert robot.calls == 0
+
+
+def test_interaction_hook_runs_only_after_validation_before_actual_sdk_even_on_partial_failure():
+    robot = FakeRobot()
+    runtime = _runtime(robot)
+    events = []
+    runtime.before_interaction = lambda stage, kind: events.append((stage, kind, robot.calls))
+    runtime.run_motion_stage(_stage(), execute=False)
+    runtime.run_motion_stage(_stage(scene_hash="old"), execute=True)
+    assert events == []
+    def partial(*args, **kwargs):
+        assert events == [("approach", "motion", 0)]
+        robot.calls += 1
+        raise RuntimeError("SDK partial failure")
+    robot.execute_trajectory = partial
+    result = runtime.run_motion_stage(_stage(), execute=True)
+    assert result["failure"]["code"] == "execution_failed"
+    assert events == [("approach", "motion", 0)]

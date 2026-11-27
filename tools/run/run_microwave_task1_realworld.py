@@ -699,6 +699,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
             return RealWorldRuntime(
                 robots[group], gripper=grippers[group],
                 scene_snapshot_sha256=snapshot_sha256,
+                before_interaction=getattr(observer, "before_interaction", None),
                 max_start_error_rad=speed["max_start_error_rad"],
                 tcp_height_fn=robots[group].tcp_height_from_sdk_fk,
                 min_tcp_z_m=speed["min_tcp_z_m"],

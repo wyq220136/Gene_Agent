@@ -22,6 +22,7 @@ from . import place_planning as place
 from . import knob_planning as knob
 from .attachment import prepare_observed_bowl_attachment
 from .task import _home_tcp_pose
+from gene_agent.realworld.devices.grippers.realman.adapter import bounded_opening_width
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -145,6 +146,8 @@ class TaskPreview:
         self.pick_report = {**w.hold_report(selection["selected_candidate_id"]), "grasp": grasp}
 
     def release(self, name, width, duration):
+        maximum = self.world.robot["grippers"][self.world.group]["width_range_m"][1]
+        width = bounded_opening_width(width, maximum)
         w = self.world
         w.event(name+"/release", width=width, attach=False,
                 assumption="假定松爪后物体留在当前预测位姿；未模拟重力或落稳")

@@ -23,13 +23,16 @@ class SDK:
         if self.fail:
             return 17
         self.width = 500
-        # 即使开口已经连续相同，mode=4/5 也不能宣告完成。
+        # 单次反馈可仍带运动 mode；动作时序以阻塞命令返回为准。
         self.modes = [4, 5, 4, 3, 3, 3]
         return 0
 
     def rm_set_gripper_position(self, position, block, timeout):
         assert 0 <= position <= 1000
-        return self.command("position", block)
+        code = self.command("position", block)
+        if code == 0:
+            self.width = position
+        return code
 
     def rm_set_gripper_pick_on(self, speed, force, block, timeout):
         return self.command("grasp", block)
@@ -63,11 +66,12 @@ def test_all_commands_confirm_motion_then_reuse_across_runtimes_and_observations
     sdk = SDK()
     gripper, robot, runtime, kw = rig(sdk)
     result = runtime().run_gripper_stage("stage", command_mode=mode, **kw)
-    assert result["success"] and result["measured_end_width_m"] == .04
-    assert sdk.calls == [mode]
-    assert len(result["endpoint_confirmation"]["readings"]) == 6
+    actual = .0792 if mode == "release" else .04
+    assert result["success"] and result["measured_end_width_m"] == pytest.approx(actual)
+    assert sdk.calls == ["position" if mode == "release" else mode]
+    assert len(result["endpoint_confirmation"]["readings"]) == 1
     reads = sdk.reads
-    assert runtime()._read_start_width(None) == .04
+    assert runtime()._read_start_width(None) == pytest.approx(actual)
     # 每一阶段创建新的 Runtime；夹爪连接和已确认终态跨阶段保留。
     other = SimpleNamespace(confirmed_endpoint_width_m=.08)
     sampler = RobotStateSampler({"left": robot, "right": robot},
@@ -76,14 +80,14 @@ def test_all_commands_confirm_motion_then_reuse_across_runtimes_and_observations
         for _ in range(3):
             with sampler.sample() as pending:
                 samples = pending.result()
-            assert samples["right"]["width_m"] == .04
+            assert samples["right"]["width_m"] == pytest.approx(actual)
             assert samples["right"]["width_source"] == "confirmed_execution_endpoint"
     finally:
         sampler.close()
     assert sdk.reads == reads
     # 下一条命令失败也必须撤销旧终态，不能继续使用前一动作的值。
     sdk.fail = True
-    failed = runtime().run_gripper_stage("next", **{**kw, "planned_start_width_m": .04})
+    failed = runtime().run_gripper_stage("next", **{**kw, "planned_start_width_m": actual})
     assert not failed["success"] and gripper.confirmed_endpoint_width_m is None
 
 
@@ -101,15 +105,15 @@ def test_direct_adapter_commands_invalidate_cached_endpoint(mode):
     assert gripper.initial_observed_width_m is None
 
 
-def test_motion_that_never_finishes_cannot_publish_endpoint(monkeypatch):
+def test_blocking_return_uses_single_feedback_without_mode_polling(monkeypatch):
+    # 与 AffordToolAct 一致：SDK 阻塞返回决定动作完成，不轮询 mode=4/5。
     sdk = SDK()
     gripper, _, runtime, kw = rig(sdk)
     sdk.rm_get_gripper_state = lambda: (0, {"actpos": 500, "mode": 4})
-    ticks = iter(i * .1 for i in range(1000))
-    monkeypatch.setattr("gene_agent.realworld.runtime.time.monotonic", lambda: next(ticks))
-    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep", lambda _: None)
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep",
+                        lambda _: pytest.fail("position must not poll"))
     result = runtime().run_gripper_stage("open", **{**kw, "planned_start_width_m": .04})
-    assert result["failure"]["code"] == "gripper_execution_failed"
-    assert not result["endpoint_confirmation"]["confirmed"]
-    assert gripper.confirmed_endpoint_width_m is None
+    assert result["success"]
+    assert len(result["endpoint_confirmation"]["readings"]) == 1
+    assert gripper.confirmed_endpoint_width_m == .04
     assert sdk.calls == ["position"]

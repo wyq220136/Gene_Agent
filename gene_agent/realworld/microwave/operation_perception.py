@@ -28,7 +28,7 @@ def after_door_observation_phase(observer, phase):
 
 
 def forward_observation_hooks(source, target):
-    for name in ("begin_operation", "after_door_phase"):
+    for name in ("begin_operation", "after_door_phase", "before_interaction"):
         callback = getattr(source, name, None)
         if callback is not None:
             setattr(target, name, callback)
@@ -37,8 +37,9 @@ def forward_observation_hooks(source, target):
 class OperationPerception:
     """复用 AffordToolAct 的固定柜体/按操作刷新边界，不改写关闭参考。
 
-    碗操作仅跟踪碗；机器人状态仍每段实测。门操作进入时及实际门运动、
-    post-contact 后刷新把手；普通接近、开闭爪和执行前复核不重复跟踪把手。
+    对象首次实测后，仅交互事件排队的对象重新测量；机器人状态仍每段实测。
+    门操作初次进入时及实际门运动、
+    post-contact 后刷新把手；普通接近、开爪和执行前复核不重复跟踪把手。
     被复用对象和关节保留原时间戳，不宣称为当前帧测量。
     """
     def __init__(self, setup, *, include_knob=False, sleep=None):
@@ -65,34 +66,63 @@ class OperationPerception:
         self.sleep = time.sleep if sleep is None else sleep
         self.pending_settle_s = 0.
         self.last_settle_s = 0.
-        self.dynamic = set()
         self.pending = set()
+        self.initialized = set()
         self.last_frame = -1
         self.last_stamp = -1.
 
     def begin_operation(self, operation):
         if operation == "plan_only":
-            # 仅在完整预览初态获取一次全部任务对象；后续全为预测，不再感知。
-            self.dynamic = {BOWL, MICROWAVE} | ({KNOB} if self.include_knob else set())
-            self.pending = set()
+            needed = {BOWL, MICROWAVE} | ({KNOB} if self.include_knob else set())
         elif operation in {"pick_bowl", "insert_bowl", "extract_bowl", "place_bowl_on_table",
-                         "pick", "insert", "extract", "table", "load_bowl", "unload_bowl"}:
-            self.dynamic, self.pending = {BOWL}, set()
+                           "pick", "insert", "extract", "table", "load_bowl", "unload_bowl"}:
+            needed = {BOWL}
         elif operation in {"open_door", "close_door", "door"}:
-            self.dynamic, self.pending = set(), {MICROWAVE}
+            needed = {MICROWAVE}
         elif operation in {"rotate_knob", "knob"} and self.include_knob:
-            self.dynamic, self.pending = {KNOB}, set()
+            needed = {KNOB}
         elif operation in {"transition", "after_open_transition", "before_reopen_transition",
                            "before_close_first_transition", "before_close_second_transition"}:
-            self.dynamic, self.pending = set(), set()
+            needed = set()
         else:
             raise ValueError(f"未定义感知时机的操作: {operation}")
+        # 操作切换不清空尚未消费的交互事件；同次运行每个对象只初始化一次。
+        self.pending.update(needed - self.initialized)
         self.operation = operation
-        self.pending_settle_s = 0.
+
+    def before_interaction(self, stage, kind):
+        """通过发令前校验后排队；SDK 返回（包括部分失败）后才由观测消费。"""
+        operation = self.operation
+        name = stage.rsplit("/", 1)[-1].split(":")[-1]
+        # 门 phase_id 形如 push_open/02_push_0；保留阶段真实名称。
+        prefix, sep, remainder = name.partition("_")
+        if sep and prefix.isdigit():
+            name = remainder
+        if operation in {"pick_bowl", "pick"}:
+            changed = kind in {"grasp", "release"} or (
+                kind == "motion" and name in {"approach", "lift"})
+            if changed:
+                self.pending.add(BOWL)
+        elif operation in {"extract_bowl", "extract", "unload_bowl"}:
+            if kind in {"grasp", "release"} or (
+                    kind == "motion" and (name == "grasp" or name.startswith("post_extract"))):
+                self.pending.add(BOWL)
+        elif operation in {"insert_bowl", "insert", "place_bowl_on_table", "table", "load_bowl"}:
+            if kind in {"grasp", "release", "release_settled"} or (
+                    kind == "motion" and name in {"preplace", "insert", "place"}):
+                self.pending.add(BOWL)
+        elif operation in {"open_door", "close_door", "door"}:
+            if kind in {"grasp", "release"} or (
+                    kind == "motion" and name.startswith(("pull_", "swing_", "push_"))):
+                self.pending.add(MICROWAVE)
+        elif operation in {"rotate_knob", "knob"} and self.include_knob:
+            if kind in {"grasp", "release", "last_joint"} or (
+                    kind == "motion" and (name == "grasp" or name.startswith("rotate_"))):
+                self.pending.add(KNOB)
 
     def after_door_phase(self, phase):
-        # 门被实际操作后需要独立实测，不把规划目标角当成测量。
-        if phase in {"failure", "door_complete"} or phase.startswith(("pull_", "swing_", "push_")) or "post_contact" in phase:
+        # post-contact 包含卸载后门继续运动的稳定期。完成/规划失败本身不是交互。
+        if phase.startswith(("pull_", "swing_", "push_")) or "post_contact" in phase:
             self.pending.add(MICROWAVE)
         if "post_contact" in phase:
             self.pending_settle_s = 2.0
@@ -109,7 +139,7 @@ class OperationPerception:
     def selected_sessions(self, sessions):
         if self.operation is None:
             raise ValueError("现场观察前必须设置当前操作，不能默认刷新全部对象")
-        selected = self.dynamic | self.pending
+        selected = self.pending
         if not selected.issubset(sessions):
             raise ValueError("本操作所需的感知 session 缺失")
         return {key: session for key, session in sessions.items() if key in selected}
@@ -123,7 +153,7 @@ class OperationPerception:
                            atol=1e-8, rtol=0):
             raise ValueError("运行外参与感知参考不一致")
         measured = set(observed.object_poses_sdk)
-        expected = self.dynamic | self.pending
+        expected = self.pending
         if measured != expected:
             raise ValueError("当前帧感知对象与操作范围不一致")
         observed, pose_correction = self.reader.canonical_observation(observed)
@@ -145,7 +175,7 @@ class OperationPerception:
                             "source": observed.sources[key]}
         retained = set(poses) - measured
         refresh = {
-            "policy": POLICY, "operation": self.operation,
+            "policy": POLICY, "operation": self.operation, "refresh_mode": "interaction_events",
             "pose_frame_disambiguation": pose_correction,
             "settle_wait_s": self.last_settle_s,
             "refreshed_object_ids": sorted(measured),
@@ -153,13 +183,14 @@ class OperationPerception:
             "object_observations": records,
             "retained_angle_keys": sorted(set(self.angles) - refreshed_angles),
             "retained_cabinet_anchor": MICROWAVE not in measured,
-            "assumption": "AffordToolAct 固定柜体；非操作对象在其操作边界之间保持原状态",
+            "assumption": "固定柜体；对象在两次实际交互事件之间保持原状态；外部移动须重新启动观测",
         }
         result = replace(observed, object_poses_sdk=poses,
                          sources={**{k: v["source"] for k, v in records.items()}, **observed.sources},
                          perception_refresh=refresh)
         self.poses = {k: np.array(v, copy=True) for k, v in poses.items()}
         self.records = records
+        self.initialized.update(measured)
         self.pending.difference_update(measured)
         self.last_frame, self.last_stamp = observed.frame_number, observed.timestamp_ms
         return result, deepcopy(self.angles), deepcopy(self.anchor)

@@ -132,13 +132,26 @@ def test_observed_door_targets_use_zero_angle_geometry_once(tmp_path):
         )
         result = build_observed_door_skill_targets(shadow, skill_id=skill_id)
         old = [phase for phase in viewer.phases if phase.skill_id == skill_id]
-        assert _signature(result["phases"]) == EXPECTED[skill_id]
+        from dataclasses import replace
+        # 真机新增990端点余量；还原宽度后核对原阶段/位姿指纹。
+        geometry = tuple(replace(actual, gripper_width_m=expected.gripper_width_m)
+                         for actual, expected in strict_zip(result["phases"], old))
+        assert _signature(geometry) == EXPECTED[skill_id]
         assert len(result["phases"]) == len(old)
         for actual, expected in strict_zip(result["phases"], old):
             np.testing.assert_allclose(actual.tcp_pose_world,
                                        expected.tcp_pose_world, atol=1e-9)
         assert result["observed_door_angle_rad"] == np.deg2rad(start_deg)
         assert result["knowledge_geometry_door_angle_rad"] == 0.
+        assert all(phase.gripper_width_m <= .0792 + 1e-12 for phase in result["phases"])
+        if skill_id == "handle_pull":
+            assert np.isclose(next(p.gripper_width_m for p in result["phases"] if p.name == "open"), .0792)
+            assert np.isclose(next(p.gripper_width_m for p in result["phases"] if p.name == "release"), .0792)
+            from gene_agent.realworld.microwave.knob_planning import build_observed_knob_targets
+            knob = build_observed_knob_targets(shadow)
+            assert np.isclose(knob["settings"].open_width_m, .0792)
+            assert np.isclose(knob["settings"].release_width_m, .0792)
+
         joint = viewer.case.model.joint("microwave_door_joint")
         assert shadow["snapshot"]["qpos_snapshot"][joint.qposadr[0]] == np.deg2rad(start_deg)
 

@@ -7,6 +7,18 @@ import math
 from gene_agent.realworld.gripper_state import invalidate_endpoint
 
 
+MAX_OPEN_POSITION = 990
+
+
+def bounded_opening_width(width_m: float, maximum_m: float) -> float:
+    """保留1000满量程换算，仅给真机开爪位置留1%端点余量。"""
+    width, maximum = float(width_m), float(maximum_m)
+    if (not math.isfinite(maximum) or maximum <= 0 or not math.isfinite(width)
+            or not 0 <= width <= maximum):
+        raise ValueError("夹爪开口必须在配置的有限行程范围内")
+    return min(width, maximum * MAX_OPEN_POSITION / 1000.0)
+
+
 class RealmanGripperAdapter:
     """SDK 注入后才可发命令；构造本身不会连接或移动夹爪。
 
@@ -38,12 +50,13 @@ class RealmanGripperAdapter:
         if code != 0:
             raise RuntimeError(f"RealMan {action}失败，SDK 码 {code}")
 
+    def position_command_width_m(self, width_m: float) -> float:
+        return bounded_opening_width(width_m, self.max_width_m)
+
     def command_width_m(self, width_m: float, *, blocking: bool = True) -> None:
-        """按旧 `set_opening` 路径发送 0～1000 的位置命令。"""
-        width = float(width_m)
-        if not math.isfinite(width) or not 0.0 <= width <= self.max_width_m:
-            raise ValueError(f"夹爪开口必须在 [0, {self.max_width_m}] m 范围内")
-        position = self._scaled(width / self.max_width_m, name="opening")
+        """米制位置命令仍按1000换算；最大命令位置为990。"""
+        width = self.position_command_width_m(width_m)
+        position = min(MAX_OPEN_POSITION, self._scaled(width / self.max_width_m, name="opening"))
         invalidate_endpoint(self)
         self._check(self.sdk.rm_set_gripper_position(position, blocking, 3),
                     action="位置控制")
@@ -82,6 +95,5 @@ class RealmanGripperAdapter:
         self._check(code, action="抓取")
 
     def release(self, *, blocking: bool = True) -> None:
-        """沿用旧版固定速度 500 的松爪命令。"""
-        invalidate_endpoint(self)
-        self._check(self.sdk.rm_set_gripper_release(500, blocking, 3), action="松开")
+        """释放夹持后开到990，避免无位置目标的release命令直达硬限位。"""
+        self.command_width_m(self.position_command_width_m(self.max_width_m), blocking=blocking)

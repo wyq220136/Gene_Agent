@@ -77,8 +77,7 @@ def compare_scene_drift(
         failures.append("新观测时间早于规划帧")
     for key, label in (("source_camera_id", "相机"), ("source_side", "相机 SDK base"),
                        ("scene_config_sha256", "场景配置"),
-                       ("alignment_input_sha256", "坐标与 mesh 标定"),
-                       ("pose_source_modes", "物体位姿来源")):
+                       ("alignment_input_sha256", "坐标与 mesh 标定")):
         if before.get(key) != after.get(key):
             failures.append(f"{label}已变化")
     # “复用”必须指向同一份旧证据，不能只保持标签而替换锚点来源/时间。
@@ -90,9 +89,27 @@ def compare_scene_drift(
             failures.append("复用的微波炉固定锚点或来源已变化")
     old_records = (before.get("perception_refresh") or {}).get("object_observations", {})
     new_records = refresh.get("object_observations", {})
+    old_modes, new_modes = before.get("pose_source_modes", {}), after.get("pose_source_modes", {})
+    for name in set(old_modes) | set(new_modes):
+        if old_modes.get(name) == new_modes.get(name):
+            continue
+        # 首帧实测转成沿用同一证据是正常的事件边界；其他来源切换仍拒绝。
+        retained_transition = (
+            refresh.get("refresh_mode") == "interaction_events"
+            and name in refresh.get("retained_object_ids", ())
+            and old_modes.get(name) == "same_frame"
+            and new_modes.get(name) == "retained_operation_state"
+            and old_records.get(name) and old_records[name] == new_records.get(name)
+        )
+        if not retained_transition:
+            failures.append(f"{name} 物体位姿来源已变化")
     for name in refresh.get("retained_object_ids", ()):
         if not old_records.get(name) or old_records.get(name) != new_records.get(name):
             failures.append(f"{name} 复用的原始观测来源已变化")
+        old_pose = before["aligned_object_poses_world"].get(name)
+        new_pose = after["aligned_object_poses_world"].get(name)
+        if old_pose is None or new_pose is None or not np.array_equal(old_pose, new_pose):
+            failures.append(f"{name} 复用的物体 pose 已变化")
     for key, label in (("active_group", "活动臂"), ("world_frame", "世界坐标系")):
         if old_snapshot[key] != new_snapshot[key]:
             failures.append(f"{label}已变化")
@@ -249,10 +266,15 @@ def bind_live_scene_guard(
 
         recheck.provides_robot_sample = True
         runtime.pre_execute_scene_check = recheck
+        callback = getattr(observe_collision_scene, "before_interaction", None)
+        if callback is not None:
+            if runtime.before_interaction is not None and runtime.before_interaction != callback:
+                raise ValueError("Runtime 已有交互事件回调，不能悄悄覆盖")
+            runtime.before_interaction = callback
         return runtime
 
     # 包装后仍传递操作感知事件，避免发令前复核退回全对象感知。
-    for name in ("begin_operation", "after_door_phase"):
+    for name in ("begin_operation", "after_door_phase", "before_interaction"):
         callback = getattr(observe_collision_scene, name, None)
         if callback is not None:
             setattr(observe, name, callback)

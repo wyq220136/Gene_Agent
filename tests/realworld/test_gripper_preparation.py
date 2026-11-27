@@ -27,7 +27,7 @@ def test_command_precedes_every_read_and_confirms(tmp_path, monkeypatch):
     monkeypatch.setattr(prep.time, 'sleep', lambda _: None)
     events = []
     report = prep.prepare_right_gripper(Gripper(events), output_dir=tmp_path)
-    assert events == ['command800', 'read', 'read', 'read']
+    assert events == ['command800', 'read']
     assert report['status'] == 'confirmed'
     assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'confirmed'
 
@@ -47,7 +47,7 @@ def test_failed_confirmation_stops_without_retrying_command(tmp_path, monkeypatc
     monkeypatch.setattr(prep.time, 'monotonic', lambda: next(clock))
     monkeypatch.setattr(prep.time, 'sleep', lambda _: None)
     events = []
-    with pytest.raises(TimeoutError):
+    with pytest.raises(ValueError, match="800"):
         prep.prepare_right_gripper(Gripper(events, .08024), output_dir=tmp_path)
     assert events.count('command800') == 1
     assert json.loads((tmp_path/'right_gripper_preparation.json').read_text())['status'] == 'failed'
@@ -78,7 +78,7 @@ def test_entry_prepares_before_left_connection_and_observer(tmp_path, monkeypatc
         cli.run_site(config, subtask=subtask, output_dir=tmp_path/'run', execute=execute,
                      prepare_held_bowl=prepare_held)
     if execute:
-        assert events == ['connect_right', 'command800', 'read', 'read', 'read', 'connect_left', 'observer']
+        assert events == ['connect_right', 'command800', 'read', 'connect_left', 'observer']
     else:
         assert events == ['connect_left', 'connect_right', 'observer']
 

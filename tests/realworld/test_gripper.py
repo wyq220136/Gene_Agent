@@ -54,8 +54,8 @@ def test_realman_gripper_rejects_out_of_range_or_sdk_failure():
     assert gripper.read_width_m() == pytest.approx(0.08)
 
 
-def test_realman_gripper_preserves_old_continuous_pick_and_release_calls():
-    """抓取和松开仍使用旧项目的 pick_on/release SDK 入口。"""
+def test_realman_gripper_preserves_continuous_pick_and_bounds_release_position():
+    """抓取保留pick_on；松开用990位置命令替代无目标的满开接口。"""
     sdk = FakeGripperSdk()
     gripper = RealmanGripperAdapter(sdk, max_width_m=0.08)
 
@@ -64,7 +64,7 @@ def test_realman_gripper_preserves_old_continuous_pick_and_release_calls():
 
     assert sdk.calls == [
         ("pick_on", 600, 500, True, 3),
-        ("release", 500, True, 3),
+        ("position", 990, True, 3),
     ]
 
 
@@ -147,7 +147,7 @@ def test_runtime_gripper_executes_only_with_matching_snapshot_and_state():
     assert sdk.calls == [("position", 500, True, 3)]
 
 
-def test_runtime_gripper_uses_legacy_pick_on_and_release_for_contact_actions():
+def test_runtime_gripper_uses_pick_on_and_bounded_release_for_contact_actions():
     """抓住 Bowl/把手时不能把几何闭合宽度误当作 SDK 位置控制。"""
     from gene_agent.motion.model import JointState
     from gene_agent.realworld.runtime import RealWorldRuntime
@@ -182,7 +182,7 @@ def test_runtime_gripper_uses_legacy_pick_on_and_release_for_contact_actions():
     assert grasped["hardware_command"]["mode"] == "grasp"
     assert sdk.calls == [
         ("pick_on", 1000, 500, True, 3),
-        ("release", 500, True, 3),
+        ("position", 990, True, 3),
     ]
 
 
@@ -350,7 +350,7 @@ def test_gripper_feedback_and_command_use_original_scale(position):
     assert width == pytest.approx(position / 1000 * .08)
     assert not sdk.calls
     gripper.command_width_m(width)
-    assert sdk.calls == [("position", position, True, 3)]
+    assert sdk.calls == [("position", min(position, 990), True, 3)]
 
 
 @pytest.mark.parametrize("position", [-11, 1501, float("nan"), float("inf")])
@@ -396,7 +396,44 @@ def test_runtime_accepts_1003_feedback_but_rejects_1003_target():
     result = runtime.run_gripper_stage("open", target_width_m=.08, **common)
     assert result["status"] == "executed"
     assert result["measured_end_width_m"] == pytest.approx(.08024)
-    assert sdk.calls == [("position", 1000, True, 3)]
+    assert sdk.calls == [("position", 990, True, 3)]
     result = runtime.run_gripper_stage("open", target_width_m=.08024, **common)
     assert result["failure"]["code"] == "gripper_width_invalid"
     assert len(sdk.calls) == 1
+
+
+def test_full_open_and_release_reserve_margin_without_rescaling_other_positions():
+    sdk = FakeGripperSdk()
+    gripper = RealmanGripperAdapter(sdk, max_width_m=.08)
+    gripper.command_width_m(.064)
+    gripper.command_width_m(.08)
+    gripper.release()
+    assert sdk.calls == [("position", 800, True, 3), ("position", 990, True, 3),
+                         ("position", 990, True, 3)]
+    assert gripper.read_width_m() == pytest.approx(.0792)
+    assert gripper.max_width_m == .08
+
+
+@pytest.mark.parametrize("mode", ["position", "release"])
+def test_runtime_reports_effective_bounded_opening_and_retains_real_feedback(mode):
+    from gene_agent.motion.model import JointState
+    from gene_agent.realworld.runtime import RealWorldRuntime
+    start = JointState(tuple(f"right_joint_{i}" for i in range(1, 8)), (0.,)*7)
+    class Robot:
+        group = "right"
+        def read_joint_state(self): return start
+    sdk = FakeGripperSdk()
+    gripper = RealmanGripperAdapter(sdk, max_width_m=.08)
+    runtime = RealWorldRuntime(Robot(), gripper=gripper, scene_snapshot_sha256="scene",
+        max_start_error_rad=.02, tcp_height_fn=lambda _: .2, min_tcp_z_m=.08)
+    kw = dict(group="right", target_width_m=.08, planned_start=start,
+              planned_start_width_m=.08, max_width_error_m=.0001,
+              planned_scene_snapshot_sha256="scene", command_mode=mode)
+    preview = runtime.run_gripper_stage("open", **kw)
+    assert preview["hardware_command"]["target_width_m"] == pytest.approx(.0792)
+    assert not sdk.calls
+    result = runtime.run_gripper_stage("open", execute=True, **kw)
+    assert result["success"]
+    assert sdk.calls == [("position", 990, True, 3)]
+    assert result["measured_end_width_m"] == pytest.approx(.0792)
+    assert gripper.confirmed_endpoint_width_m == pytest.approx(.0792)
