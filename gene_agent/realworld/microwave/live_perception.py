@@ -48,7 +48,7 @@ class LiveArticulationReader:
 
     门角沿用 AffordToolAct 的把手绕门轴投影 atan2；这里的轴来自 URDF
     正关节方向，所以不再反号。圆轨道残差检查与测角使用同一个把手中心，
-    不把 mesh 完整朝向误当作额外关节测量。柜体必须固定，这不替代独立柜体跟踪。
+    不把 mesh 完整朝向误当作额外关节测量。除闭门接触的有界平移约束外假定柜体固定；这不替代独立柜体跟踪。
     """
 
     def __init__(self, setup: dict, *, include_knob: bool = False,
@@ -69,6 +69,9 @@ class LiveArticulationReader:
         self._last_frame = -1
         self._last_stamp = -1.
         self._anchor = None
+        self._initial_root = self.root.copy()
+        self.closed_contact_pending = False
+        self.max_closed_contact_translation_m = .03
 
     def canonical_observation(self, observed):
         config = self.setup.get("microwave_pose_disambiguation")
@@ -118,7 +121,43 @@ class LiveArticulationReader:
         live_vector = live_handle[:3, 3] - point
         closed_radius = float(np.linalg.norm(closed_vector - axis * (closed_vector @ axis)))
         live_radius = float(np.linalg.norm(live_vector - axis * (live_vector @ axis)))
+        contact_reanchor = None
+        if self.closed_contact_pending:
+            self.closed_contact_pending = False
+            # 闭门且尚未拉门时，夹爪可能把机身推移；仅推导平移，不从噪声朝向估计机身旋转。
+            delta = live_handle[:3, 3] - closed_handle[:3, 3]
+            total_delta = self.root[:3, 3] + delta - self._initial_root[:3, 3]
+            if (not self.include_knob and position_error > self.max_translation
+                    and abs(raw_door) <= math.radians(2.)
+                    and np.linalg.norm(delta) <= self.max_closed_contact_translation_m
+                    and np.linalg.norm(total_delta) <= self.max_closed_contact_translation_m):
+                contact_reanchor = {
+                    "frame_number": observed.frame_number,
+                    "translation_sdk_m": delta.tolist(),
+                    "cumulative_translation_sdk_m": total_delta.tolist(),
+                    "limit_m": self.max_closed_contact_translation_m,
+                    "original_handle_center_error_m": position_error,
+                    "raw_angle_before_reanchor_rad": raw_door,
+                    "independent_cabinet_measurement": False,
+                    "assumption": "闭门夹把手后的平移约束；柜体不转动；门仍接近零角",
+                }
+                self.root[:3, 3] += delta
+                for pose in self.reference.values():
+                    pose[:3, 3] += delta
+                point, axis, limits = self._joint("door")
+                closed_handle = self.reference[MICROWAVE] @ self.handle_local
+                closed_vector = closed_handle[:3, 3] - point
+                live_vector = live_handle[:3, 3] - point
+                raw_door = _signed_angle(closed_vector, live_vector, axis)
+                door = self._bounded(raw_door, limits, name="门角")
+                expected_handle_mesh = _axis_rotation(axis, door, point) @ self.reference[MICROWAVE]
+                expected_handle = expected_handle_mesh @ self.handle_local
+                position_error = float(np.linalg.norm(live_handle[:3, 3] - expected_handle[:3, 3]))
+                mesh_position_error = float(np.linalg.norm(expected_handle_mesh[:3, 3] - current[MICROWAVE][:3, 3]))
+                closed_radius = float(np.linalg.norm(closed_vector - axis * (closed_vector @ axis)))
+                live_radius = float(np.linalg.norm(live_vector - axis * (live_vector @ axis)))
         diagnostics = {
+            "contact_reanchor": contact_reanchor,
             "status": "rejected" if position_error > self.max_translation else "accepted",
             "check": "handle_center_orbit", "frame_number": observed.frame_number,
             "observed_at_unix_ms": observed.timestamp_ms,
@@ -179,6 +218,16 @@ class LiveArticulationReader:
                         "assumption": ("柜体固定；把手圆周及旋钮固定轴一致性检查，不是独立柜体测量"
                                        if self.include_knob else
                                        "柜体固定；仅把手圆周一致性检查，不测旋钮，不是独立柜体测量")}
+        if np.linalg.norm(self.root[:3, 3] - self._initial_root[:3, 3]) > 1e-9:
+            # 机身被推移不意味着桌子/支撑箱也移动；保存其原始静态位置。
+            support_local = np.eye(4)
+            support = self.assets["support"]
+            support_local[:3, 3] = [*support["center_xy_local_m"], -support["height_m"] / 2]
+            self._anchor["stationary_support_pose_sdk"] = (self._initial_root @ support_local).tolist()
+        if contact_reanchor is not None:
+            self._anchor["contact_reanchor"] = contact_reanchor
+            self._anchor["assumption"] = contact_reanchor["assumption"]
+            self._anchor["source"] = source + ":closed_contact_translation_constraint"
         self._last_frame, self._last_stamp = observed.frame_number, observed.timestamp_ms
         return readings
 

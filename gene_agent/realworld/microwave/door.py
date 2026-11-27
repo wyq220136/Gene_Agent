@@ -229,6 +229,17 @@ def run_observed_door_skill(
                 after_door_observation_phase(observe_collision_scene, phase.name)
             scene = observe_collision_scene()
             current_source = scene["provenance"]
+            reanchor = (current_source.get("microwave_root_anchor") or {}).get("contact_reanchor")
+            if reanchor and reanchor.get("frame_number") == current_source.get("source_frame_number"):
+                if skill_id != "handle_pull" or phase.name != "close":
+                    raise ValueError("闭门平移重定位只能发生在拉门前的闭爪接触阶段")
+                # 新门轴/柜体已进入碰撞场景；后续目标必须从新锚点重建，禁止复用旧目标。
+                rebuilt = build_observed_door_skill_targets(
+                    scene, skill_id=skill_id, config_path=config_path)
+                if [p.phase_id for p in rebuilt["phases"]] != [p.phase_id for p in targets["phases"]]:
+                    raise ValueError("接触后重定位改变了门Skill阶段合同")
+                targets = rebuilt
+                row["contact_reanchor"] = reanchor
             freshness = door_observation_freshness(
                 previous_frame=previous_source.get("source_frame_number"),
                 previous_time=previous_source.get("source_timestamp_ms"),

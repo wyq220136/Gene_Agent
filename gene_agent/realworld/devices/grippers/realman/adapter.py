@@ -37,6 +37,7 @@ class RealmanGripperAdapter:
         self.max_feedback_width_m = 1.5 * width
         self.last_reading = None
         self.confirmed_endpoint_width_m = None
+        self.supports_motion_completion_feedback = True
 
     @staticmethod
     def _scaled(value: float, *, name: str) -> int:

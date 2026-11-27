@@ -689,6 +689,7 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
     _, record = prepared_no_knob
     scope = OperationPerception(record)
     ticks = []
+    movement = np.zeros(3)
     def capture(**kw):
         folder = kw["output_dir"]
         folder.mkdir(parents=True)
@@ -699,8 +700,10 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
     def track(**kw):
         assert set(kw["sessions"]) == ({setup.BOWL} if operation == "pick_bowl" else {setup.MICROWAVE})
         from dataclasses import replace
-        return replace(_partial_observation(record,set(kw["sessions"]),frame=ticks[-1]),
-                       timestamp_ms=time.time()*1000.)
+        value = _partial_observation(record,set(kw["sessions"]),frame=ticks[-1])
+        if setup.MICROWAVE in value.object_poses_sdk:
+            value.object_poses_sdk[setup.MICROWAVE][:3,3] += movement
+        return replace(value, timestamp_ms=time.time()*1000.)
     class Robot:
         def __init__(self, side): self.side=side
         def read_joint_state(self):
@@ -741,6 +744,28 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
     checked = compare_scene_drift(first, second, limits=SceneDriftLimits(.005,.15,.02,.005,.05))
     assert checked.status == "pass", checked.reason
     assert second["provenance"]["perception_refresh"]["retained_cabinet_anchor"] is True
+
+    if operation == "open_door":
+        reader = scope.reader
+        point, axis, _ = reader._joint("door")
+        center = (reader.reference[setup.MICROWAVE] @ reader.handle_local)[:3,3]
+        radial = center - point
+        radial -= axis * (radial @ axis)
+        movement[:] = .021 * radial / np.linalg.norm(radial)
+        observer.before_interaction("handle_pull/03_close", "grasp")
+        third = observer()
+        old_support = np.array(first["scene_metadata"]["objects"]["microwave_support"]["T_world_support"])
+        new_support = np.array(third["scene_metadata"]["objects"]["microwave_support"]["T_world_support"])
+        np.testing.assert_allclose(old_support, new_support, atol=1e-12)
+        old_microwave = np.array(first["provenance"]["aligned_object_poses_world"][setup.MICROWAVE])
+        new_microwave = np.array(third["provenance"]["aligned_object_poses_world"][setup.MICROWAVE])
+        np.testing.assert_allclose(new_microwave[:3,3]-old_microwave[:3,3], movement, atol=1e-12)
+        # 再加载实际导出的XML，保证viewer/planner不会读回移动后的支撑箱。
+        import mujoco
+        model = mujoco.MjModel.from_xml_path(third["scene_xml_path"])
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+        np.testing.assert_allclose(data.body("microwave_support").xpos, old_support[:3,3], atol=1e-12)
 
 
 def test_guard_forwards_operation_and_door_phase_hooks():
@@ -937,3 +962,68 @@ def test_knob_events_retain_other_objects_and_refresh_only_on_contact(prepared):
         scope.before_interaction(name, kind)
         assert set(scope.selected_sessions(record["sessions"])) == {setup.KNOB}
         scope.consume(_partial_observation(record, {setup.KNOB}, frame=frame))
+
+
+def test_closed_contact_small_translation_reanchors_root_and_keeps_raw_pose(prepared_no_knob):
+    from gene_agent.realworld.microwave.operation_perception import OperationPerception
+    _, record = prepared_no_knob
+    scope = OperationPerception(record)
+    scope.begin_operation("open_door")
+    scope.consume(_partial_observation(record, {setup.MICROWAVE}, frame=1))
+    root = scope.reader.root.copy()
+    scope.before_interaction("handle_pull/03_close", "grasp")
+    frame = _partial_observation(record, {setup.MICROWAVE}, frame=2, door=math.radians(-.875))
+    point, axis, _ = scope.reader._joint("door")
+    center = (frame.object_poses_sdk[setup.MICROWAVE] @ scope.reader.handle_local)[:3, 3]
+    radial = center - point
+    radial -= axis * (radial @ axis)
+    # 重现本轮约20.24mm径向、-1.07mm轴向偏差；闭门接触假设显式记录。
+    frame.object_poses_sdk[setup.MICROWAVE][:3, 3] += .0202435 * radial / np.linalg.norm(radial) - .0010707 * axis
+    raw = frame.object_poses_sdk[setup.MICROWAVE].copy()
+    result, angles, anchor = scope.consume(frame)
+    motion = anchor["contact_reanchor"]
+    assert .02 < np.linalg.norm(motion["translation_sdk_m"]) < .03
+    assert motion["independent_cabinet_measurement"] is False
+    assert angles["door"]["angle_rad"] == pytest.approx(0., abs=1e-10)
+    np.testing.assert_allclose(scope.reader.root[:3, 3], root[:3, 3] + motion["translation_sdk_m"])
+    np.testing.assert_allclose(scope.reader.root[:3, :3], root[:3, :3])
+    np.testing.assert_allclose(result.object_poses_sdk[setup.MICROWAVE], raw)
+    assert scope.reader.closed_contact_pending is False
+
+
+@pytest.mark.parametrize("shift,door_deg", [(.031, 0.), (.021, 4.)])
+def test_contact_reanchor_rejects_large_or_nonclosed_motion(prepared_no_knob, shift, door_deg):
+    _, record = prepared_no_knob
+    reader = LiveArticulationReader(record)
+    root = reader.root.copy()
+    reader.closed_contact_pending = True
+    frame = observed(record, door=math.radians(door_deg))
+    point, axis, _ = reader._joint("door")
+    center = (frame.object_poses_sdk[setup.MICROWAVE] @ reader.handle_local)[:3,3]
+    radial = center - point
+    radial -= axis * (radial @ axis)
+    frame.object_poses_sdk[setup.MICROWAVE][:3,3] += shift * radial / np.linalg.norm(radial)
+    with pytest.raises(HandleOrbitError):
+        reader(frame)
+    np.testing.assert_allclose(reader.root, root)
+
+
+def test_contact_reanchor_is_bounded_against_original_reference(prepared_no_knob):
+    _, record = prepared_no_knob
+    reader = LiveArticulationReader(record)
+    point, axis, _ = reader._joint("door")
+    center = (reader.reference[setup.MICROWAVE] @ reader.handle_local)[:3,3]
+    direction = center - point
+    direction -= axis * (direction @ axis)
+    direction /= np.linalg.norm(direction)
+    first = observed(record, frame=1)
+    first.object_poses_sdk[setup.MICROWAVE][:3,3] += .021 * direction
+    reader.closed_contact_pending = True
+    reader(first)
+    root = reader.root.copy()
+    second = observed(record, frame=2)
+    second.object_poses_sdk[setup.MICROWAVE][:3,3] += .042 * direction
+    reader.closed_contact_pending = True
+    with pytest.raises(HandleOrbitError):
+        reader(second)
+    np.testing.assert_allclose(reader.root, root)

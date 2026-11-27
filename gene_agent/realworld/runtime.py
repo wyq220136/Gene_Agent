@@ -463,7 +463,13 @@ class RealWorldRuntime:
             if self.before_interaction is not None:
                 self.before_interaction(stage, command_mode)
             if command_mode == "grasp":
-                self.gripper.grasp(force=force, blocking=True)
+                # 等接收确认后由实际mode决定完成，避免SDK阻塞等待到位事件超时。
+                feedback_completion = bool(getattr(self.gripper, "supports_motion_completion_feedback", False))
+                record["hardware_command"].update(
+                    blocking=not feedback_completion,
+                    completion_source="sdk_motion_feedback" if feedback_completion else "sdk_blocking",
+                )
+                self.gripper.grasp(force=force, blocking=not feedback_completion)
                 # 连续力控命令返回后仍可能继续闭合。沿用 AffordToolAct
                 # 的1.5秒稳定期，再等待运动完成并读取终态，避免正常闭合被下一帧
                 # handoff 判成开口突变；不能将规划闭合宽度当力控到位值。

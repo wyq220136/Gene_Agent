@@ -213,3 +213,46 @@ def test_door_gripper_action_preserves_legacy_sdk_semantics(
     assert seen[0].get("command_mode", "position") == mode
     if force is not None:
         assert seen[0]["grasp_force"] == force
+
+
+def test_closed_contact_rebuilds_remaining_targets_from_new_cabinet_anchor(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from copy import deepcopy
+    old = _targets()
+    old["phases"] = (
+        replace(old["phases"][0], phase_id="handle_pull/03_close", name="close", gripper_width_m=.015),
+        replace(old["phases"][1], phase_id="handle_pull/04_pull_01"),
+    )
+    closed = _scene("after-gripper", width=.03)
+    closed["provenance"]["aligned_object_poses_world"]["Microwave/Microwave_0"][0][3] = .02
+    closed["provenance"]["microwave_root_anchor"] = {
+        "contact_reanchor": {"frame_number": 11, "translation_sdk_m": [.02, 0., 0.]}}
+    pulled = _scene("after-pull", q=(.1,.2), width=.03, door=.5)
+    pulled["provenance"]["aligned_object_poses_world"]["Microwave/Microwave_0"][0][3] = .02
+    observations = [_scene("initial"), closed, pulled]
+    builds = []
+    def build(scene, **kw):
+        targets = deepcopy(old)
+        targets["collision_snapshot_sha256"] = scene["snapshot"]["snapshot_sha256"]
+        targets["target_anchor"]["microwave_pose_world"] = deepcopy(
+            scene["provenance"]["aligned_object_poses_world"]["Microwave/Microwave_0"])
+        builds.append(scene["snapshot"]["snapshot_sha256"])
+        return targets
+    monkeypatch.setattr(door_skill, "build_observed_door_skill_targets", build)
+    def plan(scene, targets, **kw):
+        assert targets["target_anchor"]["microwave_pose_world"][0][3] == .02
+        return {"success": True, "stage_collision_snapshot_sha256": "stage", "skill_stage_ref": "unused"}
+    monkeypatch.setattr(door_skill, "plan_observed_door_stage", plan)
+    monkeypatch.setattr(door_skill, "load_planned_door_skill_stage", lambda _: SimpleNamespace(name="pull"))
+    class Runtime:
+        def run_gripper_stage(self, *args, **kw):
+            return {"source_format":"realworld_gripper_stage","status":"executed","success":True,
+                    "measured_end_width_m":.03}
+        def run_motion_stage(self, *args, **kw):
+            return {"source_format":"realworld_motion_stage","status":"executed","success":True,
+                    "measured_end":{"joint_names":["joint_1","joint_2"],"positions_rad":[.1,.2]}}
+    report = door_skill.run_observed_door_skill(**_options(
+        tmp_path, lambda: observations.pop(0), lambda _: Runtime(), execute=True))
+    assert report["success"], report.get("first_failure")
+    assert builds == ["initial", "after-gripper"]
+    assert report["stages"][0]["contact_reanchor"]["translation_sdk_m"] == [.02,0.,0.]

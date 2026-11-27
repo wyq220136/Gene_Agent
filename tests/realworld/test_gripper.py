@@ -181,7 +181,7 @@ def test_runtime_gripper_uses_pick_on_and_bounded_release_for_contact_actions():
     assert grasped["status"] == released["status"] == "executed"
     assert grasped["hardware_command"]["mode"] == "grasp"
     assert sdk.calls == [
-        ("pick_on", 1000, 500, True, 3),
+        ("pick_on", 1000, 500, False, 3),
         ("position", 990, True, 3),
     ]
 

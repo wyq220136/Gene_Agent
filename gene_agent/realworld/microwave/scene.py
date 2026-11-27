@@ -225,6 +225,21 @@ def build_observed_collision_scene(
         turntable_height_offset_m=0.0, microwave_floor_height_offset_m=0.0,
         robot_profile="realman_dual_standard", table_config=table_config,
     )
+    stationary_support = (microwave_root_anchor or {}).get("stationary_support_pose_sdk")
+    if stationary_support is not None:
+        # 微波炉微移后保持桌子及支撑箱静止，模型、XML和来源元数据同步。
+        import xml.etree.ElementTree as ET
+        support_pose = np.asarray(T_world_sdk) @ validate_pose(stationary_support)
+        model.body("microwave_support").pos[:] = support_pose[:3, 3]
+        objects = metadata["objects"]
+        objects["microwave_support"]["T_world_support"] = support_pose.tolist()
+        objects_xml = Path(objects["xml_path"])
+        xml = ET.parse(objects_xml)
+        xml.getroot().find(".//body[@name='microwave_support']").set(
+            "pos", " ".join(format(float(x), ".17g") for x in support_pose[:3, 3]))
+        xml.write(objects_xml, encoding="unicode")
+        objects_xml.with_name("scene_metadata.json").write_text(
+            json.dumps(objects, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     robot = metadata["robot"]
     # 真机沿用 AffordToolAct 的场景 link 策略；完整自身球对另行复核。
     # 只在 observed 元数据声明，不改变仿真默认的严格安装接触规则。

@@ -18,7 +18,6 @@ class SDK:
         self.fail = False
 
     def command(self, name, block):
-        assert block is True
         self.calls.append(name)
         if self.fail:
             return 17
@@ -69,6 +68,9 @@ def test_all_commands_confirm_motion_then_reuse_across_runtimes_and_observations
     actual = .0792 if mode == "release" else .04
     assert result["success"] and result["measured_end_width_m"] == pytest.approx(actual)
     assert sdk.calls == ["position" if mode == "release" else mode]
+    if mode == "grasp":
+        assert result["hardware_command"]["blocking"] is False
+        assert result["hardware_command"]["completion_source"] == "sdk_motion_feedback"
     assert result["endpoint_confirmation"]["poll_count"] == 4
     reads = sdk.reads
     assert runtime()._read_start_width(None) == pytest.approx(actual)
@@ -159,3 +161,23 @@ def test_stopped_at_wrong_width_still_fails_with_original_tolerance(monkeypatch)
     assert result["hardware_command"]["target_width_m"] == pytest.approx(.0792)
     assert gripper.confirmed_endpoint_width_m is None
     assert sdk.calls == ["position"]
+
+
+def test_force_grasp_waits_for_feedback_not_blocking_arrival_event(monkeypatch):
+    sdk = SDK()
+    gripper, _, runtime, kw = rig(sdk)
+    issued = []
+    def grasp(speed, force, block, timeout):
+        issued.append((speed, force, block, timeout))
+        if block:
+            return -4  # 原运行的SDK到位事件等待超时
+        sdk.width = 400
+        sdk.modes = [4, 6]
+        return 0
+    sdk.rm_set_gripper_pick_on = grasp
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep", lambda _: None)
+    result = runtime().run_gripper_stage("close", command_mode="grasp", **kw)
+    assert result["success"]
+    assert issued == [(1000, 500, False, 3)]
+    assert result["endpoint_confirmation"]["poll_count"] == 2
+    assert result["measured_end_width_m"] == pytest.approx(.032)

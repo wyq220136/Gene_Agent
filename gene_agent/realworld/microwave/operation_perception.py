@@ -89,6 +89,7 @@ class OperationPerception:
         # 操作切换不清空尚未消费的交互事件；同次运行每个对象只初始化一次。
         self.pending.update(needed - self.initialized)
         self.operation = operation
+        self.reader.closed_contact_pending = False
 
     def before_interaction(self, stage, kind):
         """通过发令前校验后排队；SDK 返回（包括部分失败）后才由观测消费。"""
@@ -112,6 +113,9 @@ class OperationPerception:
                     kind == "motion" and name in {"preplace", "insert", "place"}):
                 self.pending.add(BOWL)
         elif operation in {"open_door", "close_door", "door"}:
+            # 只有拉门前闭爪接触可建立闭门平移约束，普通观测/推拉中不重置参考。
+            if kind == "grasp" and name == "close":
+                self.reader.closed_contact_pending = True
             if kind in {"grasp", "release"} or (
                     kind == "motion" and name.startswith(("pull_", "swing_", "push_"))):
                 self.pending.add(MICROWAVE)
@@ -183,7 +187,7 @@ class OperationPerception:
             "object_observations": records,
             "retained_angle_keys": sorted(set(self.angles) - refreshed_angles),
             "retained_cabinet_anchor": MICROWAVE not in measured,
-            "assumption": "固定柜体；对象在两次实际交互事件之间保持原状态；外部移动须重新启动观测",
+            "assumption": "柜体除闭门接触有界平移外保持固定；对象在实际交互事件之间沿用状态；外部移动须重新启动观测",
         }
         result = replace(observed, object_poses_sdk=poses,
                          sources={**{k: v["source"] for k, v in records.items()}, **observed.sources},
