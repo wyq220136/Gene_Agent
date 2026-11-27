@@ -23,7 +23,7 @@ class SDK:
         if self.fail:
             return 17
         self.width = 500
-        # 单次反馈可仍带运动 mode；动作时序以阻塞命令返回为准。
+        # 阻塞返回后还可能运动，必须等到 mode=3 才交接。
         self.modes = [4, 5, 4, 3, 3, 3]
         return 0
 
@@ -69,7 +69,7 @@ def test_all_commands_confirm_motion_then_reuse_across_runtimes_and_observations
     actual = .0792 if mode == "release" else .04
     assert result["success"] and result["measured_end_width_m"] == pytest.approx(actual)
     assert sdk.calls == ["position" if mode == "release" else mode]
-    assert len(result["endpoint_confirmation"]["readings"]) == 1
+    assert result["endpoint_confirmation"]["poll_count"] == 4
     reads = sdk.reads
     assert runtime()._read_start_width(None) == pytest.approx(actual)
     # 每一阶段创建新的 Runtime；夹爪连接和已确认终态跨阶段保留。
@@ -105,15 +105,57 @@ def test_direct_adapter_commands_invalidate_cached_endpoint(mode):
     assert gripper.initial_observed_width_m is None
 
 
-def test_blocking_return_uses_single_feedback_without_mode_polling(monkeypatch):
-    # 与 AffordToolAct 一致：SDK 阻塞返回决定动作完成，不轮询 mode=4/5。
+@pytest.mark.parametrize("target,intermediate,finished,moving_mode", [
+    (.0792, 854, 991, 5),  # 原 all/handle_pull/00_open 失败轨迹
+    (.041, 703, 508, 4),   # 原 pick/open 失败轨迹
+])
+def test_replay_intermediate_feedback_waits_then_publishes_final_only(
+        monkeypatch, target, intermediate, finished, moving_mode):
     sdk = SDK()
     gripper, _, runtime, kw = rig(sdk)
-    sdk.rm_get_gripper_state = lambda: (0, {"actpos": 500, "mode": 4})
-    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep",
-                        lambda _: pytest.fail("position must not poll"))
-    result = runtime().run_gripper_stage("open", **{**kw, "planned_start_width_m": .04})
-    assert result["success"]
-    assert len(result["endpoint_confirmation"]["readings"]) == 1
-    assert gripper.confirmed_endpoint_width_m == .04
+    rows = iter([(800, 3), (intermediate, moving_mode), (finished, 3)])
+    def feedback():
+        position, mode = next(rows)
+        assert gripper.confirmed_endpoint_width_m is None
+        return 0, {"actpos": position, "mode": mode, "error": 0}
+    sdk.rm_get_gripper_state = feedback
+    waits = []
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep", waits.append)
+    result = runtime().run_gripper_stage("open", **{**kw, "target_width_m": target})
+    assert result["success"] and sdk.calls == ["position"]
+    assert result["measured_end_width_m"] == pytest.approx(finished / 1000 * .08)
+    assert gripper.confirmed_endpoint_width_m == result["measured_end_width_m"]
+    assert waits == [.05]
+    confirmation = result["endpoint_confirmation"]
+    assert confirmation["poll_count"] == 2 and confirmation["motion_complete"] is True
+    assert confirmation["readings"][0]["motion_complete"] is False
+
+
+def test_motion_not_finished_never_compares_target_or_caches_even_if_width_matches(monkeypatch):
+    sdk = SDK()
+    gripper, _, runtime, kw = rig(sdk)
+    sdk.rm_get_gripper_state = lambda: (0, {"actpos": 500, "mode": 5})
+    ticks = iter(i * .05 for i in range(1000))
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep", lambda _: None)
+    result = runtime().run_gripper_stage("open", **{**kw, "planned_start_width_m": .04,
+                                                  "endpoint_stability_timeout_s": .15})
+    assert not result["success"]
+    assert "超时" in result["failure"]["message"]
+    assert result["endpoint_confirmation"]["motion_complete"] is False
+    assert gripper.confirmed_endpoint_width_m is None
+    assert sdk.calls == ["position"]
+
+
+def test_stopped_at_wrong_width_still_fails_with_original_tolerance(monkeypatch):
+    sdk = SDK()
+    gripper, _, runtime, kw = rig(sdk)
+    rows = iter([(800, 3), (854, 5), (880, 3)])
+    sdk.rm_get_gripper_state = lambda: (0, dict(zip(("actpos", "mode"), next(rows))))
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep", lambda _: None)
+    result = runtime().run_gripper_stage("open", **{**kw, "target_width_m": .0792})
+    assert not result["success"] and "运动完成后" in result["failure"]["message"]
+    assert result["endpoint_confirmation"]["motion_complete"] is True
+    assert result["hardware_command"]["target_width_m"] == pytest.approx(.0792)
+    assert gripper.confirmed_endpoint_width_m is None
     assert sdk.calls == ["position"]
