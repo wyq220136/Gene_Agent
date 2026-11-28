@@ -138,6 +138,9 @@ def run_observed_table_place(
         if not held.passed:
             return stop("preplace", "hold_not_confirmed", held.reason,
                         status="unknown" if held.status == "unknown" else "failed")
+        accepted_hold = getattr(observe_collision_scene, "accept_current_hold", None)
+        if accepted_hold is not None:
+            accepted_hold(scene)
         observed = _operation_state(scene)
         group = targets = descent = released_scene = settled_scene = release_report = None
         def perform(name):

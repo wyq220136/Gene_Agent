@@ -36,6 +36,7 @@ class RealWorldRuntime:
         tcp_speed_mps: float | None = None,
         execution_guard: Callable[[], None] | None = None,
         before_interaction: Callable[[str, str], None] | None = None,
+        after_interaction: Callable[[str, str], None] | None = None,
     ) -> None:
         if not scene_snapshot_sha256:
             raise ValueError("现场碰撞快照 hash 不能为空")
@@ -52,6 +53,7 @@ class RealWorldRuntime:
         self.pre_execute_scene_check = pre_execute_scene_check
         self.execution_guard = execution_guard
         self.before_interaction = before_interaction
+        self.after_interaction = after_interaction
         scale = float(motion_speed_scale)
         maximum = float(max_tcp_speed_mps)
         frequency = float(canfd_frequency_hz)
@@ -240,6 +242,8 @@ class RealWorldRuntime:
             "execution_duration_s": time.monotonic() - started,
             "claim": "仅证明关节轨迹已下发且实测终点到达；物体操作需另查后置条件",
         })
+        if self.after_interaction is not None:
+            self.after_interaction(stage.name, "motion")
         return record
 
     @timed_runtime_call("robot_execution", name_parameter="stage",
@@ -300,11 +304,6 @@ class RealWorldRuntime:
             "measured_end": None,
             "claim": "仅核对末关节目标与 TCP 高度；旧版此段不做场景碰撞规划",
         }
-        if command_mode == "position" or (command_mode == "release" and callable(bound_opening)):
-            record["hardware_command"].update(
-                target_width_m=command_target,
-                implementation="position",
-            )
         if not execute:
             return record
         if not checked_early:
@@ -341,6 +340,8 @@ class RealWorldRuntime:
         record.update(status="executed", measured_end=actual.to_dict(),
                       execution_duration_s=time.monotonic() - started,
                       claim="只证实末关节到达；旋钮是否被物理带动仍需现场检查")
+        if self.after_interaction is not None:
+            self.after_interaction(stage, "last_joint")
         return record
 
     @timed_runtime_call("robot_execution", name_parameter="stage",
@@ -531,4 +532,6 @@ class RealWorldRuntime:
             "status": "executed", "measured_end_width_m": measured_end_width,
             "claim": "夹爪命令已下发并读取开口；夹持物体需另查后置条件",
         })
+        if self.after_interaction is not None:
+            self.after_interaction(stage, command_mode)
         return record

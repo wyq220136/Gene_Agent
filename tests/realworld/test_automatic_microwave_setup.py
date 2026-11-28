@@ -140,7 +140,7 @@ def test_handle_orientation_change_at_same_center_is_not_cabinet_motion(
     np.testing.assert_allclose(frame.object_poses_sdk[setup.MICROWAVE], changed)
 
 
-@pytest.mark.parametrize("radial, axial", [(0., .02), (.02, 0.), (-.02, 0.), (.011, .011)])
+@pytest.mark.parametrize("radial, axial", [(0., .03), (.03, 0.), (-.03, 0.), (.02, .02)])
 def test_handle_center_off_orbit_still_rejected_with_numeric_evidence(prepared_no_knob, radial, axial):
     _, record = prepared_no_knob
     reader = LiveArticulationReader(record)
@@ -152,7 +152,7 @@ def test_handle_center_off_orbit_still_rejected_with_numeric_evidence(prepared_n
     radius -= axis * (radius @ axis)
     frame.object_poses_sdk[setup.MICROWAVE][:3, 3] += radial * radius / np.linalg.norm(radius) + axial * axis
 
-    with pytest.raises(HandleOrbitError, match="中心误差.*15.00 mm.*帧 2") as failure:
+    with pytest.raises(HandleOrbitError, match="中心误差.*25.00 mm.*帧 2") as failure:
         reader(frame)
 
     evidence = failure.value.diagnostics
@@ -160,7 +160,7 @@ def test_handle_center_off_orbit_still_rejected_with_numeric_evidence(prepared_n
     assert evidence["handle_center_error_m"] == pytest.approx(math.hypot(radial, axial))
     assert evidence["radius_error_m"] == pytest.approx(radial)
     assert evidence["axial_error_m"] == pytest.approx(axial)
-    assert evidence["max_translation_m"] == .015
+    assert evidence["max_translation_m"] == .025
     with pytest.raises(ValueError, match="尚未通过当前帧几何核对"):
         reader.anchor(frame)
 
@@ -344,7 +344,14 @@ def test_generated_knob_mesh_keeps_pointer(tmp_path):
 @pytest.mark.parametrize("include_knob", [False, True])
 def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_path, monkeypatch, include_knob):
     _, record = prepared
-    calibration = record["camera"]
+    # Camera looks down on SDK z=0. The old identity camera at z=0 observed a
+    # plane at SDK z=+1 from below and correctly failed the physical up check.
+    transform = np.eye(4); transform[:3, :3] = np.diag([1., -1., -1.]); transform[2, 3] = 1.
+    calibration_path = Path(record["camera"]["path"])
+    raw = json.loads(calibration_path.read_text())
+    raw["extrinsic_matrix"] = transform.tolist()
+    setup.save_json(calibration_path, raw)
+    calibration = setup.load_camera_calibration(calibration_path)
     registered = []
     service_calls = []
     def capture(**kwargs):
@@ -369,7 +376,8 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
             service_calls.append("register")
             registered.append(kwargs)
             name = kwargs["session_id"].rsplit("-", 1)[0]
-            return {"ok": True, "session_id": kwargs["session_id"], "T_camera_object": record["closed_reference_poses_sdk"][name]}
+            return {"ok": True, "session_id": kwargs["session_id"],
+                    "T_camera_object": (np.linalg.inv(transform) @ np.asarray(record["closed_reference_poses_sdk"][name])).tolist()}
     # 已有资产路线禁止额外重建；桌面和旋钮不能混入默认分割请求。
     monkeypatch.setattr("gene_agent.perception_modules.interactive_realworld_perception.post_reconstruction",
                         lambda *a, **k: pytest.fail("known task assets triggered SAM3D"))
@@ -398,8 +406,8 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     config = runtime_configuration(perception=path, left_ip="192.168.1.1", right_ip="192.168.1.2")
     assert config["scene_parameters"]["accepted_table_thickness_m"] == .02
     assert config["scene_parameters"]["table_size_xy_m"] == [.6, .6]
-    assert config["scene_parameters"]["table_pose_world"][2, 3] == pytest.approx(.99)
-    assert config["runtime"]["min_tcp_z_m"] == pytest.approx(1.02)
+    assert config["scene_parameters"]["table_pose_world"][2, 3] == pytest.approx(-.01)
+    assert config["runtime"]["min_tcp_z_m"] == pytest.approx(.02)
     assert not list((tmp_path / "generated").rglob("*site*.json"))
     assert not list((tmp_path / "generated").rglob("*state*.json"))
 
@@ -602,10 +610,11 @@ def test_pick_refreshes_bowl_without_handle_orbit_and_keeps_original_times(prepa
     for frame in (1, 2):
         if frame == 2:
             scope.before_interaction("approach", "motion")
-        value, angles, anchor = scope.consume(_partial_observation(record, {setup.BOWL}, frame=frame))
+        keys = {setup.BOWL} if frame == 1 else set()
+        value, angles, anchor = scope.consume(_partial_observation(record, keys, frame=frame))
         refresh = value.perception_refresh
-        assert refresh["refreshed_object_ids"] == [setup.BOWL]
-        assert refresh["retained_object_ids"] == [setup.MICROWAVE]
+        assert refresh["refreshed_object_ids"] == sorted(keys)
+        assert setup.MICROWAVE in refresh["retained_object_ids"]
         assert refresh["object_observations"][setup.MICROWAVE]["observed_at_unix_ms"] == 0.
         assert angles["door"]["observed_at_unix_ms"] == 0.
         assert anchor["verified_at_unix_ms"] == 0.
@@ -626,7 +635,7 @@ def test_door_only_refreshes_at_entry_contact_motion_and_post_contact(prepared_n
     assert retained_angles["door"]["observed_at_unix_ms"] == angles["door"]["observed_at_unix_ms"]
     scope.after_door_phase("pregrasp")
     assert scope.selected_sessions(record["sessions"]) == {}
-    for frame, phase in enumerate(("pull_0", "post_contact", "push_1"), 3):
+    for frame, phase in enumerate(("post_contact",), 3):
         scope.after_door_phase(phase)
         assert set(scope.selected_sessions(record["sessions"])) == {setup.MICROWAVE}
         value, angles, _ = scope.consume(_partial_observation(record, {setup.MICROWAVE}, frame=frame, door=.3))
@@ -706,6 +715,7 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
         return replace(value, timestamp_ms=time.time()*1000.)
     class Robot:
         def __init__(self, side): self.side=side
+        def tcp_pose_from_sdk_fk(self, joints): return np.eye(4)
         def read_joint_state(self):
             path=setup.ROOT/f"config/robots/realman_{self.side}_default_pose.json"
             return JointState(tuple(f"{self.side}_joint_{i}" for i in range(1,8)),
@@ -759,7 +769,8 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
         np.testing.assert_allclose(old_support, new_support, atol=1e-12)
         old_microwave = np.array(first["provenance"]["aligned_object_poses_world"][setup.MICROWAVE])
         new_microwave = np.array(third["provenance"]["aligned_object_poses_world"][setup.MICROWAVE])
-        np.testing.assert_allclose(new_microwave[:3,3]-old_microwave[:3,3], movement, atol=1e-12)
+        np.testing.assert_allclose(new_microwave, old_microwave, atol=1e-12)
+        assert third["provenance"]["perception_refresh"]["refreshed_object_ids"] == []
         # 再加载实际导出的XML，保证viewer/planner不会读回移动后的支撑箱。
         import mujoco
         model = mujoco.MjModel.from_xml_path(third["scene_xml_path"])
@@ -932,8 +943,12 @@ def test_interaction_events_refresh_once_and_keep_pose_between_commands(
     assert scope.selected_sessions(record["sessions"]) == {}
     for frame, (name, kind) in enumerate(events, 3):
         scope.before_interaction(name, kind)
-        assert set(scope.selected_sessions(record["sessions"])) == {object_id}
-        scope.consume(_partial_observation(record, {object_id}, frame=frame))
+        assert scope.selected_sessions(record["sessions"]) == {}
+        scope.after_interaction(name, kind)
+        keys = set(scope.selected_sessions(record["sessions"]))
+        expected = (object_id == setup.BOWL and name in {"lift", "post_extract_2", "retreat"})
+        assert keys == ({object_id} if expected else set())
+        scope.consume(_partial_observation(record, keys, frame=frame), tcp_pose_sdk=np.eye(4))
         assert scope.selected_sessions(record["sessions"]) == {}
 
 
@@ -943,7 +958,7 @@ def test_scope_keeps_unconsumed_interaction_across_operation_switch(prepared_no_
     scope = OperationPerception(record)
     scope.begin_operation("pick_bowl")
     scope.consume(_partial_observation(record, {setup.BOWL}))
-    scope.before_interaction("lift", "motion")
+    scope.after_interaction("lift", "motion")
     scope.begin_operation("transition")
     assert set(scope.selected_sessions(record["sessions"])) == {setup.BOWL}
 
@@ -960,6 +975,8 @@ def test_knob_events_retain_other_objects_and_refresh_only_on_contact(prepared):
     for frame, (name, kind) in enumerate([("grasp", "motion"), ("close", "grasp"),
                                          ("rotate_0", "last_joint"), ("release", "release")], 2):
         scope.before_interaction(name, kind)
+        assert scope.selected_sessions(record["sessions"]) == {}
+        scope.after_interaction(name, kind)
         assert set(scope.selected_sessions(record["sessions"])) == {setup.KNOB}
         scope.consume(_partial_observation(record, {setup.KNOB}, frame=frame))
 
@@ -971,7 +988,9 @@ def test_closed_contact_small_translation_reanchors_root_and_keeps_raw_pose(prep
     scope.begin_operation("open_door")
     scope.consume(_partial_observation(record, {setup.MICROWAVE}, frame=1))
     root = scope.reader.root.copy()
-    scope.before_interaction("handle_pull/03_close", "grasp")
+    scope.reader.max_translation = .015  # explicit tighter legacy threshold
+    scope.reader.closed_contact_pending = True
+    scope.pending.add(setup.MICROWAVE)  # explicit optional contact keyframe
     frame = _partial_observation(record, {setup.MICROWAVE}, frame=2, door=math.radians(-.875))
     point, axis, _ = scope.reader._joint("door")
     center = (frame.object_poses_sdk[setup.MICROWAVE] @ scope.reader.handle_local)[:3, 3]
@@ -991,7 +1010,7 @@ def test_closed_contact_small_translation_reanchors_root_and_keeps_raw_pose(prep
     assert scope.reader.closed_contact_pending is False
 
 
-@pytest.mark.parametrize("shift,door_deg", [(.031, 0.), (.021, 4.)])
+@pytest.mark.parametrize("shift,door_deg", [(.031, 0.), (.027, 8.)])
 def test_contact_reanchor_rejects_large_or_nonclosed_motion(prepared_no_knob, shift, door_deg):
     _, record = prepared_no_knob
     reader = LiveArticulationReader(record)

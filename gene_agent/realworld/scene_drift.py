@@ -101,7 +101,13 @@ def compare_scene_drift(
             and new_modes.get(name) == "retained_operation_state"
             and old_records.get(name) and old_records[name] == new_records.get(name)
         )
-        if not retained_transition:
+        estimated_transition = (
+            refresh.get("policy") == "affordtoolact_operation_scoped"
+            and name in refresh.get("estimated_object_ids", ())
+            and new_modes.get(name) == "kinematic_state_estimate"
+            and old_records.get(name) == new_records.get(name)
+            and refresh.get("state_estimates", {}).get(name, {}).get("sdk_tcp_pose") is not None)
+        if not retained_transition and not estimated_transition:
             failures.append(f"{name} 物体位姿来源已变化")
     for name in refresh.get("retained_object_ids", ()):
         if not old_records.get(name) or old_records.get(name) != new_records.get(name):
@@ -271,10 +277,13 @@ def bind_live_scene_guard(
             if runtime.before_interaction is not None and runtime.before_interaction != callback:
                 raise ValueError("Runtime 已有交互事件回调，不能悄悄覆盖")
             runtime.before_interaction = callback
+        completed = getattr(observe_collision_scene, "after_interaction", None)
+        if completed is not None:
+            runtime.after_interaction = completed
         return runtime
 
     # 包装后仍传递操作感知事件，避免发令前复核退回全对象感知。
-    for name in ("begin_operation", "after_door_phase", "before_interaction"):
+    for name in ("begin_operation", "after_door_phase", "before_interaction", "after_interaction", "set_door_final_phase", "accept_current_hold"):
         callback = getattr(observe_collision_scene, name, None)
         if callback is not None:
             setattr(observe, name, callback)

@@ -16,7 +16,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from gene_agent.knowledge.geometry import validate_pose
-from gene_agent.realworld.checks import has_realworld_success_evidence
+from gene_agent.realworld.checks import has_realworld_success_evidence, has_accepted_realworld_completion
 from gene_agent.realworld.microwave.door import (
     _measured_end_matches_scene,
     _scene_state_summary,
@@ -254,6 +254,12 @@ def run_observed_door_return_default_tcp(
                 "microwave_rotation_rad": rotation,
             },
         }
+        if "door" in (new_source.get("perception_refresh") or {}).get("retained_angle_keys", ()):
+            report["postcondition"]["source"] = "open_loop_object_state"
+            report["postcondition"]["evidence"].update(
+                policy="affordtoolact_operation_scoped", authorized_open_loop=True,
+                physical_verification=False, sdk_state_observed=True,
+                claim="机械臂终点实读；门角沿用此前稳定关键帧，没有重复视觉测门")
         report.update(status="executed", success=True)
         return save()
     except Exception as error:
@@ -348,7 +354,7 @@ def _postcondition_evidence(kind: str, outcome: dict) -> tuple[object, bool]:
                 "source": "door_skill_postconditions", "skills": rows}, checked
     evidence = (outcome.get("rotation_postcondition") if kind == "knob"
                 else outcome.get("postcondition"))
-    checked = has_realworld_success_evidence(evidence)
+    checked = has_accepted_realworld_completion(evidence)
     return evidence, checked
 
 
@@ -432,7 +438,10 @@ def run_observed_microwave_task1(
             or terminal_values.get("predicted"))
         current = OperationState(f"report:{output / step_id}", "subtask_report", {
             "result_ref": rows[-1]["result_ref"], "terminal_state": terminal,
-            "physical_state_known": not bool(unknown),
+            "robot_state_known": not bool(unknown),
+            "physical_state_known": not bool(unknown) and
+                (rows[-1].get("postcondition") or {}).get("source") != "open_loop_object_state",
+            "state_available_for_planning": not bool(unknown),
         })
         row = rows[-1]
         row['wall_time_s'] = perf_counter() - stage_started[0]
@@ -548,7 +557,13 @@ def run_observed_microwave_task1(
     if flow.success:
         report.update(status="executed", success=True)
     report['operation_success'] = bool(flow.success)
+    assumptions = [row['step_id'] if 'step_id' in row else row.get('step', row.get('name'))
+                   for row in rows if (row.get('postcondition') or {}).get('source') == 'open_loop_object_state']
+    report['assumptions_used'] = assumptions
+    report['completion_evidence_mode'] = 'mixed_observed_and_open_loop' if assumptions else 'observed'
+    report['physical_verification'] = bool(flow.success) and not assumptions
     report['task_success'] = bool(flow.success) if selection == 'all' and execute else None
+    report['verified_task_success'] = (bool(flow.success) and not assumptions) if selection == 'all' and execute else None
     report['actual_final'] = dict(current.values)
     report['timing'] = {'target_wall_s': sum(r.get('wall_time_s', 0.) for r in rows),
                         'source': 'perf_counter including observation/planning/execution/manual checks'}

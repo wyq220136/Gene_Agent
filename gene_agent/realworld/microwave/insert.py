@@ -165,6 +165,9 @@ def run_observed_bowl_insert(
                 "insert_geometry_screen_failed", "没有通过持碗进入、松爪包络和开爪撤离的完整候选")
         targets = prefix["targets"]
         held = linear = released_scene = settled_scene = release_report = None
+        accepted_hold = getattr(observe_collision_scene, "accept_current_hold", None)
+        if accepted_hold is not None:
+            accepted_hold(scene)
         def perform(name):
             nonlocal scene, observed, targets, held, linear, released_scene, settled_scene, release_report
             if name in {'held_turn', 'preplace'}:

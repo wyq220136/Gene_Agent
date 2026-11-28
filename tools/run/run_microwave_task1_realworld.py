@@ -700,6 +700,7 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
                 robots[group], gripper=grippers[group],
                 scene_snapshot_sha256=snapshot_sha256,
                 before_interaction=getattr(observer, "before_interaction", None),
+                after_interaction=getattr(observer, "after_interaction", None),
                 max_start_error_rad=speed["max_start_error_rad"],
                 tcp_height_fn=robots[group].tcp_height_from_sdk_fk,
                 min_tcp_z_m=speed["min_tcp_z_m"],
@@ -715,6 +716,8 @@ def run_site(config: dict, *, subtask: str, output_dir: str | Path,
         )
         try:
             options = {kind: dict(values) for kind, values in config["subtask_options"].items()}
+            if execute and "operation_perception" in observer_options:
+                observer_options["operation_perception"].configure_checks(options)
             if execute or (subtask in {"insert_bowl", "place_bowl_on_table"}
                            and config.get("prepared_hold_report") is not None):
                 # 从旧持碗报告开始的独立预检会采集新帧，仍需人工重新

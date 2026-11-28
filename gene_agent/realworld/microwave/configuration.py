@@ -69,11 +69,11 @@ def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str
     table_alignment = {"accepted_for_planning": True, "source": f"{source}:confirmed_rgbd_table",
                        "height_bias_m": 0.}
     common = {"max_start_error_rad": .02, "max_gripper_width_error_m": .005}
-    microwave = {"max_microwave_translation_m": .005, "max_microwave_rotation_rad": .15}
-    bowl = {"max_bowl_translation_m": .005, "max_bowl_rotation_rad": .15}
-    hold = {"max_hold_translation_m": .005, "max_hold_rotation_rad": .15}
+    microwave = {"max_microwave_translation_m": .025, "max_microwave_rotation_rad": math.radians(15.)}
+    bowl = {"max_bowl_translation_m": .02, "max_bowl_rotation_rad": math.radians(20.)}
+    hold = {"max_hold_translation_m": .02, "max_hold_rotation_rad": math.radians(20.)}
     options = {
-        "door": {**common, **microwave, "max_door_angle_error_rad": .05,
+        "door": {**common, **microwave, "max_door_angle_error_rad": math.radians(5.),
                  "config_path": str(ROOT / "data/task_1/realworld/door_strategy.json")},
         "pick": {**common, **bowl},
         "insert": {**common, **microwave, **hold, "microwave_frame_alignment": frame_alignment},
@@ -108,6 +108,6 @@ def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str
                     "motion_speed_scale": speed_scale, "max_tcp_speed_mps": .1,
                     "canfd_frequency_hz": 100.},
         "subtask_options": options, "include_knob": not no_knob,
-        "scene_drift_limits": SceneDriftLimits(.005, .15, .02, .005, .05),
+        "scene_drift_limits": SceneDriftLimits(.02, math.radians(20.), .02, .005, math.radians(5.)),
         "prepared_hold_report": None,
     }

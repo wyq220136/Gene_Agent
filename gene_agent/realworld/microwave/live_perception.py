@@ -52,7 +52,7 @@ class LiveArticulationReader:
     """
 
     def __init__(self, setup: dict, *, include_knob: bool = False,
-                 max_translation_m=.015, max_rotation_rad=.15):
+                 max_translation_m=.025, max_rotation_rad=.15):
         self.setup = setup
         self.assets = setup["assets"]
         self.include_knob = bool(include_knob)
@@ -89,9 +89,9 @@ class LiveArticulationReader:
 
     @staticmethod
     def _bounded(raw, limits, *, name):
-        # 零位附近的跟踪抖动允许 2°；不接受另一侧的错误 pose 或越界大角度。
+        # 传感测角在资产限位附近允许 5° 噪声；不接受另一侧的错误 pose 或越界大角度。
         low, high = limits
-        if raw < low - math.radians(2.) or raw > high + math.radians(2.):
+        if raw < low - math.radians(5.) or raw > high + math.radians(5.):
             raise ValueError(f"{name}实测角超出资产关节范围: {math.degrees(raw):.2f}°")
         return float(np.clip(raw, low, high))
 
@@ -107,7 +107,23 @@ class LiveArticulationReader:
         closed_handle = self.reference[MICROWAVE] @ self.handle_local
         live_handle = current[MICROWAVE] @ self.handle_local
         raw_door = _signed_angle(closed_handle[:3, 3] - point, live_handle[:3, 3] - point, axis)
-        door = self._bounded(raw_door, limits, name="门角")
+        orbit_angle = raw_door
+        plane_angle = getattr(self, "door_plane_angle", None)
+        # Plane is a second independent geometric cue, not a commanded 90deg prior.
+        # Reject ambiguity rather than rotating a robot/cabinet to make it fit.
+        if plane_angle is not None:
+            if abs(plane_angle - raw_door) > math.radians(10.):
+                raise HandleOrbitError("门板法向与把手绕轴测角相差超过10度", {
+                    "check": "door_plane_vs_handle", "orbit_angle_rad": raw_door,
+                    "plane_angle_rad": plane_angle, "frame_number": observed.frame_number})
+            raw_door = .5 * (raw_door + plane_angle)
+        try:
+            door = self._bounded(raw_door, limits, name="门角")
+        except ValueError as error:
+            raise HandleOrbitError(str(error), {"check": "door_angle_bounds",
+                "raw_angle_rad": raw_door, "orbit_angle_rad": orbit_angle,
+                "plane_angle_rad": plane_angle, "frame_number": observed.frame_number,
+                "limits_rad": list(limits), "sensor_padding_deg": 5.}) from error
         expected_handle_mesh = _axis_rotation(axis, door, point) @ self.reference[MICROWAVE]
         expected_handle = expected_handle_mesh @ self.handle_local
         # FoundationPose 返回 mesh 原坐标系 pose；它的原点不等于把手中心。
@@ -128,7 +144,7 @@ class LiveArticulationReader:
             delta = live_handle[:3, 3] - closed_handle[:3, 3]
             total_delta = self.root[:3, 3] + delta - self._initial_root[:3, 3]
             if (not self.include_knob and position_error > self.max_translation
-                    and abs(raw_door) <= math.radians(2.)
+                    and abs(raw_door) <= math.radians(5.)
                     and np.linalg.norm(delta) <= self.max_closed_contact_translation_m
                     and np.linalg.norm(total_delta) <= self.max_closed_contact_translation_m):
                 contact_reanchor = {
@@ -162,6 +178,7 @@ class LiveArticulationReader:
             "check": "handle_center_orbit", "frame_number": observed.frame_number,
             "observed_at_unix_ms": observed.timestamp_ms,
             "raw_angle_rad": raw_door, "angle_rad": door,
+            "orbit_angle_rad": orbit_angle, "plane_angle_rad": plane_angle,
             "handle_center_error_m": position_error, "max_translation_m": self.max_translation,
             "radius_error_m": live_radius - closed_radius,
             "axial_error_m": float((live_vector - closed_vector) @ axis),
@@ -188,7 +205,7 @@ class LiveArticulationReader:
 
         source = f"same_frame_foundationpose:{observed.frame_number}"
         readings = {"door": {"angle_rad": door, "observed_at_unix_ms": observed.timestamp_ms,
-                             "source": source + ":handle_orbit", "raw_angle_rad": raw_door,
+                             "source": source + (":door_plane_and_handle_orbit" if plane_angle is not None else ":handle_orbit"), "raw_angle_rad": raw_door,
                              "diagnostics": diagnostics}}
         if self.include_knob:
             point_knob, axis_knob, knob_limits = self._joint("knob")

@@ -77,6 +77,7 @@ def _object_pose_source_modes(object_ids, anchor_record, refresh):
     return {
         name: ("verified_stationary_anchor"
                if name == "Microwave/Microwave_0" and anchor_record is not None
+               else "kinematic_state_estimate" if name in (refresh or {}).get("estimated_object_ids", ())
                else "retained_operation_state" if name in retained else "same_frame")
         for name in object_ids
     }
@@ -526,7 +527,7 @@ def build_live_microwave_collision_scene(
         "declared_microwave_pose_mesh_path": str(microwave_pose_mesh_path),
         "door": checked_angles["door"], "knob": checked_angles["knob"],
         "include_knob": bool(include_knob),
-        "claim": "启用物体同帧；机器人与已测关节分别在有效期内读取，未观测部件不代表实测状态",
+        "claim": "相机和SDK按当前帧读取；物体各自的测量/缓存/估计来源见perception_refresh，估计不代表物理验证",
     }
     if refresh:
         source = result["provenance"]
@@ -573,7 +574,7 @@ def make_live_microwave_observer(
     base = Path(output_dir).expanduser().resolve()
     sequence = count()
 
-    def observe(*, gripper_width_overrides: Mapping[str, float] | None = None) -> dict:
+    def observe(*, gripper_width_overrides: Mapping[str, float] | None = None, _bootstrap_retry=False) -> dict:
         gripper_width_overrides = endpoint_overrides(grippers, gripper_width_overrides)
         folder = base / f"{next(sequence):04d}"
         if operation_perception is not None:
@@ -596,14 +597,22 @@ def make_live_microwave_observer(
             selected_sessions = (sessions if operation_perception is None else
                                  operation_perception.selected_sessions(sessions))
             if selected_sessions:
-                observed = track_observed_scene_from_capture(
-                    capture_dir=capture, pose_client=pose_client, sessions=selected_sessions,
-                    side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
-                    expected_serial=expected_serial, max_age_s=max_age_s,
-                    output_dir=folder / "tracked",
-                    fresh_estimation=True,
-                    **({"recover_session": recover_session} if recover_session is not None else {}),
-                )
+                from gene_agent.realworld.pose_tracking import PoseInitializationNeedsFreshFrame
+                try:
+                    observed = track_observed_scene_from_capture(
+                        capture_dir=capture, pose_client=pose_client, sessions=selected_sessions,
+                        side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
+                        expected_serial=expected_serial, max_age_s=max_age_s,
+                        output_dir=folder / "tracked",
+                        fresh_estimation=False,
+                        **({"recover_session": recover_session} if recover_session is not None else {}),
+                    )
+                except PoseInitializationNeedsFreshFrame:
+                    if _bootstrap_retry:
+                        raise
+                    if pending is not None:
+                        pending.result()
+                    return observe(gripper_width_overrides=gripper_width_overrides, _bootstrap_retry=True)
             else:
                 record = json.loads((capture / "camera.json").read_text(encoding="utf-8"))
                 observed = ObservedScene(
@@ -613,6 +622,7 @@ def make_live_microwave_observer(
                 )
             scoped_anchor = None
             from .live_perception import HandleOrbitError
+            from .operation_perception import KeyframeStateError
             diagnostics_path = folder / "door_handle_diagnostics.json"
             try:
                 if operation_perception is None:
@@ -621,8 +631,16 @@ def make_live_microwave_observer(
                         observed, _ = canonical(observed)
                     angles = angle_reader(observed)
                 else:
-                    observed, angles, scoped_anchor = operation_perception.consume(observed)
-            except HandleOrbitError as error:
+                    samples = None if pending is None else pending.result()
+                    sdk_tcp = (robots[static["active_group"]].tcp_pose_from_sdk_fk(
+                        robots[static["active_group"]].read_joint_state().positions_rad)
+                        if samples is None else samples[static["active_group"]]["tcp_pose_sdk"])
+                    observed, angles, scoped_anchor = operation_perception.consume(observed, tcp_pose_sdk=sdk_tcp, capture_dir=capture)
+            except (HandleOrbitError, KeyframeStateError) as error:
+                if isinstance(error, KeyframeStateError):
+                    diagnostics_path = folder / "object_state_diagnostics.json"
+                elif operation_perception is not None:
+                    error.diagnostics["door_plane"] = operation_perception.plane_diagnostics
                 try:
                     diagnostics_path.write_text(
                         json.dumps(error.diagnostics, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
@@ -658,6 +676,9 @@ def make_live_microwave_observer(
         observe.begin_operation = operation_perception.begin_operation
         observe.after_door_phase = operation_perception.after_door_phase
         observe.before_interaction = operation_perception.before_interaction
+        observe.after_interaction = operation_perception.after_interaction
+        observe.set_door_final_phase = operation_perception.set_door_final_phase
+        observe.accept_current_hold = operation_perception.accept_current_hold
     return observe
 
 

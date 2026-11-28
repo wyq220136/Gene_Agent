@@ -31,6 +31,22 @@ def has_realworld_success_evidence(result: Mapping | None) -> bool:
     return isinstance(source, str) and source in _REALWORLD_SUCCESS_SOURCES and not predicted
 
 
+def has_accepted_realworld_completion(result: Mapping | None) -> bool:
+    if has_realworld_success_evidence(result):
+        return True
+    if not isinstance(result, Mapping) or result.get("status") != "pass":
+        return False
+    evidence = result.get("evidence") or {}
+    return (result.get("source") == "open_loop_object_state"
+            and isinstance(evidence, Mapping)
+            and evidence.get("policy") == "affordtoolact_operation_scoped"
+            and evidence.get("authorized_open_loop") is True
+            and evidence.get("physical_verification") is False
+            and evidence.get("sdk_state_observed") is True
+            and evidence.get("source_frame_number") is not None
+            and bool(evidence.get("collision_snapshot_sha256")))
+
+
 def bind_check_to_scene(scene: dict, check: CheckResult) -> CheckResult:
     """将现场检查关联到当前观测帧，拒绝检查器返回的过期帧证据。"""
     evidence = dict(check.evidence)
@@ -64,13 +80,13 @@ def resolve_realworld_check(
             {**checked.evidence, "answered_at_unix_ms": int(time.time() * 1000)},
             checked.reason,
         )
-    if checked.passed and not has_realworld_success_evidence(checked.to_dict()):
+    if checked.passed and not has_accepted_realworld_completion(checked.to_dict()):
         raise ValueError("仿真、预测或未声明的证据来源不能作为真机后置条件")
     return checked
 
 
 __all__ = [
-    "bind_check_to_scene", "has_realworld_success_evidence",
+    "bind_check_to_scene", "has_realworld_success_evidence", "has_accepted_realworld_completion",
     "resolve_realworld_check", "execution_handoff_error",
     "check_observed_condition",
 ]

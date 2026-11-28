@@ -103,6 +103,10 @@ def capture_frozen_scene_frame(
     return output
 
 
+class PoseInitializationNeedsFreshFrame(ValueError):
+    """Cold registration completed; its old frame cannot be used for execution."""
+
+
 def track_observed_scene_from_capture(
     *, capture_dir: str | Path, pose_client,
     sessions: Mapping[str, str], side: str, camera_id: str,
@@ -206,8 +210,10 @@ def track_observed_scene_from_capture(
     if before != after:
         raise ValueError("多物体 tracking 期间采集文件已变化，不能声称同帧")
     verified_now = current if now_ms is not None else time.time() * 1000.
-    if verified_now - timestamp > age_limit * 1000.:
-        raise ValueError("多物体 tracking 完成时相机帧已过期")
+    processing_age_s = (verified_now - timestamp) / 1000.
+    expired = processing_age_s > age_limit
+    if expired and not (recovered or fresh):
+        raise ValueError(f"tracking 完成时相机帧已过期: {processing_age_s:.3f}s > {age_limit:.3f}s")
     output.mkdir(parents=True, exist_ok=True)
     camera_output = output / "camera" / f"camera_parameters_{camera_id}.json"
     camera_output.parent.mkdir(parents=True, exist_ok=True)
@@ -233,11 +239,15 @@ def track_observed_scene_from_capture(
         "sensor_timestamp_ms": sensor_timestamp,
         "object_ids": list(responses),
         "recovered_session_objects": recovered,
+        "processing_age_s": processing_age_s, "execution_frame_usable": not expired,
         "fresh_segmentation_registration_objects": fresh,
         "pose_update_method": ("current_frame_segmentation_then_registration"
                               if fresh_estimation else "session_tracking"),
         "claim": "本次启用对象使用同一冻结RGB-D；更新方式单独记录，不证明位姿精度或资产标定",
     }, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    if expired:
+        raise PoseInitializationNeedsFreshFrame(
+            f"冷注册已完成，旧帧龄 {processing_age_s:.3f}s；须重新采帧并跟踪，不重跑分割注册")
     return ObservedScene(
         side, str(camera_id), frame, timestamp, T_camera,
         {object_id: validate_pose(T_camera @ pose, field_name=f"T_sdk_{object_id}")

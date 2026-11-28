@@ -225,8 +225,10 @@ def run_observed_door_skill(
                 return save()
             previous_source = scene["provenance"]
             from .operation_perception import after_door_observation_phase
-            if phase.name.startswith(("pull_", "swing_", "push_")):
-                after_door_observation_phase(observe_collision_scene, phase.name)
+            set_final = getattr(observe_collision_scene, "set_door_final_phase", None)
+            if set_final is not None:
+                set_final(targets["phases"][-1].phase_id)
+            after_door_observation_phase(observe_collision_scene, phase)
             scene = observe_collision_scene()
             current_source = scene["provenance"]
             reanchor = (current_source.get("microwave_root_anchor") or {}).get("contact_reanchor")
@@ -257,7 +259,10 @@ def run_observed_door_skill(
                 return save()
             angle_check = door_angle_check(
                 current_source.get("door_angle_rad"), target_rad=phase.door_angle_rad,
-                tolerance_rad=max_door_angle_error_rad, source="observed_door_angle",
+                tolerance_rad=max_door_angle_error_rad, source=(
+                    "executed_phase_assumption" if "Microwave/Microwave_0" in
+                    (current_source.get("perception_refresh") or {}).get("estimated_object_ids", ())
+                    else "observed_door_angle"),
             )
             if angle_check.status == "unknown":
                 row["status"] = "unknown"
@@ -267,6 +272,10 @@ def run_observed_door_skill(
                                              "message": angle_check.reason})
                 return save()
             row["observed_after"] = _scene_state_summary(scene)
+            row["door_angle_evidence_mode"] = (
+                "executed_phase_assumption" if "Microwave/Microwave_0" in
+                (current_source.get("perception_refresh") or {}).get("estimated_object_ids", ())
+                else "vision_or_retained_measurement")
             discontinuity = _measured_end_matches_scene(
                 execution, scene, max_joint_error_rad=max_start_error_rad,
                 max_width_error_m=max_gripper_width_error_m,
