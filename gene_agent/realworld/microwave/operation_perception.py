@@ -44,7 +44,7 @@ class OperationPerception:
     """真机关键帧感知、缓存和有来源的状态估计。
 
     SDK始终实读；可见关键帧视觉校验，炉内遮挡用已提交的夹持/释放关系。
-    关闭参考的门板修正仅在运行副本中应用，不改写标定和原始参考文件。
+    新准备记录已重建闭门机身，运行直接消费；旧记录保留原有运行副本修正。
     每个对象单独保留测量时间；估计和允许继续的开环检查均不冒充实测。
     """
     def __init__(self, setup, *, include_knob=False, sleep=None):
@@ -52,14 +52,22 @@ class OperationPerception:
         from .door_plane import DoorPlaneObserver
         self.door_plane = DoorPlaneObserver(setup["assets"])
         self.reference_plane = {"applied": False, "reason": "reference_rgbd_unavailable"}
-        reference_capture = self.door_plane.reference_capture(setup)
-        if reference_capture is not None and self.door_plane.available:
-            pose, self.reference_plane = self.door_plane.correct(
-                self.reader.reference[MICROWAVE], reference_capture, setup["camera"]["T_sdk_camera"])
-            if self.reference_plane["applied"]:
-                self.reader.reference[MICROWAVE] = pose
-                self.reader.root = pose @ self.reader.alignment
-                self.reader._initial_root = self.reader.root.copy()
+        reconstruction = setup.get("microwave_frame_reconstruction")
+        if reconstruction is not None:
+            # 准备阶段已尝试重建（或明确回用原参考）；不在每次启动时再次修正。
+            self.reference_plane = deepcopy(reconstruction.get("door_plane", self.reference_plane))
+            if not reconstruction.get("applied"):
+                self.reference_plane["applied"] = False
+        else:
+            # 兼容既有准备目录；不修改历史输入或强制新增格式验收。
+            reference_capture = self.door_plane.reference_capture(setup)
+            if reference_capture is not None and self.door_plane.available:
+                pose, self.reference_plane = self.door_plane.correct(
+                    self.reader.reference[MICROWAVE], reference_capture, setup["camera"]["T_sdk_camera"])
+                if self.reference_plane["applied"]:
+                    self.reader.reference[MICROWAVE] = pose
+                    self.reader.root = pose @ self.reader.alignment
+                    self.reader._initial_root = self.reader.root.copy()
         self.include_knob = include_knob
         frame = setup.get("reference_frame", {"frame_number": 0})
         stamp = float(frame.get("captured_at_unix_ms", 0.))

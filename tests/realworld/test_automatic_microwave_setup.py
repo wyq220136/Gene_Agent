@@ -342,7 +342,8 @@ def test_generated_knob_mesh_keeps_pointer(tmp_path):
 
 
 @pytest.mark.parametrize("include_knob", [False, True])
-def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_path, monkeypatch, include_knob):
+@pytest.mark.parametrize("frame_rebuild", ["unchanged", "applied", "error"])
+def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_path, monkeypatch, include_knob, frame_rebuild):
     _, record = prepared
     # Camera looks down on SDK z=0. The old identity camera at z=0 observed a
     # plane at SDK z=+1 from below and correctly failed the physical up check.
@@ -387,6 +388,16 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     monkeypatch.setattr("gene_agent.perception_modules.pose_est.pose_client.PoseClient", Pose)
     if not include_knob:
         monkeypatch.setattr(setup, "export_knob_mesh", lambda *a, **k: pytest.fail("default exported knob mesh"))
+    if frame_rebuild != "unchanged":
+        from gene_agent.realworld.microwave.door_plane import DoorPlaneObserver
+        def auxiliary(observer, pose, *args):
+            if frame_rebuild == "error":
+                raise RuntimeError("auxiliary unavailable")
+            angle = math.radians(7.)
+            return np.asarray(pose), {"applied": True,
+                "normal_sdk": [math.sin(angle), -math.cos(angle), 0.],
+                "yaw_correction_deg": 7.}
+        monkeypatch.setattr(DoorPlaneObserver, "correct", auxiliary)
     answers = iter(("CLOSED_ZERO" if include_knob else "CLOSED", "ACCEPT"))
     flags = {"include_knob": True} if include_knob else {}
     path = setup.prepare_perception(camera_params=calibration["path"], output=tmp_path / "generated", ask=lambda _: next(answers), **flags)
@@ -400,6 +411,17 @@ def test_prepare_pipeline_writes_every_input_without_manual_json(prepared, tmp_p
     assert (setup.KNOB in result["sessions"]) is include_knob
     assert len({str(row["rgb_path"]) for row in registered}) == 1
     assert result["accepted"] is True
+    reconstruction = result["microwave_frame_reconstruction"]
+    assert reconstruction["applied"] is (frame_rebuild == "applied")
+    if frame_rebuild == "applied":
+        root = np.asarray(result["closed_reference_poses_sdk"][setup.MICROWAVE]) @ np.asarray(record["assets"]["alignment"])
+        np.testing.assert_allclose(root, reconstruction["T_sdk_scene_asset"], atol=1e-12)
+        assert not np.allclose(result["closed_reference_poses_sdk"][setup.MICROWAVE],
+                               record["closed_reference_poses_sdk"][setup.MICROWAVE])
+    if frame_rebuild == "error":
+        assert reconstruction["error_type"] == "RuntimeError"
+        np.testing.assert_allclose(result["closed_reference_poses_sdk"][setup.MICROWAVE],
+                                   record["closed_reference_poses_sdk"][setup.MICROWAVE], atol=1e-12)
     assert not (path.parent / "masks/table.png").exists()
     assert result["table"]["table_size_xy_m"] == [.6, .6]
     assert result["table"]["accepted_table_thickness_m"] == .02

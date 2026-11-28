@@ -286,6 +286,22 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
         normalized, pose_diagnostics = canonical_handle_pose(poses[MICROWAVE], disambiguation)
         poses[MICROWAVE] = normalized.tolist()
         save_json(folder / "microwave_pose_disambiguation.json", pose_diagnostics)
+        # 同一冻结帧中重建机身，不新增拍照/分割/注册或现场确认。
+        # 未被现有门限采纳时保留原参考，不能让可选辅助新增退出条件。
+        try:
+            from .door_plane import DoorPlaneObserver
+            rebuilt, frame_reconstruction = DoorPlaneObserver(assets).reconstruct_closed(
+                poses[MICROWAVE], capture, calibration["T_sdk_camera"],
+                np.asarray(table["table_pose_world"])[:3, 2])
+            poses[MICROWAVE] = rebuilt.tolist()
+        except (ValueError, TypeError, KeyError, AttributeError, OSError, RuntimeError) as error:
+            frame_reconstruction = {
+                "method": "closed_door_plane_table_up_and_handle_center",
+                "applied": False, "reason": "auxiliary_reconstruction_unavailable",
+                "fallback": "original_registered_reference",
+                "error_type": type(error).__name__, "detail": str(error)}
+        print(f"[perception] microwave_frame_reconstruction: "
+              f"applied={frame_reconstruction['applied']} reason={frame_reconstruction['reason']}")
         # CLOSED/ACCEPT 只确认门零位和 mask，不能替代碗 pose 的几何一致性。
         from .bowl_pose_check import check_bowl_pose_table, BowlPoseTableError
         try:
@@ -308,6 +324,7 @@ def prepare_perception(*, camera_params: str | Path, output: str | Path,
     record = {"format": FORMAT, "geometry_contract_version": 2,
               "raw_closed_reference_poses_sdk": raw_reference,
               "microwave_pose_disambiguation": disambiguation,
+              "microwave_frame_reconstruction": frame_reconstruction,
               "microwave_pose_diagnostics": pose_diagnostics, "accepted": True, "camera": calibration, "include_knob": bool(include_knob),
               "camera_endpoint": camera_endpoint, "pose_server": pose_server,
               "session_recovery": {name: {"seg_server": seg_server,

@@ -27,6 +27,7 @@ def _origin(element):
 
 class DoorPlaneObserver:
     def __init__(self, assets):
+        self.assets = assets
         urdfs = [Path(name) for name in assets.get('sources', {}) if name.endswith('.urdf')]
         self.available = len(urdfs) == 1 and urdfs[0].is_file()
         if not self.available:
@@ -85,6 +86,60 @@ class DoorPlaneObserver:
         if fraction < .6 or rmse > .006 or abs(normal[2]) > .35 or abs(yaw_deg) > 15.:
             return pose.copy(), {**diagnostic, 'reason': 'plane_quality_or_correction_out_of_bounds'}
         return corrected, {**diagnostic, 'applied': True, 'reason': 'bounded_door_plane_yaw'}
+
+    def reconstruct_closed(self, pose_sdk, capture, T_sdk_camera, up_sdk):
+        """准备阶段重建闭门机身；不改变原有平面采纳门限，辅助失败不退出。"""
+        pose = np.array(pose_sdk, dtype=float, copy=True)
+        diagnostic = {
+            "method": "closed_door_plane_table_up_and_handle_center",
+            "applied": False, "fallback": "original_registered_reference",
+        }
+        try:
+            _, plane = self.correct(pose, capture, T_sdk_camera)
+            diagnostic["door_plane"] = plane
+            if not plane["applied"]:
+                return pose, {**diagnostic, "reason": plane.get("reason", "plane_not_applied")}
+
+            alignment = np.asarray(self.assets["alignment"], dtype=float)
+            inverse_alignment = np.linalg.inv(alignment)
+            asset_handle = np.asarray(self.assets["T_asset_handle"], dtype=float)
+            # 把手注册的抓握中心作平移锚点；不用部分可见点云的质心替代它。
+            handle_sdk = (pose @ alignment @ asset_handle)[:3, 3]
+            up = np.asarray(up_sdk, dtype=float)
+            up = up / np.linalg.norm(up)
+            normal = np.asarray(plane["normal_sdk"], dtype=float)
+            normal = normal - up * float(normal @ up)
+            normal = normal / np.linalg.norm(normal)
+            # door.pose是mesh→门板；先回到asset坐标，再与实测法向建立对应。
+            asset_up = np.array([0., 0., 1.])
+            asset_normal = inverse_alignment[:3, :3] @ self.door.pose[:3, 2]
+            asset_normal -= asset_up * float(asset_normal @ asset_up)
+            asset_normal /= np.linalg.norm(asset_normal)
+            measured_basis = np.column_stack((normal, up, np.cross(normal, up)))
+            asset_basis = np.column_stack((asset_normal, asset_up,
+                                          np.cross(asset_normal, asset_up)))
+            root = np.eye(4)
+            root[:3, :3] = measured_basis @ asset_basis.T
+            root[:3, 3] = handle_sdk - root[:3, :3] @ asset_handle[:3, 3]
+            reference = root @ inverse_alignment
+            if not np.isfinite(reference).all():
+                return pose, {**diagnostic, "reason": "degenerate_reconstruction_geometry"}
+
+            joint = self.assets["joints"]["door"]
+            door_joint = root @ np.asarray(joint["T_asset_joint"])
+            axis = root[:3, :3] @ np.asarray(joint["axis_asset"])
+            diagnostic.update(applied=True, reason="accepted_plane_rebuilt_closed_frame",
+                fallback=None, T_sdk_scene_asset=root.tolist(),
+                T_sdk_door_joint=door_joint.tolist(), door_axis_sdk=axis.tolist(),
+                handle_center_sdk=handle_sdk.tolist(),
+                handle_center_after_sdk=(root @ asset_handle)[:3, 3].tolist(),
+                table_up_sdk=up.tolist(), corrected_reference_pose_sdk=reference.tolist())
+            return reference, diagnostic
+        except (ValueError, TypeError, KeyError, AttributeError, OSError, RuntimeError,
+                np.linalg.LinAlgError) as error:
+            # 可选几何辅助不添加任务失败条件；现有注册/输入检查保持原样。
+            return pose, {**diagnostic, "reason": "auxiliary_reconstruction_unavailable",
+                          "error_type": type(error).__name__, "detail": str(error)}
 
     @staticmethod
     def reference_capture(setup):
