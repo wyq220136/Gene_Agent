@@ -73,6 +73,7 @@ class MotionFailureSummary:
     local_candidate_success_count: int | None = None
     best_position_error_m: float | None = None
     best_rotation_error_rad: float | None = None
+    pose_error_source: str | None = None
     scene_collision: bool | None = None
     self_collision: bool | None = None
     joint_limit_violation: bool | None = None
@@ -274,6 +275,7 @@ def summarize_motion_failure(
                                else float(selected["position_error_m"])),
         best_rotation_error_rad=(None if selected.get("rotation_error_rad") is None
                                  else float(selected["rotation_error_rad"])),
+        pose_error_source=selected.get("pose_error_source"),
         scene_collision=scene_collision,
         self_collision=self_collision,
         joint_limit_violation=joint_limit,

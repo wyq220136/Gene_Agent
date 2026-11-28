@@ -19,6 +19,7 @@ from ..path_metrics import measure_linear_tcp_path, measure_pivot_tcp_path
 from ..configuration import CollisionMode, resolve_collision_mode, collision_mode_metadata
 from .approximate import ApproximateIKBudget, plan_with_approximate_ik
 from .config_io import load_robot_yaml
+from .pose_error_logging import backend_error_metrics, annotate_tcp_pose_errors
 
 from ..model import (
     JointState as MotionJointState,
@@ -253,8 +254,11 @@ def solver_failure_diagnostic(raw, operation: str, solver=None) -> dict:
         reason = "trajectory_optimization_failed"
     return {
         "reason": reason,
-        "position_error_m": position_error,
-        "rotation_error_rad": rotation_error,
+        "position_error_m": None,
+        "rotation_error_rad": None,
+        "backend_error_metrics": backend_error_metrics(position_error, rotation_error),
+        "pose_error_source": "world_tcp_fk_unavailable",
+        "pose_converged_source": "backend_aggregate_metrics",
         "position_tolerance_m": position_tolerance,
         "rotation_tolerance_rad": rotation_tolerance,
         "position_converged": position_converged,
@@ -336,8 +340,11 @@ def summarize_ik_failure(raw, solver) -> dict:
                 "success": bool(success[index]),
                 "constraint_feasible": bool(feasible[index]),
                 "pose_converged": bool(converged[index]),
-                "position_error_m": float(position[index]),
-                "rotation_error_rad": float(rotation[index]),
+                "position_error_m": None,
+                "rotation_error_rad": None,
+                "backend_error_metrics": backend_error_metrics(position[index], rotation[index]),
+                "pose_error_source": "world_tcp_fk_unavailable",
+                "pose_converged_source": "backend_aggregate_metrics",
                 "joint_positions_rad": solutions[index].astype(float).tolist(),
             }
             for index in range(count)
@@ -1706,6 +1713,10 @@ class SynchronousPlanner:
                         empty["ik_diagnostic_error"] = (
                             f"{type(diagnostic_error).__name__}: {diagnostic_error}"
                         )
+                    # 一次batch FK核对16个候选；后端多tool聚合误差不是TCP距离。
+                    if empty.get("ik_diagnostic") is not None:
+                        annotate_tcp_pose_errors(empty["ik_diagnostic"], target,
+                            self.joint_names, fk_batch=self.fk_batch)
                     empty["duration_s"] = time.perf_counter()-started
                     detail = classify_failure_detail(
                         "goal_ik",
@@ -1802,6 +1813,9 @@ class SynchronousPlanner:
                                 diagnostic['collision_confirmed']=bool(diagnostic['collision_check']['self_collision'] or diagnostic['collision_check']['scene_collision'])
                         except Exception as diagnostic_error:
                             diagnostic["collision_check_error"] = f"{type(diagnostic_error).__name__}: {diagnostic_error}"
+                if operation == "ik":
+                    annotate_tcp_pose_errors(diagnostic, target, self.joint_names,
+                                             fk_batch=self.fk_batch)
                 result["solver_diagnostic"] = diagnostic
                 detail = classify_failure_detail(
                     "goal_ik" if operation == "ik" else "trajectory", diagnostic,
@@ -2237,6 +2251,17 @@ class SynchronousPlanner:
                         item.update(failure_category="ik_constraint_rejected",
                                     message=detail["human_summary"])
                 rows.append(item)
+            failed_indices = [i for i, row in enumerate(rows) if row.get("solver_diagnostic")]
+            if failed_indices:
+                try:
+                    failed_poses = self.fk_batch(self.joint_names, solutions[failed_indices])
+                    for offset, index in enumerate(failed_indices):
+                        annotate_tcp_pose_errors(rows[index]["solver_diagnostic"], targets[index],
+                            self.joint_names, fk_poses=failed_poses[offset:offset + 1])
+                except Exception as error:
+                    for index in failed_indices:
+                        rows[index]["solver_diagnostic"]["tcp_pose_error_recalculation_error"] = (
+                            f"{type(error).__name__}: {error}")
             # 包含逐项复核及必要的失败诊断；不能在后处理之前结束计时。
             elapsed = time.perf_counter() - started
             for item in rows:

@@ -10,7 +10,7 @@
 | 查看已保存的 Skill 记录 | [view_skill_run.py](view_skill_run.py) |
 | 只读 MuJoCo 回放 | [view_skill_mujoco.py](view_skill_mujoco.py) |
 | 检查阶段状态链，不启动 GUI | [inspect_skill_run.py](inspect_skill_run.py) |
-| 查看真机实际碗/桌面、规划障碍、抓取候选、失败原因和已保存轨迹（AffordToolAct Viser） | [view_realworld_scene.py](view_realworld_scene.py) |
+| 真机六视图：初始对齐、规划轨迹、逐帧点云、夹爪、FoundationPose 与联合回放（`--follow` 跟随落盘） | [view_realworld_scene.py](view_realworld_scene.py) |
 | 只微调标定 SDK X/Z 平移，机器人固定 | [tune_camera_translation.py](../diagnostics/tune_camera_translation.py) |
 | 检查重建桌面场景 | [view_reconstructed_tabletop_scene.py](view_reconstructed_tabletop_scene.py) |
 | 独立查看 benchmark 初态，不运行 policy | [view_benchmark.py](view_benchmark.py) |

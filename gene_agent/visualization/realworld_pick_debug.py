@@ -94,7 +94,9 @@ def _trajectory_rows(value: Any, *, source: str, context: str = ""):
 def _load_trajectories(run: Path, selection_path: Path, selection: dict) -> list[dict]:
     sources = [(selection_path, selection)]
     if run.is_dir():
-        for path in sorted(run.rglob("*_result.json")):
+        paths = set(run.rglob("*_result.json"))
+        paths.update(run.rglob("stage.json"))
+        for path in sorted(paths):
             if "initial_scene" in path.relative_to(run).parts or path.resolve() == selection_path:
                 continue
             try:
@@ -107,7 +109,7 @@ def _load_trajectories(run: Path, selection_path: Path, selection: dict) -> list
                 value, source=str(path), context=path.stem):
             names = tuple(str(name) for name in trajectory.get("joint_names", ()))
             positions = np.asarray(trajectory.get("positions_rad"), dtype=float)
-            if not names or positions.ndim != 2 or positions.shape[1] != len(names):
+            if not names or positions.ndim != 2 or positions.shape[1] != len(names) or not np.isfinite(positions).all():
                 continue
             times = np.asarray(trajectory.get("times_s", range(len(positions))), dtype=float)
             if times.shape != (len(positions),):

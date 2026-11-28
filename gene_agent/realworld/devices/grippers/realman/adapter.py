@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 
 from gene_agent.realworld.gripper_state import invalidate_endpoint
 
@@ -77,6 +78,7 @@ class RealmanGripperAdapter:
         width = max(0.0, position) / 1000.0 * self.max_width_m
         self.last_reading = {
             "raw": value, "actpos": position, "width_m": width,
+            "sampled_at_unix_ms": time.time() * 1000.,
             "negative_endpoint_clamped": position < 0,
             # mode=4/5 仍在运动；status 仅表示在线，不是到位信号。
             "motion_complete": state.get("mode") in (1, 2, 3, 6),

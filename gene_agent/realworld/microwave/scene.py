@@ -584,6 +584,14 @@ def make_live_microwave_observer(
             expected_serial=expected_serial,
             **({"capture_session": capture_session} if capture_session is not None else {}),
         )
+        # 只保存显示所需坐标链，不额外读取设备。即使后续感知/导出失败，
+        # 当前原始点云仍可在固定 world 下检查；不沿用其他帧的物体位姿。
+        (capture / "viewer_context.json").write_text(json.dumps({
+            "schema_version": 1, "T_sdk_camera": np.asarray(T_sdk_camera).tolist(),
+            **({"T_world_sdk": np.asarray(static["T_world_sdk"]).tolist()}
+               if "T_world_sdk" in static else {}),
+            "expected_serial": expected_serial,
+        }, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         if camera_calibration is not None:
             from PIL import Image
             from .perception_setup import check_capture_camera

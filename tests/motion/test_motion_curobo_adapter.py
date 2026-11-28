@@ -246,7 +246,8 @@ def test_ik_diagnostic_distinguishes_pose_error_from_feasible_constraint() -> No
     })()
     diagnostic = solver_failure_diagnostic(raw, "ik", _FakeSolver())
     assert diagnostic["reason"] == "pose_not_converged"
-    assert diagnostic["position_error_m"] == pytest.approx(0.0078)
+    assert diagnostic["position_error_m"] is None  # no physical FK evidence here
+    assert diagnostic["backend_error_metrics"]["position_error"] == pytest.approx(0.0078)
     assert diagnostic["position_tolerance_m"] == 0.005
     assert diagnostic["constraint_feasible"] is True
 

@@ -66,6 +66,8 @@ def plan_with_approximate_ik(
     candidates = []
     for index, seed in enumerate(seeds):
         try:
+            # 使用独立FK核对的物理TCP误差，不能让混排的后端聚合值误筛
+            # 正常候选。阈值、逐候选FK与完整约束复核保持原定义；未知则不准入。
             position = float(seed["position_error_m"])
             rotation = float(seed["rotation_error_rad"])
         except (KeyError, TypeError, ValueError):

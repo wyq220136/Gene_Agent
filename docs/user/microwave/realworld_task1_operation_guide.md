@@ -296,86 +296,89 @@ ssh -N -L 8083:127.0.0.1:8083 58.220.16.98
 
 然后打开 `http://127.0.0.1:8083/overview/alignment.html`，或对应的 `table_roi/` 页面。
 
-## 5.2 AffordToolAct Viser：查看真机现场、抓取候选、失败与轨迹
+## 5.2 真机统一 Viser：六视图查看初始对齐、轨迹和逐帧感知
 
-该入口迁移 AffordToolAct `visualization/scene/viser_viewer.py` 的坐标轴和图层开关，
-通过 Gene 的同一套 visual/规划碰撞适配显示**本轮运行的冻结初始输入**。
-若运行目录内存在抓碗 `selection.json`，还会自动显示全部候选 TCP、抓取轴、
-候选状态、首个拒绝阶段、底层失败原因和桌面抬升修正线；若保存了关节轨迹，
-可用时间轴播放机器人 FK 和 TCP 路径。失败发生在轨迹生成前时，界面明确显示“无轨迹”原因，
-不会生成一条虚构回放。
-它从 `initial_scene` 验证 hash、恢复原模型和两臂/夹爪 qpos，仅执行静态 FK；
-不会落稳物体、重新测桌面、生成候选、规划或连接机器人。
-新运行的 `diagnostic_manifest.json.scene_viewer` 保存查看入口及参数。
-已有日志也可以直接使用，不要求重新跑真机。
+一个入口、一个浏览器页面。默认界面提供六个按钮，切换同一 3D 画布的显示内容：
 
-在 **58.220.16.98** 上启动（本次附件对应目录名为 `task1_plan_20261124_200548`）：
+| 按钮 | 显示内容 | 背景与时间轴 |
+|---|---|---|
+| 1 · 初始标定 / 点云对齐 | 冻结初始 RGB-D、机器人模型（原 URDF 转换的冻结模型）、SDK/相机/物体/桌面坐标轴、原始注册碗 mesh、规划障碍；有保存 SDK FK TCP 时与模型 FK TCP 对照 | 初始感知静态结果 |
+| 2 · 规划轨迹 | 所有已保存阶段的机器人关节轨迹及蓝色 TCP FK 路径，不要求存在抓碗 selection | 初始点云固定；独立规划时间轴 |
+| 3 · 感知点云逐帧 | 每次采集的原始 RGB-D 点云 | 观测序号、上一帧/下一帧、播放/暂停、帧率 |
+| 4 · 点云 + 夹爪状态 | 本帧两臂/夹爪 FK，开口数值与来源；有记录时显示 SDK TCP 轴 | 与视图3共用观测帧点云 |
+| 5 · 点云 + 物体 axis / bbox | 当帧原始 FoundationPose 估计轴及注册 mesh 局部包围盒，经估计 pose 转到 world；右侧 RGB 叠加当帧已保存的 SAM3 mask | 与视图3共用观测帧点云 |
+| 6 · 点云 + 夹爪 + 物体 | 同时显示4和5 | 与视图3共用观测帧点云 |
+
+### 一条命令启动
+
+在 **58.220.16.98** 上，从项目根目录执行：
 
 ```bash
 cd /data1/yuquan/Gene_agent
-PY=/data1/yuquan/miniconda3/envs/gene_agent/bin/python
-OUT=runs/realworld/task1_plan_20261124_200548
-"$PY" "$PWD/tools/viewers/view_realworld_scene.py" \
-  --run "$OUT" --host 127.0.0.1 --port 8120
+/data1/yuquan/miniconda3/envs/gene_agent/bin/python tools/viewers/view_realworld_scene.py \
+  --run runs/realworld/你的运行目录 --host 127.0.0.1 --port 8120
 ```
 
-`OUT` 必须指向你实际保存/解压该轮日志的位置；上面的目录名不是自动发现结果。
-运行产生在其他主机时，不要沿用日志里的 `/home/ubuntu/...` 绝对地址。
-该工具使用包内冻结资产重定位；支持 `--run /实际路径/initial_scene` 或 `manifest.json`，
-也支持**已位于运行该工具主机上**的日志压缩包，例如：
+`--run` 指向具体一轮运行，包含 `initial_scene/manifest.json` 和 `observations/`。例如现有只规划记录为 `runs/realworld/task1_plan_20261124_200548`；该记录只有一帧且尚未生成轨迹，因此可以检查对齐，无法凭空播放后续动作。
+
+运行尚未结束时，在另一个终端启动同一条命令并增加 `--follow`：
 
 ```bash
-"$PY" "$PWD/tools/viewers/view_realworld_scene.py" \
-  --run '/实际保存路径/task.tar(3).gz' --host 127.0.0.1 --port 8120
+/data1/yuquan/miniconda3/envs/gene_agent/bin/python tools/viewers/view_realworld_scene.py \
+  --run runs/realworld/正在运行的目录 --follow --host 127.0.0.1 --port 8120
 ```
 
-压缩包必须只含一个 `initial_scene`；工具只把该场景包提取到临时目录，退出时清理。
-不自动上传日志、不读取附件中的操作指令，也不更改原运行记录。
-显示解释器需要 `viser`、`mujoco`、`numpy`、`scipy`、`trimesh`、`Pillow`。
+`--follow` 每两秒刷新新增的完整 RGB-D、观测状态及报告；滑块可查看已落盘帧。它不额外请求相机、SAM3、FoundationPose 或机器人，不改变任务的采集频率。需要 `initial_scene` 已保存。默认每帧最多显示60000点，可用 `--max-points 100000` 调整；仅减少显示采样，不改变深度或原日志。
 
-如果 `selection.json` 是单独从真机复制出来的，可显式指定：
-
-```bash
-"$PY" "$PWD/tools/viewers/view_realworld_scene.py" \
-  --run "$OUT" --selection /实际路径/selection.json --host 127.0.0.1 --port 8120
-```
-
-工具会比较 selection 与 `initial_scene` 的快照标识；不一致时界面显示醒目警告，
-此时只能用于观察候选几何，不能声称两份材料来自同一轮现场。
-
-在自己电脑另开终端（使用当前能登录该服务器的 SSH 配置；显式参数如下）：
+在自己电脑另开终端，转发端口：
 
 ```bash
 ssh -N -L 8120:127.0.0.1:8120 -p 23400 yuquan@58.220.16.98
 ```
 
-浏览器打开 **http://127.0.0.1:8120**。终端保持运行，`Ctrl+C` 退出。
+浏览器打开 **http://127.0.0.1:8120**。服务器上的显示命令保持运行，`Ctrl+C` 退出。若在真机主机本地启动，只需浏览器打开对应本地端口。
 
-界面按以下方式核对：
+也支持 `--run /实际路径/initial_scene`、`manifest.json` 或含唯一 `initial_scene` 的完整日志 `.tar.gz`。完整日志压缩包会把该轮的观测和报告一起安全提取到临时目录，退出时清理。只有 `initial_scene` 的包只提供静态部分，界面明确报告缺少动态帧；需要多帧播放时一并复制 `observations/` 和阶段报告。显示解释器需要 `viser`、`mujoco`、`numpy`、`scipy`、`trimesh`、`Pillow`。
 
-1. 先看标题中的活动臂、frame 和 snapshot hash，确认没有打开另一轮。本附件为 **right / frame 267937**，hash 以 `2c79c63e4101013f` 开头。
-2. **操作物体模型**来自原 XML 的实际 visual；**实际规划障碍**是当时导出的 cuRobo 几何，用红色半透明显示。橙色为配置桌面顶面，中心与厚度分别列出；不把桌面中心当成顶面。两臂和夹爪使用保存的状态。未保存的活动臂碰撞球会明确标为缺失，不用当前配置推算替代。
-3. 开启**同帧原始 RGB-D 点云**和**原始注册碗 mesh**，可关闭机器人及规划障碍去掉遮挡。青色注册 mesh 应贴着点云中的实碗；青色 mesh 使用原注册资产与原相机 pose，操作碗使用当时消费的 pose。面板给出二者变换差，帮助排查中间坐标链。
-4. 用 `camera`、`active_sdk`、`bowl_consumed`、`configured_table_center/top` 坐标轴定位。X 红、Y 绿、Z 蓝。所有几何统一在保存的 world 中；`T_world_sdk` 明确显示。切换浏览器上方向仅影响观察视角，不修改任何数据，也不证明重力朝向。
-5. 比较点云中的可见桌面与橙色配置顶面的**高度、法向及 XY 范围**。右侧保存原 RGB 和输入矩阵/来源。微波炉保留先前操作状态时单独注明，不冒称本轮重感知。
-6. 在“抓碗失败定位”中先看红/绿/蓝/灰候选分布，再选择单个候选检查首个失败阶段和底层原因。橙线表示候选被桌面规则抬升的位移。轨迹存在时蓝线是保存关节轨迹的 TCP FK；碰撞球只属于起点快照，播放离开首帧后会隐藏，不能当作逐帧碰撞验证。
+### 初始标定与规划核对
 
-本附件的冻结数据为：碗原点（右臂 SDK，米）约 `[0.303765, 0.058829, -0.052891]`，
-桌面中心 `[0.1, 0.3, -0.0442143]`，厚度 `0.02 m`，配置顶面 Z 为 `-0.0342143 m`，
-范围为 `0.6 × 0.6 m`。这些值只用于核对日志身份，工具读取包内原值，代码不硬编码本场景。
-该轮在 `bowl_pose_table_inconsistent` 处停止，`stages` 为空；这不是已经执行抓取后的失败。
+先看视图1的活动臂、frame 和 snapshot，确认运行身份；切换图层可分别检查机器人、点云、原始注册 mesh、配置桌面和规划障碍。所有图层共用保存的 world：`T_world_camera = T_world_sdk × T_sdk_camera`，不再额外乘一次机器人 base 变换。X红、Y绿、Z蓝；浏览器上方向设置仅改变观察方式。
 
-若青色 mesh 在原相机/点云中就不贴合，先查注册、mesh frame 和 RGB-D；
-若独立 SDK 参照一致而配置桌面不贴合，查桌面设定；
-若多个独立 SDK 参照呈系统偏差，查标定和坐标链。
-仅凭碗与配置桌面矛盾不能唯一归因于标定。需要桌面 ROI 独立平面拟合与参考点残差时，
-继续使用 §5.1 的 HTML 检查，两者读取同一冻结帧。
+有保存 `tcp_poses_world` 时，同时画 SDK FK TCP 与冻结模型 TCP，并报告平移/转角差；旧日志缺少 SDK TCP 时直接标缺失，不用当前 SDK 补算成历史证据。青色原始注册碗 mesh 使用原 FoundationPose 相机 pose；可对照点云及任务实际消费的碗 pose，检查是否有重复坐标变换。配置桌面顶面为橙色，需要独立 ROI 平面拟合时继续使用 §5.1 的 HTML 检查。
 
-只想核对输入、不打开服务时：
+视图2选择“轨迹段”，拖动“轨迹采样帧”或播放。蓝线是已保存关节轨迹的 TCP FK；它是规划预览，不是实际连续执行轨迹。初始物体与障碍保持初始状态，动态碰撞球不冒充逐帧验证。没有保存轨迹则显示“无保存轨迹”。
+
+原抓碗候选、首个拒绝阶段、底层失败原因及桌面抬升修正仍可在旧版专用界面检查：
 
 ```bash
-"$PY" "$PWD/tools/viewers/view_realworld_scene.py" --run "$OUT" --check-only
+/data1/yuquan/miniconda3/envs/gene_agent/bin/python tools/viewers/view_realworld_scene.py \
+  --run runs/realworld/你的运行目录 --legacy-view --host 127.0.0.1 --port 8120
 ```
+
+旧版仍支持 `--selection /实际路径/selection.json` 和 `--no-pick-debug`；selection 与初始快照不匹配时会提示，不能当作同一轮规划证据。
+
+### 点云、夹爪与物体逐帧播放
+
+视图3～6共用一个观测序号。每帧展示 frame、采集 Unix 时间和相对目录；支持上一帧、下一帧、播放/暂停和帧率调整。各帧使用同一保存的 world 和各自记录的相机标定；不做 ICP、自动居中或重新拟合外参。如果运行中的 `T_world_sdk` 改变，会标明无法统一显示，不悄悄对齐。
+
+勾选“叠加第一帧点云”后，第一帧以青色固定显示，当前帧保持RGB颜色。相机内外参和分辨率一致时，同时显示相同采样像素的深度差中位数和绝对差P95。运动物体、遮挡、反光也会造成差异，因此这些数值用于辅助检查，不能单独判定深度传感器漂移；优先观察静止桌面/柜体/背景区域。
+
+夹爪显示**程序消费的开口**和保存关节做出的 FK，不额外读取夹爪。`sdk_live_read` 表示本次直接读取，`confirmed_execution_endpoint` 表示已确认动作终态的复用，`retained_initial_observation` 表示首次观测复用。来源未知的旧日志明确注明。未测量期间保持离散状态，不插值成实际运动；开口变化影响模型两侧指爪间距。
+
+新日志的 SDK 原始反馈还保存检测时间。在视图4或6勾选“播放夹爪原始检测样本”，可用“夹爪检测样本”滑块和播放按钮逐个检查命令完成确认期间的开口。背景用该检测之前最近一帧点云，显示时间差；初始化早于第一帧时显示首个后续点云并注明不同步。旧日志没有检测时间戳时禁用此功能，仍能按观测帧播放程序使用的开口。此功能只补充记录已有读取的时间，不增加 SDK 查询。
+
+物体使用 `tracked/objs/.../pose.json` 中原始 `T_camera_object`，通过 `T_world_camera` 放到同一 world，显示 axis+bbox；不把门角约束、Concept 修正或沿用状态重新标为当前 FoundationPose。bbox 使用原注册 mesh 的局部范围；资产缺失时只画 axis，不造包围盒。当帧进行了 SAM3 分割/注册且保存 mask 时，RGB 显示分割叠加；纯 tracking 帧没有新 mask，会显示数量0，不贴旧帧 mask。未刷新对象的来源和原观测帧在右侧列出。
+
+新运行每次 capture 额外保存 `viewer_context.json` 坐标链，后续感知失败也能检查原始点云；缺少关节/位姿时只显示已有部分，不拿上一帧数据冒充本帧。旧日志缺少原始RGB-D、外参或位姿时会提示具体缺失。
+
+仅核对加载数据、不启动服务：
+
+```bash
+/data1/yuquan/miniconda3/envs/gene_agent/bin/python tools/viewers/view_realworld_scene.py \
+  --run runs/realworld/你的运行目录 --check-only
+```
+
+输出包含静态快照身份、观测帧数量、轨迹数量、带时间戳夹爪反馈数量和缺失提示。查看器完全只读，不连接设备、不重新运行推理或规划，不修改历史运行记录。
 
 ## 5.3 模型翻转与桌面穿插的判别
 

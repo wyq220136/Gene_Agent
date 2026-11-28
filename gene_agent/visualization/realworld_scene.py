@@ -17,7 +17,7 @@ BOWL = "Bowl/Bowl_0"
 
 
 @contextmanager
-def scene_bundle(source):
+def scene_bundle(source, *, include_run=False):
     """只提取唯一 initial_scene 包；链接、越界、重复路径都拒绝。"""
     source = Path(source).expanduser().resolve()
     if source.is_dir() or source.name == "manifest.json":
@@ -29,7 +29,8 @@ def scene_bundle(source):
         manifests = [m for m in members if PurePosixPath(m.name).parts[-2:] == ("initial_scene", "manifest.json")]
         if len(manifests) != 1:
             raise ValueError("日志中 initial_scene/manifest.json 缺失或不唯一；请指定单次运行")
-        prefix = PurePosixPath(manifests[0].name).parent
+        initial_prefix = PurePosixPath(manifests[0].name).parent
+        prefix = initial_prefix.parent if include_run else initial_prefix
         destination = Path(temporary)
         seen = set()
         total = 0
@@ -52,7 +53,7 @@ def scene_bundle(source):
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.extractfile(member) as stream:
                 target.write_bytes(stream.read())
-        yield destination
+        yield destination / str(initial_prefix.relative_to(prefix)) if include_run else destination
 
 
 def load_observation(bundle):

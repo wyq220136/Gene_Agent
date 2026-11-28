@@ -73,7 +73,10 @@ def candidate_diagnostics(planner, joint_names, target, seeds, budget, *, tolera
     known=all(isinstance(v,(int,float)) and math.isfinite(v) and v>0 for v in (pt,rt))
     pscale,rscale=(pt,rt) if known else (.005,.05)
     def score(s):
-        return float(s.get('position_error_m',float('inf')))/pscale + float(s.get('rotation_error_rad',float('inf')))/rscale
+        position, rotation = s.get('position_error_m'), s.get('rotation_error_rad')
+        if position is None or rotation is None:
+            return float('inf')  # FK unavailable: retain unknown, never rank backend aggregates as metres.
+        return float(position)/pscale + float(rotation)/rscale
     ordered=sorted(seeds,key=score)
     # 同时给已标为可行的候选检查机会，避免三个碰撞候选耗尽预算。
     selected=ordered[:1]+[s for s in ordered[1:] if s.get('constraint_feasible')]+[s for s in ordered[1:] if not s.get('constraint_feasible')]
@@ -92,8 +95,11 @@ def candidate_diagnostics(planner, joint_names, target, seeds, budget, *, tolera
             checked.append(dict(seed_index=seed.get('index'),joint_names=list(joint_names),joint_positions_rad=q.tolist(),
                 requested_tcp_pose_world=np.asarray(target).tolist(),fk_tcp_pose_world=fk.tolist(),
                 translation_delta_world_m=(fk[:3,3]-np.asarray(target)[:3,3]).tolist(),
-                position_error_m=pos,rotation_error_rad=rot,solver_position_error_m=seed.get('position_error_m'),
-                solver_rotation_error_rad=seed.get('rotation_error_rad'),constraint_feasible=feasible,
+                position_error_m=pos,rotation_error_rad=rot,
+                solver_position_error_raw=(seed.get('backend_error_metrics') or {}).get('position_error'),
+                solver_rotation_error_raw=(seed.get('backend_error_metrics') or {}).get('rotation_error'),
+                solver_error_source=(seed.get('backend_error_metrics') or {}).get('source'),
+                constraint_feasible=feasible,
                 strict_pose_converged=bool(pos<pt and rot<rt) if known else None,
                 position_tolerance_m=pt,rotation_tolerance_rad=rt,constraint_check=check))
         except Exception as exc:errors.append(dict(seed_index=seed.get('index'),error=f'{type(exc).__name__}: {exc}'))
