@@ -8,7 +8,7 @@ from PIL import Image
 
 from gene_agent.knowledge.geometry import validate_pose
 from gene_agent.visualization.realworld_alignment import transform
-from gene_agent.visualization.realworld_pick_debug import _load_trajectories
+from gene_agent.visualization.realworld_pick_debug import _load_trajectories, trajectory_paths
 
 
 def read_json(path):
@@ -114,7 +114,7 @@ class RealworldTimeline:
         return len(rows)
 
     def refresh_reports(self):
-        paths = set(self.root.rglob("*_result.json")) | set(self.root.rglob("stage.json"))
+        paths = set(trajectory_paths(self.root))
         paths.update(self.root.rglob("right_gripper_preparation.json"))
         paths = sorted(p for p in paths if "initial_scene" not in p.relative_to(self.root).parts)
         signature = [(str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths]

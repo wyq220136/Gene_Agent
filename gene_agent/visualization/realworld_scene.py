@@ -66,8 +66,13 @@ def load_observation(bundle):
         if rgbd["source"]["frame_number"] != scene["provenance"]["source_frame_number"]:
             raise ValueError("RGB-D 与操作场景不是同帧")
     except (ValueError, KeyError, OSError) as error:
-        rgbd = None
-        warning = f"原始 RGB-D 对照不可用：{type(error).__name__}: {error}"
+        try:
+            from gene_agent.visualization.realworld_alignment import load_recorded_initial_rgbd
+            rgbd = load_recorded_initial_rgbd(bundle, scene)
+            warning = f"初始感知点云已独立加载；注册叠加信息不可用：{error}"
+        except (ValueError, KeyError, OSError) as cloud_error:
+            rgbd = None
+            warning = f"原始 RGB-D 对照不可用：{type(cloud_error).__name__}: {cloud_error}"
     return scene, model, data, rgbd, warning
 
 
@@ -156,6 +161,8 @@ class RealworldSceneApp:
             checkbox(server, "配置桌面顶面（橙色，未拟合/修正）", [top_handle])
             if rgbd is not None:
                 self._add_rgbd(server, rgbd, frames["camera"], frames["bowl_consumed"])
+                if warning:
+                    server.gui.add_markdown(warning)
             else:
                 server.gui.add_markdown(warning or "没有原始 RGB-D；只显示已冻结的操作模型。")
         with server.gui.add_folder("实际输入和来源（矩阵平移单位米）"):
@@ -186,16 +193,18 @@ class RealworldSceneApp:
         cloud = server.scene.add_point_cloud("/observed_rgbd", points=rgbd["cloud"].reshape(-1, 3)[indices],
             colors=rgbd["rgb"].reshape(-1, 3)[indices], point_size=.0025,
             position=camera_pose[:3, 3], wxyz=_wxyz(camera_pose))
+        self.initial_cloud = cloud
         checkbox(server, "同帧原始 RGB-D 点云（彩色）", [cloud])
-        mesh = trimesh.load(rgbd["mesh_file"], force="mesh", process=False)
-        raw_world = camera_pose @ rgbd["T_camera_bowl"]
-        raw = server.scene.add_mesh_simple("/registered_bowl_raw", np.asarray(mesh.vertices), np.asarray(mesh.faces),
-            color=(20, 210, 255), opacity=.40, side="double", position=raw_world[:3, 3], wxyz=_wxyz(raw_world))
-        checkbox(server, "原始注册碗 mesh（青色，不追加 Concept）", [raw])
-        delta = np.linalg.inv(consumed_bowl) @ raw_world
-        server.gui.add_markdown("原始注册链：T_world_sdk × T_sdk_camera × T_camera_bowl；"
-            f"与操作碗 pose 的平移差 {np.linalg.norm(delta[:3, 3])*1000:.6f} mm，"
-            f"转角差 {np.degrees(np.arccos(np.clip((np.trace(delta[:3, :3])-1)/2, -1, 1))):.6f}°。")
+        if rgbd.get("mesh_file") is not None and rgbd.get("T_camera_bowl") is not None:
+            mesh = trimesh.load(rgbd["mesh_file"], force="mesh", process=False)
+            raw_world = camera_pose @ rgbd["T_camera_bowl"]
+            raw = server.scene.add_mesh_simple("/registered_bowl_raw", np.asarray(mesh.vertices), np.asarray(mesh.faces),
+                color=(20, 210, 255), opacity=.40, side="double", position=raw_world[:3, 3], wxyz=_wxyz(raw_world))
+            checkbox(server, "原始注册碗 mesh（青色，不追加 Concept）", [raw])
+            delta = np.linalg.inv(consumed_bowl) @ raw_world
+            server.gui.add_markdown("原始注册链：T_world_sdk × T_sdk_camera × T_camera_bowl；"
+                f"与操作碗 pose 的平移差 {np.linalg.norm(delta[:3, 3])*1000:.6f} mm，"
+                f"转角差 {np.degrees(np.arccos(np.clip((np.trace(delta[:3, :3])-1)/2, -1, 1))):.6f}°。")
         h, w = rgbd["valid"].shape
         frustum = server.scene.add_camera_frustum("/observed_camera", fov=float(2*np.arctan(h/(2*rgbd["K"][1, 1]))),
             aspect=w/h, scale=.12, image=rgbd["rgb"], position=camera_pose[:3, 3], wxyz=_wxyz(camera_pose))

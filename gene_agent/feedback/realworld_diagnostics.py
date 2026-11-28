@@ -3,6 +3,8 @@ from collections import Counter
 from contextlib import ExitStack
 from copy import deepcopy
 import json
+import hashlib
+import time
 from pathlib import Path
 import shlex
 import sys
@@ -133,6 +135,7 @@ class RealworldRunDiagnostics:
         self.errors = []
         self._request_dirs = {self.request_output_dir}
         self._initial_attempted = False
+        self._playback_trajectories = {}
         from .curobo_log_policy import FailureOnlyCuroboLogs
         self.curobo_logs = FailureOnlyCuroboLogs(self) if failure_only else None
 
@@ -150,6 +153,7 @@ class RealworldRunDiagnostics:
             write_json(self.root / "diagnostic_manifest.json", dict(schema_version=1,
                 options=self.options, metadata=self.metadata,
                 initial_scene_ref="initial_scene/manifest.json", events_ref="events.jsonl",
+                planned_trajectory_dir="planned_trajectories",
                 scene_viewer=dict(entrypoint="tools/viewers/view_realworld_scene.py",
                     argv=["--run", str(self.root), "--host", "127.0.0.1", "--port", "8120"],
                     read_only=True, source="initial_scene/manifest.json")))
@@ -162,6 +166,32 @@ class RealworldRunDiagnostics:
             self.stack.close()
             raise
         return self
+
+    @timed_runtime_call("diagnostics")
+    def record_trajectory(self, request, result, *, stage=None):
+        """成功关节轨迹即时保存；独立于仅失败时落盘的 solver 详情策略。"""
+        if not result.success or result.trajectory is None or request.operation.value == "ik":
+            return None
+        try:
+            trajectory = result.trajectory.to_dict()
+            identity = json.dumps([request.request_id, request.scene.snapshot_sha256,
+                                   trajectory], sort_keys=True, allow_nan=False)
+            key = hashlib.sha256(identity.encode()).hexdigest()
+            if key in self._playback_trajectories:
+                return self._playback_trajectories[key]
+            index = len(self._playback_trajectories)
+            path = self.root / "planned_trajectories" / f"{index:06d}_{key[:16]}.json"
+            write_json(path, dict(schema_version=1, source_format="planned_motion_trajectory",
+                stage=stage or request.request_id, request_id=request.request_id,
+                group=request.group, operation=request.operation.value,
+                scene_snapshot_sha256=request.scene.snapshot_sha256,
+                recorded_at_unix_ms=time.time()*1000., trajectory=trajectory,
+                claim="保存的成功规划轨迹，供 FK 播放；不是实际连续执行或任务成功证据"))
+            self._playback_trajectories[key] = str(path.relative_to(self.root))
+            return self._playback_trajectories[key]
+        except Exception as error:
+            self.record_error("planned_trajectory", error)
+            return None
 
     def finish(self, report):
         """在 planner 释放前按操作终态决定是否落盘详细 cuRobo 证据。"""
@@ -234,6 +264,7 @@ class RealworldRunDiagnostics:
         result_refs = []
         indices = tuple(range(len(requests))) if source_batch_indices is None else tuple(source_batch_indices)
         for index, (request, result) in enumerate(zip(requests, results)):
+            self.record_trajectory(request, result)
             value = result.to_dict()
             identity = f"{call_id}_{index:04d}"
             ref = write_json(self.root / "motion_results" / f"{identity}.json", value)

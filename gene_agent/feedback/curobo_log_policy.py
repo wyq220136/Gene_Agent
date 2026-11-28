@@ -88,6 +88,8 @@ class FailureOnlyCuroboLogs:
     @timed_runtime_call("diagnostics")
     def record(self, planner, requests, results, *, invocation=None):
         requests, results = tuple(requests), tuple(results)
+        for request, result in zip(requests, results):
+            self.recorder.record_trajectory(request, result)
         self.batches += 1
         self.requests += len(requests)
         self.failed_requests += sum(not result.success for result in results)

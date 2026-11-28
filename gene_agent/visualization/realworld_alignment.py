@@ -13,6 +13,82 @@ def transform(points, pose):
     return np.asarray(points) @ pose[:3, :3].T + pose[:3, 3]
 
 
+def load_recorded_initial_rgbd(bundle, scene):
+    """只加载初始感知 RGB-D；不要求存在碗注册、mesh 或准备记录。"""
+    from gene_agent.realworld.scene_archive import verify_scene_archive
+    from gene_agent.knowledge.geometry import validate_pose
+    root, manifest = verify_scene_archive(bundle)
+    saved = json.loads((root / manifest['scenes']['initial']['scene_ref']).read_text())
+    source = saved['provenance']
+    mapping = manifest['file_map']
+    def resolve(raw):
+        if str(raw) in mapping:
+            return root / mapping[str(raw)]
+        # 兼容旧包漏存 capture，但完整 run 仍有原始感知帧的情况。
+        text = str(raw).replace('\\', '/')
+        if '/observations/' in text:
+            path = root.parent / 'observations' / text.split('/observations/', 1)[1]
+            if path.is_file():
+                return path
+        raise FileNotFoundError(f'初始帧文件缺失: {raw}')
+    camera_original = source['source_paths']['camera']
+    tracked = json.loads(resolve(camera_original).read_text())
+    origin_raw = str(Path(camera_original).parent.parent / 'capture_provenance.json')
+    try:
+        origin = json.loads(resolve(origin_raw).read_text())
+    except FileNotFoundError:
+        origin = None
+    if origin:
+        paths = {name: resolve(origin['source_files'][name]) for name in ('camera.json', 'rgb.png', 'depth.png')}
+        context_raw = str(Path(origin['source_files']['camera.json']).parent / 'viewer_context.json')
+    else:
+        paths = {name: resolve(str(Path(camera_original).parent / name)) for name in ('camera.json', 'rgb.png', 'depth.png')}
+        context_raw = str(Path(camera_original).parent / 'viewer_context.json')
+    camera = json.loads(paths['camera.json'].read_text())
+    if camera.get('frame_number') != source.get('source_frame_number'):
+        raise ValueError('初始 RGB-D 与冻结场景不是同帧，不能使用其他帧代替')
+    stamp = camera.get('captured_at_unix_ms')
+    if stamp is not None and abs(float(stamp)-float(source['source_timestamp_ms'])) > 1.:
+        raise ValueError('初始 RGB-D 与冻结场景采集时间不一致')
+    side = source.get('source_side', source.get('active_group', 'right'))
+    extrinsic = tracked.get(f'{side}_extrinsic_matrix')
+    if extrinsic is None:
+        try:
+            context = json.loads(resolve(context_raw).read_text())
+            if context.get('expected_serial') != camera.get('serial'):
+                raise ValueError('初始相机序列号与记录不一致')
+            extrinsic = context['T_sdk_camera']
+        except FileNotFoundError:
+            setups = [key for key in mapping if key.endswith('/perception_setup.json')]
+            if len(setups) == 1:
+                calibration = json.loads(resolve(setups[0]).read_text())['camera']
+                if calibration.get('serial') != camera.get('serial'):
+                    raise ValueError('初始相机序列号与标定不一致')
+                extrinsic = calibration['T_sdk_camera']
+    if extrinsic is None:
+        raise ValueError('初始感知帧缺少已记录相机外参')
+    rgb = np.asarray(Image.open(paths['rgb.png']).convert('RGB'))
+    depth = np.asarray(Image.open(paths['depth.png']), dtype=float)
+    scale = {'millimeter': .001, 'millimeters': .001, 'mm': .001, 'meter': 1., 'meters': 1., 'm': 1.}.get(camera.get('depth_unit'))
+    if scale is None:
+        raise ValueError('初始帧深度单位缺失')
+    depth *= scale
+    K = np.asarray(camera['intrinsic_matrix'], dtype=float)
+    if K.shape != (3, 3) or not np.isfinite(K).all() or K[0, 0] <= 0 or K[1, 1] <= 0 or rgb.shape[:2] != depth.shape:
+        raise ValueError('初始 RGB-D 尺寸或内参无效')
+    v, u = np.indices(depth.shape)
+    cloud = np.stack(((u-K[0, 2])*depth/K[0, 0], (v-K[1, 2])*depth/K[1, 1], depth), axis=-1)
+    valid = np.isfinite(depth) & (depth > .1) & (depth < 3.)
+    if not valid.any():
+        raise ValueError('初始帧没有有效深度')
+    return dict(rgb=rgb, depth=depth, cloud=cloud, valid=valid, K=K,
+        T_sdk_camera=validate_pose(extrinsic, field_name='T_sdk_camera'),
+        mesh_file=None, T_camera_bowl=None,
+        source=dict(camera_file=str(paths['camera.json']), rgb_file=str(paths['rgb.png']),
+                    depth_file=str(paths['depth.png']), serial=camera.get('serial'),
+                    frame_number=camera['frame_number'], pose_source='independent_initial_rgbd'), warnings=[])
+
+
 def load_inputs(*, run=None, perception=None, camera_params=None):
     """优先读取原始 camera pose，绝不靠当前环境补换历史 mesh。"""
     warnings=[]

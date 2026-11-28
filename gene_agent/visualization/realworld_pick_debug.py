@@ -91,12 +91,21 @@ def _trajectory_rows(value: Any, *, source: str, context: str = ""):
             yield from _trajectory_rows(child, source=source, context=context)
 
 
+def trajectory_paths(run):
+    # 新的轻量回放文件优先；旧门阶段/选择报告也保留可读兼容。
+    paths = set(run.rglob("*_result.json"))
+    for name in ("stage.json", "skill_stage.json", "selection.json", "plan.json", "result.json", "plan_preview.json"):
+        paths.update(run.rglob(name))
+    paths.update((run / "planned_trajectories").glob("*.json"))
+    paths.update((run / "motion_results").glob("*.json"))
+    return sorted((p for p in paths if "initial_scene" not in p.relative_to(run).parts),
+                  key=lambda p: ("planned_trajectories" not in p.relative_to(run).parts, str(p)))
+
+
 def _load_trajectories(run: Path, selection_path: Path, selection: dict) -> list[dict]:
     sources = [(selection_path, selection)]
     if run.is_dir():
-        paths = set(run.rglob("*_result.json"))
-        paths.update(run.rglob("stage.json"))
-        for path in sorted(paths):
+        for path in trajectory_paths(run):
             if "initial_scene" in path.relative_to(run).parts or path.resolve() == selection_path:
                 continue
             try:

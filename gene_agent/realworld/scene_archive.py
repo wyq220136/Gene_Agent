@@ -227,7 +227,22 @@ class SceneArchive:
             record = json.loads(Path(camera).read_text(encoding="utf-8"))
             frame = (scene or {}).get("provenance", {}).get("source_frame_number")
             match = record.get("frame_number") == frame
-            siblings = [Path(camera).parent / name for name in ("rgb.png", "depth.png", "camera.json")]
+            # source_paths.camera 在 tracked/camera，RGB-D 在 capture；显式沿
+            # capture_provenance 收齐输入，不能把 tracked 同目录当作原始帧。
+            origin_path = Path(camera).parent.parent / "capture_provenance.json"
+            if origin_path.is_file():
+                origin = json.loads(origin_path.read_text(encoding="utf-8"))
+                siblings = [Path(origin["source_files"][name]) for name in ("rgb.png", "depth.png", "camera.json")]
+                self.add_file(origin_path, scan=True)
+            else:
+                siblings = [Path(camera).parent / name for name in ("rgb.png", "depth.png", "camera.json")]
+            for path in siblings:
+                self.add_file(path)
+            context = siblings[-1].parent / "viewer_context.json"
+            if context.is_file():
+                self.add_file(context)
+            raw_camera = json.loads(siblings[-1].read_text()) if siblings[-1].is_file() else {}
+            match = match and raw_camera.get("frame_number") == frame
             self.manifest["initial_frame_files"] = [self.manifest["file_map"].get(str(p.resolve())) for p in siblings]
             self.manifest["perception_status"] = ("captured" if match and all(p.is_file() for p in siblings)
                                                    else "frame_mismatch" if not match else "partial")

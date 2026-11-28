@@ -163,6 +163,13 @@ class RealWorldRuntime:
         trajectory = result.trajectory
         if trajectory is None:
             return self._failed(stage.name, "trajectory_missing", "规划结果没有关节轨迹")
+        # 缓存复用、门操作等路径可能没有新的 planner 记录；在任何实际发令
+        # 之前仍保存当前选中轨迹，不查询设备、不重新规划。
+        from gene_agent.motion.recording import current_motion_recording
+        recording = current_motion_recording()
+        save_trajectory = getattr(recording, "record_trajectory", None)
+        if save_trajectory is not None:
+            save_trajectory(request, result, stage=stage.name)
         failure, recheck, checked_early = self._early_recheck(stage.name, execute)
         if failure is not None:
             return failure
