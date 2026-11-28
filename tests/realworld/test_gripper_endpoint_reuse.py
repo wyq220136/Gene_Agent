@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 from gene_agent.motion.model import JointState
 from gene_agent.realworld.devices.grippers.realman.adapter import RealmanGripperAdapter
@@ -48,7 +49,8 @@ class SDK:
 def rig(sdk):
     gripper = RealmanGripperAdapter(sdk, max_width_m=.08)
     start = JointState(tuple(f"right_joint_{i}" for i in range(1, 8)), (0.,)*7)
-    robot = SimpleNamespace(group="right", read_joint_state=lambda: start)
+    robot = SimpleNamespace(group="right", read_joint_state=lambda: start,
+                            tcp_pose_from_sdk_fk=lambda q: np.eye(4))
     def runtime():
         return RealWorldRuntime(robot, gripper=gripper, scene_snapshot_sha256="scene",
                                 max_start_error_rad=.02, tcp_height_fn=lambda _: .2,

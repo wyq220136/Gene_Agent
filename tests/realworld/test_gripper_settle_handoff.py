@@ -141,3 +141,59 @@ def test_knob_grasp_settle_still_rejects_arm_motion():
     error=_wait_handoff_error(_scene(1,.041),_scene(2,.024,q=(.05,)*7),
         max_joint_error_rad=.02,max_width_error_m=.005,allow_gripper_motion=True)
     assert error and "关节" in error
+
+
+@pytest.mark.parametrize("mode,timeout,finish_at,expected", [
+    ("grasp", 2., 4., "failed"),
+    ("grasp", None, 10., "executed"),
+    ("grasp", None, None, "failed"),
+    ("position", None, 4., "failed"),
+])
+def test_force_interaction_wait_covers_load_build_without_weakening_completion(
+        monkeypatch, mode, timeout, finish_at, expected):
+    """真实建力可超过旧窗口；只到计划开口不算完成，永久运动仍受20秒约束。"""
+    clock = [0.]
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("gene_agent.realworld.runtime.time.sleep",
+                        lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    class Gripper:
+        max_width_m = .08
+        supports_motion_completion_feedback = True
+        last_reading = None
+        closing = False
+        commands = 0
+        def grasp(self, **kwargs):
+            assert kwargs["blocking"] is False
+            self.closing = True
+            self.commands += 1
+        def command_width_m(self, width, *, blocking):
+            assert blocking is True
+            self.closing = True
+            self.commands += 1
+        def read_width_m(self):
+            if not self.closing:
+                return .07928
+            complete = finish_at is not None and clock[0] >= finish_at
+            self.last_reading = {"motion_complete": complete,
+                "raw": [0, {"mode": 6 if complete else 4, "status": 1, "error": 0}]}
+            return .0152 if complete else max(.0152, .07928 - .02 * clock[0])
+    gripper = Gripper()
+    robot = SimpleNamespace(group="right", read_joint_state=lambda: START)
+    runtime = RealWorldRuntime(robot, gripper=gripper, scene_snapshot_sha256="scene",
+        max_start_error_rad=.02, tcp_height_fn=lambda q:.2, min_tcp_z_m=.0)
+    result = runtime.run_gripper_stage("interaction/close", group="right",
+        target_width_m=.015, planned_start=START, planned_start_width_m=.07928,
+        max_width_error_m=.005, planned_scene_snapshot_sha256="scene",
+        execute=True, command_mode=mode, grasp_force=1.,
+        endpoint_stability_timeout_s=timeout)
+    assert result["status"] == expected
+    assert gripper.commands == 1
+    effective = timeout if timeout is not None else 20. if mode == "grasp" else 2.
+    assert result["endpoint_confirmation"]["timeout_s"] == effective
+    if expected == "executed":
+        assert result["endpoint_confirmation"]["motion_complete"] is True
+        assert result["measured_end_width_m"] == pytest.approx(.0152)
+        assert clock[0] < 20.  # No fixed 20-second sleep after completion.
+    else:
+        assert result["failure"]["code"] == "gripper_execution_failed"
+        assert not result["endpoint_confirmation"]["confirmed"]

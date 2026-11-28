@@ -170,7 +170,9 @@ def run_observed_door_skill(
                     max_width_error_m=max_gripper_width_error_m,
                     planned_scene_snapshot_sha256=scene["snapshot"]["snapshot_sha256"],
                     execute=execute,
-                    **({"command_mode": "grasp", "grasp_force": force}
+                    # 抓紧把手需建立力控载荷；同所有力控夹取，完成等待窗口为20秒。
+                    **({"command_mode": "grasp", "grasp_force": force,
+                        "endpoint_stability_timeout_s": 20.0}
                        if skill_id == "handle_pull" and phase.name == "close" else
                        {"command_mode": "release"}
                        if skill_id == "handle_pull" and phase.name == "release" else {}),

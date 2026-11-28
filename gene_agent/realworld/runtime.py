@@ -355,7 +355,7 @@ class RealWorldRuntime:
         confirm_stable_endpoint: bool = True,
         endpoint_stability_samples: int = 3,
         endpoint_stability_tolerance_m: float = 0.0005,
-        endpoint_stability_timeout_s: float = 2.0,
+        endpoint_stability_timeout_s: float | None = None,
         endpoint_poll_interval_s: float = 0.05,
     ) -> dict:
         """使用真机实测关节和夹爪开口核对米制命令。
@@ -370,7 +370,11 @@ class RealWorldRuntime:
             raise ValueError("闭爪稳定等待时间必须是非负有限秒数")
         # 不要求连续三次稳定开口；仅等待 SDK 反馈运动完成再做终点检查。
         # 真机证据表明 blocking 返回后仍可能读到 mode=4/5 的中间状态。
-        completion_timeout = float(endpoint_stability_timeout_s)
+        # 力控交互需要夹爪闭合并建立载荷，不能沿用普通位置指令的短窗口。
+        # 仅在未明确覆盖时选择默认值；完成信号到达即退出，不固定等待20秒。
+        completion_timeout = float(
+            (20.0 if command_mode == "grasp" else 2.0)
+            if endpoint_stability_timeout_s is None else endpoint_stability_timeout_s)
         poll_interval = float(endpoint_poll_interval_s)
         if (not math.isfinite(completion_timeout) or completion_timeout <= 0
                 or not math.isfinite(poll_interval) or poll_interval <= 0):
@@ -483,7 +487,9 @@ class RealWorldRuntime:
                 self.gripper.command_width_m(command_target, blocking=True)
             confirmation_started = time.monotonic()
             confirmation = record["endpoint_confirmation"] = {
-                "method": "blocking_command_plus_motion_complete",
+                "method": ("command_ack_plus_motion_complete"
+                           if record["hardware_command"].get("blocking") is False
+                           else "blocking_command_plus_motion_complete"),
                 "confirmed": False, "motion_complete": False,
                 "timeout_s": completion_timeout, "poll_interval_s": poll_interval,
                 "poll_count": 0, "readings": [], "duration_s": 0.,

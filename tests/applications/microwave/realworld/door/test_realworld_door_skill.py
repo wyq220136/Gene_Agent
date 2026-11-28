@@ -213,6 +213,8 @@ def test_door_gripper_action_preserves_legacy_sdk_semantics(
     assert seen[0].get("command_mode", "position") == mode
     if force is not None:
         assert seen[0]["grasp_force"] == force
+    assert seen[0].get("endpoint_stability_timeout_s", 2.) == (
+        20. if skill == "handle_pull" and name == "close" else 2.)
 
 
 def test_closed_contact_rebuilds_remaining_targets_from_new_cabinet_anchor(tmp_path, monkeypatch):
