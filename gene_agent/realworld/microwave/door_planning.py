@@ -43,7 +43,7 @@ from gene_agent.skills.runtime.planning import SkillStage
 from gene_agent.skills.runtime.target_selection import plan_with_local_rotation_search
 
 _ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_CONFIG = _ROOT / "data/task_1/skills/door_skill_debug.json"
+_DEFAULT_CONFIG = _ROOT / "data/task_1/realworld/door_strategy.json"
 _SKILLS = frozenset({"handle_pull", "push_open", "push_close"})
 
 

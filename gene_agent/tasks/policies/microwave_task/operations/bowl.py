@@ -331,3 +331,59 @@ def check_bowl_access(door_angle_rad: float | None, *, target_angle_rad: float,
     passed = abs(door_angle_rad - target_angle_rad) <= tolerance_rad
     return CheckResult("pass" if passed else "fail", "current_door_angle", evidence,
                        "" if passed else "门未处于已打开的操作范围")
+
+
+def clearance_adjusted_insert_goal(
+    T_world_object, T_tcp_object, inward_world, spheres_tcp_m,
+    T_world_ceiling, ceiling_half_size_m, *, margin_m, max_outward_m,
+):
+    """在支撑允许区间内给腕部让出炉顶前沿净空，保持碗高度与姿态。
+
+    碗底已按支撑面设置时不能继续压低碗。用当前持物变换推导腕部包络，
+    在沿通道退出的可行区间中点取目标，避免正好贴住碰撞/支撑边界。
+    这里只生成目标；完整持物、释放及撤离规划仍须独立通过。
+    """
+    goal = validate_pose(T_world_object, field_name="T_world_object")
+    attachment = validate_pose(T_tcp_object, field_name="T_tcp_object")
+    ceiling = validate_pose(T_world_ceiling, field_name="T_world_ceiling")
+    inward = np.asarray(inward_world, dtype=float)
+    spheres = np.asarray(spheres_tcp_m, dtype=float)
+    half = np.asarray(ceiling_half_size_m, dtype=float)
+    if (inward.shape != (3,) or not np.isfinite(inward).all()
+            or not np.isclose(np.linalg.norm(inward), 1.) or abs(inward[2]) > 1e-6
+            or spheres.ndim != 2 or spheres.shape[1] != 4 or not len(spheres)
+            or not np.isfinite(spheres).all() or np.any(spheres[:, 3] <= 0)
+            or half.shape != (3,) or not np.isfinite(half).all() or np.any(half <= 0)
+            or not np.isfinite([margin_m, max_outward_m]).all()
+            or margin_m < 0 or max_outward_m < 0):
+        raise ValueError("净空适配需要有效包络、水平单位通道方向与非负支撑余量")
+    tcp = goal @ np.linalg.inv(attachment)
+    centers = spheres[:, :3] @ tcp[:3, :3].T + tcp[:3, 3]
+    expanded = half + margin_m
+    def clearance(distance):
+        local = (centers - inward * distance - ceiling[:3, 3]) @ ceiling[:3, :3]
+        return float(np.min(np.linalg.norm(np.maximum(np.abs(local) - expanded, 0.), axis=1) - spheres[:, 3]))
+    before = clearance(0.)
+    evidence = {"policy": "support_bounded_wrist_ceiling_clearance",
+                "initial_expanded_ceiling_gap_m": before,
+                "required_ceiling_margin_m": float(margin_m),
+                "maximum_supported_outward_m": float(max_outward_m),
+                "height_policy": "retain_geometry_derived_support_height",
+                "outward_distance_m": 0., "adjusted": False}
+    if before >= 0.:
+        return goal.copy(), {**evidence, "feasible": True}
+    # 只允许朝炉外的单调退让，不借此穿过顶板到另一侧。
+    if np.dot(ceiling[:3, 3] - centers.mean(axis=0), inward) <= 0 or clearance(max_outward_m) <= 0:
+        return goal.copy(), {**evidence, "feasible": False}
+    low, high = 0., float(max_outward_m)
+    for _ in range(40):
+        middle = (low + high) / 2.
+        if clearance(middle) > 0: high = middle
+        else: low = middle
+    distance = (high + max_outward_m) / 2.
+    adjusted = goal.copy()
+    adjusted[:3, 3] -= inward * distance
+    return adjusted, {**evidence, "adjusted": True, "feasible": True,
+                      "minimum_clearance_outward_m": high,
+                      "outward_distance_m": distance,
+                      "adjusted_expanded_ceiling_gap_m": clearance(distance)}

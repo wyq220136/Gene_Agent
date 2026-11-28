@@ -45,16 +45,11 @@ def run_observed_bowl_insert(
     check_release: Callable[[dict], CheckResult] | None = None,
     check_place: Callable[[dict], CheckResult] | None = None,
     ask_manual: Callable[[str], str] | None = None,
-    seed: int = 123, insert_depth_offset_m: float = 0.,
+    seed: int = 123, insert_depth_offset_m: float = .02,
     retreat_rotation_local_deg=(0., 0., 0.),
     settle_duration_s: float = .5,
 ) -> dict:
-    """运行 preplace→insert→release→detach→两段直线 retreat。
-
-    独立入口和完整 Task 应调用同一函数。真实 SDK、现场观测及检查器
-    由调用方注入；默认仅预检 preplace。旧 insert/retreat 的规划 world
-    被停用，真实 insert 下发前须由检查器明确审查路径安全。
-    """
+    """按仿真策略筛完整放入/释放/撤离候选；真机逐段使用实际状态和现场夹持证据。"""
     limits = (max_microwave_translation_m, max_microwave_rotation_rad,
               max_hold_translation_m, max_hold_rotation_rad,
               max_start_error_rad, max_gripper_width_error_m)
@@ -158,27 +153,56 @@ def run_observed_bowl_insert(
                 return stop("hold_not_confirmed", initial_hold.reason,
                             status="unknown" if initial_hold.status == "unknown" else "failed")
         observed = _operation_state(scene)
-        held = targets = linear = released_scene = settled_scene = release_report = None
+        prefix = plan_observed_bowl_insert_prefix(
+            scene, pick_report, microwave_frame_alignment=microwave_frame_alignment,
+            planner_pool=planner_pool, output_dir=output/"preplace_plan",
+            current_hold_check=None if initial_hold is None else initial_hold.to_dict(),
+            seed=seed, insert_depth_offset_m=insert_depth_offset_m,
+            retreat_rotation_local_deg=retreat_rotation_local_deg)
+        if not prefix["success"]:
+            report["sequence_screen_ref"] = str(output/"preplace_plan/sequence_screen/insert_sequence_screen.json")
+            return stop("motion_planning_failed" if prefix.get("failure_domain")=="curobo" else
+                "insert_geometry_screen_failed", "没有通过持碗进入、松爪包络和开爪撤离的完整候选")
+        targets = prefix["targets"]
+        held = linear = released_scene = settled_scene = release_report = None
         def perform(name):
             nonlocal scene, observed, targets, held, linear, released_scene, settled_scene, release_report
-            if name == 'preplace':
-                prefix = plan_observed_bowl_insert_prefix(
-                    scene, pick_report,
-                    microwave_frame_alignment=microwave_frame_alignment,
-                    planner_pool=planner_pool, output_dir=output / "preplace_plan",
-                    current_hold_check=None if initial_hold is None else initial_hold.to_dict(),
-                    seed=seed, insert_depth_offset_m=insert_depth_offset_m,
-                    retreat_rotation_local_deg=retreat_rotation_local_deg,
-                )
-                targets = prefix["targets"]
+            if name in {'held_turn', 'preplace'}:
+                from .strategy_planning import plan_stage, held_orientation
+                from .attachment import prepare_observed_bowl_attachment
+                grasp = (pick_report if pick_report.get("source_format")=="manual_prepared_held_bowl"
+                         else pick_report["grasp"])
+                evidence = (initial_hold.to_dict() if initial_hold is not None else pick_report.get("postcondition"))
+                # 每个动作后必须使用当前实测持碗确认，不能替换帧号沿用旧检查。
+                if name=="preplace" and targets.get("held_turn_world_tcp") is not None:
+                    held_after_turn = bind_current_hold_check(scene, _check(
+                        check_hold, scene, ask_manual=ask_manual,
+                        question="持碗转向后是否仍稳定夹持？[y/n/?] "))
+                    if not held_after_turn.passed:
+                        return stop("hold_not_confirmed", held_after_turn.reason)
+                    evidence = held_after_turn.to_dict()
+                    from gene_agent.realworld.scene import observed_tcp_pose
+                    from gene_agent.knowledge.geometry.transforms import pose_delta
+                    import numpy as np
+                    relation = np.linalg.inv(observed_tcp_pose(scene)) @ np.asarray(
+                        scene["provenance"]["aligned_object_poses_world"]["Bowl/Bowl_0"])
+                    delta = pose_delta(targets["T_tcp_bowl_from_actual_hold"], relation, field="持碗转向")
+                    if delta[0] > max_hold_translation_m or delta[1] > max_hold_rotation_rad:
+                        return stop("hold_relation_changed", "持碗转向后TCP与碗的关系已变化")
+                attachment = prepare_observed_bowl_attachment(scene, grasp,
+                    output_dir=output/f"{name}_attachment", hold_evidence=evidence)
+                target = (targets["held_turn_world_tcp"] if name=="held_turn"
+                          else targets["keyposes_world_tcp"]["preplace"])
+                actual = plan_stage(attachment, name, target, planner_pool=planner_pool,
+                    output=output/f"{name}_actual_plan", seed=seed,
+                    spheres=attachment["spheres_tool_m"],
+                    tcp_bowl=targets["T_tcp_bowl_from_actual_hold"],
+                    orientation=held_orientation(targets["T_tcp_bowl_from_actual_hold"]),
+                    preferred=targets["screened_held_trajectories"].get(name))
                 row, scene, stopped = execute_motion(
-                    "preplace", {"success": prefix["success"],
-                                 "stage": prefix["preplace_stage"],
-                                 "attached_collision_snapshot_sha256": prefix[
-                                     "attached_collision_snapshot_sha256"],
-                                 "plan_ref": str(output / "preplace_plan/insert_plan.json")},
-                    scene, scene_hash_key="attached_collision_snapshot_sha256",
-                )
+                    name, {**actual, "attached_collision_snapshot_sha256":
+                           attachment["snapshot"]["snapshot_sha256"]},
+                    scene, scene_hash_key="attached_collision_snapshot_sha256")
                 if stopped is not None:
                     return {"success": False}
                 return {"success": True}
@@ -307,14 +331,14 @@ def run_observed_bowl_insert(
                 report["release_report"] = release_report
                 scene = settled_scene
                 return {"success": True, "check": released}
-            if name in {"retreat_1", "retreat_2"}:
-                index = 1 if name == "retreat_1" else 2
+            if name in {"retreat_lift", "retreat_1", "retreat_2"}:
+                index = {"retreat_lift": 0, "retreat_1": 1, "retreat_2": 2}[name]
                 planned = plan_observed_bowl_detached_retreat_stage(
                     scene, targets, release_report,
                     stage_name=name,
                     microwave_frame_alignment=microwave_frame_alignment,
                     planner_pool=planner_pool,
-                    output_dir=output / f"retreat_{index}_plan",
+                    output_dir=output / f"{name}_plan",
                     max_microwave_translation_m=max_microwave_translation_m,
                     max_microwave_rotation_rad=max_microwave_rotation_rad,
                     max_bowl_translation_m=max_hold_translation_m,
@@ -359,7 +383,9 @@ def run_observed_bowl_insert(
                 return {'success': False}
         flow = run_insert(CallbackOperationBackend(
             observe=lambda: observed, perform=guarded_perform,
-            evidence_mode='realworld_observation', execution_enabled=execute, failure_details=lambda stage: report.get('first_failure')))
+            evidence_mode='realworld_observation', execution_enabled=execute, failure_details=lambda stage: report.get('first_failure')),
+            initial_motion_stages=('held_turn',) if targets.get('held_turn_world_tcp') is not None else (),
+            retreat_stages=('retreat_lift', 'retreat_1', 'retreat_2'))
         report['shared_flow'] = flow.to_dict()
         if not flow.success:
             report['insert_success'] = False

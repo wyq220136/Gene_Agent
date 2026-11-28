@@ -149,17 +149,57 @@ def run_observed_door_return_default_tcp(
             "config_path": str(config_source),
             "config_sha256": report["config_sha256"],
         }
-        planned = plan_observed_door_stage(
-            scene, targets, phase_id=phase_id, planner_pool=planner_pool,
-            output_dir=output / "planning", scene_revision=0,
-            seed=seed, planner_mode=planner_mode,
-        )
-        report["plan"] = planned
+        if phase_id == _BEFORE_REOPEN_PHASE_ID:
+            from .strategy_planning import plan_stage
+            from gene_agent.realworld.scene import observed_tcp_pose
+            from gene_agent.motion.model import JointState
+            retreat_target = observed_tcp_pose(scene).copy()
+            retreat_target[2, 3] += .02
+            retreat = plan_stage(scene, "task/before_reopen/retreat_from_door",
+                retreat_target, planner_pool=planner_pool, output=output/"retreat_from_door",
+                seed=seed, geometry_check=lambda raw: {"success": True,
+                    "source": "curobo_full_world_validation"})
+            report["retreat_from_door_plan"] = {**retreat, "stage": retreat["stage"].to_dict()}
+            if not retreat["success"]:
+                return stop("motion_planning_failed", "第二轮开门前的20mm抬离规划失败")
+            retreat_runtime = make_runtime(retreat["stage_collision_snapshot_sha256"])
+            retreat_execution = retreat_runtime.run_motion_stage(retreat["stage"], execute=execute)
+            report["retreat_from_door_execution"] = retreat_execution
+            if not retreat_execution.get("success"):
+                failure = retreat_execution.get("failure") or {}
+                return stop(failure.get("code", "motion_execution_failed"),
+                    failure.get("message", "第二轮开门前抬离失败"))
+            if not execute:
+                return stop("not_executed", "仅预检抬离，不能把预测状态用于真机后续动作",
+                    status="validated_prefix")
+            after_retreat = observe_collision_scene()
+            mismatch = _measured_end_matches_scene(retreat_execution, after_retreat,
+                max_joint_error_rad=max_start_error_rad, max_width_error_m=max_gripper_width_error_m)
+            if mismatch:
+                return stop("observed_state_discontinuity", mismatch)
+            scene = after_retreat
+            source = scene["provenance"]
+            names = tuple(scene["robot_metadata"]["joint_groups"][group])
+            home = scene["robot_metadata"]["home_joint_positions"]
+            planned = plan_stage(scene, phase_id, target, planner_pool=planner_pool,
+                output=output/"planning", seed=seed,
+                joint_target=JointState(names, tuple(float(home[n]) for n in names)),
+                geometry_check=lambda raw: {"success": True,
+                    "source": "curobo_full_world_validation"})
+        else:
+            planned = plan_observed_door_stage(
+                scene, targets, phase_id=phase_id, planner_pool=planner_pool,
+                output_dir=output / "planning", scene_revision=0,
+                seed=seed, planner_mode=planner_mode,
+            )
+        report["plan"] = ({**planned, "stage": planned["stage"].to_dict()}
+                          if "stage" in planned else planned)
         if not planned["success"]:
             return stop(planned.get("failure_category") or "motion_planning_failed",
                         planned.get("message") or "开门后无法安全撤回默认 TCP")
         runtime = make_runtime(planned["stage_collision_snapshot_sha256"])
-        stage = load_planned_door_skill_stage(planned["skill_stage_ref"])
+        stage = (planned["stage"] if "stage" in planned else
+                 load_planned_door_skill_stage(planned["skill_stage_ref"]))
         execution = runtime.run_motion_stage(stage, execute=execute)
         report["execution"] = execution
         if not execution.get("success"):
@@ -214,11 +254,6 @@ def run_observed_door_return_default_tcp(
                 "microwave_rotation_rad": rotation,
             },
         }
-        if phase_id == _BEFORE_REOPEN_PHASE_ID:
-            # 旧 Task1 回到第二轮开门默认 TCP 后固定等待 5 秒。
-            # 只在真实执行且后置条件通过时等待，预检和失败不阻塞。
-            time.sleep(5.0)
-            report["settle_wait_s"] = 5.0
         report.update(status="executed", success=True)
         return save()
     except Exception as error:

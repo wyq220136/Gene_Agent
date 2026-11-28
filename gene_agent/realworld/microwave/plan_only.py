@@ -48,7 +48,7 @@ class TaskPreview:
                                  report.get("message") or name, report)
         if report.get("success") is False:
             raise PlanningFailed(report.get("failure_code") or "motion_planning_failed",
-                name, {k:v for k,v in report.items() if k not in {"stage", "lift_stage", "preplace_stage"}})
+                name, {k:v for k,v in report.items() if k not in {"stage", "lift_stage", "preplace_stage", "held_turn_stage"}})
         self.world.motion(name, stage, **kwargs)
 
     def door_stage(self, folder, targets, phase, prefix):
@@ -102,13 +102,29 @@ class TaskPreview:
         phase = default_tcp_transition(_home_tcp_pose(scene) if override is None else override,
             phase_id=pid, door_angle_rad=scene["provenance"]["door_angle_rad"],
             gripper_width_m=w.width())
+        if spec.name == "before_reopen_transition":
+            from .strategy_planning import plan_stage
+            from gene_agent.realworld.scene import observed_tcp_pose
+            from gene_agent.motion.model import JointState
+            retreat = observed_tcp_pose(scene).copy(); retreat[2,3] += .02
+            lifted = plan_stage(scene, "task/before_reopen/retreat_from_door", retreat,
+                planner_pool=self.pool, output=folder/"retreat_from_door",
+                geometry_check=lambda raw: {"success": True, "source": "curobo_full_world_validation"})
+            self.motion(spec.name+"/retreat_from_door", lifted)
+            scene = w.scene()
+            names = tuple(scene["robot_metadata"]["joint_groups"][w.group])
+            home = scene["robot_metadata"]["home_joint_positions"]
+            planned = plan_stage(scene, pid, phase.tcp_pose_world, planner_pool=self.pool,
+                output=folder/"return_home", joint_target=JointState(names,
+                    tuple(float(home[n]) for n in names)),
+                geometry_check=lambda raw: {"success": True, "source": "curobo_full_world_validation"})
+            self.motion(spec.name+"/return_home", planned)
+            return
         targets = {"skill_id": "task_transition", "phases": (phase,),
             "collision_snapshot_sha256": scene["snapshot"]["snapshot_sha256"],
             "config_path": str(config_path),
             "config_sha256": hashlib.sha256(config_bytes).hexdigest()}
         self.door_stage(folder, targets, phase, spec.name)
-        if spec.name == "before_reopen_transition":
-            w.event(spec.name+"/wait", duration_s=5.)
 
     def plan_pick(self, spec, folder):
         w = self.world
@@ -164,6 +180,18 @@ class TaskPreview:
         if not prefix["success"]:
             raise PlanningFailed("insert_prefix_failed", "放入前缀规划失败", prefix["plan"])
         targets = prefix["targets"]
+        if prefix.get("held_turn_stage") is not None:
+            self.motion(spec.name+"/held_turn", prefix, key="held_turn_stage")
+            from .strategy_planning import plan_stage, held_orientation
+            from .attachment import prepare_observed_bowl_attachment
+            attachment = prepare_observed_bowl_attachment(w.scene(), self.pick_report["grasp"],
+                output_dir=folder/"held_turn_attachment", hold_evidence=assumption_check(w.scene()).to_dict())
+            adjusted = plan_stage(attachment, "preplace", targets["keyposes_world_tcp"]["preplace"],
+                planner_pool=self.pool, output=folder/"actual_preplace",
+                spheres=attachment["spheres_tool_m"], tcp_bowl=targets["T_tcp_bowl_from_actual_hold"],
+                orientation=held_orientation(targets["T_tcp_bowl_from_actual_hold"]))
+            prefix = {**prefix, "preplace_stage": adjusted["stage"],
+                      "stage_collision_snapshot_sha256": adjusted["stage_collision_snapshot_sha256"]}
         self.motion(spec.name+"/preplace", prefix, key="preplace_stage")
         linear = self.call(insert.plan_observed_bowl_insert_linear,
             w.scene(), targets, self.pick_report, folder=folder/"insert", kind="insert",
@@ -171,7 +199,7 @@ class TaskPreview:
         self.motion(spec.name+"/insert", linear)
         release = self.release(spec.name, w.robot["grippers"][w.group]["width_range_m"][1],
                                self.options["insert"].get("settle_duration_s", .5))
-        for name in ("retreat_1", "retreat_2"):
+        for name in ("retreat_lift", "retreat_1", "retreat_2"):
             options = self.options["insert"]
             planned = self.call(insert.plan_observed_bowl_detached_retreat_stage,
                 w.scene(), targets, release, folder=folder/name, kind="insert",

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "source": "Gene_Agent_new/data/task_1/simulation/mujoco_task1_physical.json and physical_table_place.json",
+  "insert_depth_offset_m": 0.02,
+  "insert_tcp_table_angle_max_deg": 70.0,
+  "insert_max_bowl_tilt_deg": 14.0,
+  "retreat_clearance_margin_m": 0.005,
+  "retreat_minimum_lift_m": 0.0,
+  "table_object_goal": {
+    "table_xy_world_m": [
+      0.29,
+      0.13
+    ],
+    "yaw_offset_deg": -20.0,
+    "release_clearance_m": 0.002,
+    "place_optimizer_clearance_m": 0.001
+  },
+  "workspace_frame": "world; table XY is an explicit task parameter inherited from simulation",
+  "knob_azimuth_deg": 210.0,
+  "knob_tip_x_deg": 10.0
+}

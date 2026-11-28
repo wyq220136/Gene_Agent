@@ -74,7 +74,7 @@ def runtime_configuration(*, perception: str | Path, left_ip: str, right_ip: str
     hold = {"max_hold_translation_m": .005, "max_hold_rotation_rad": .15}
     options = {
         "door": {**common, **microwave, "max_door_angle_error_rad": .05,
-                 "config_path": str(ROOT / "data/task_1/skills/door_skill_debug.json")},
+                 "config_path": str(ROOT / "data/task_1/realworld/door_strategy.json")},
         "pick": {**common, **bowl},
         "insert": {**common, **microwave, **hold, "microwave_frame_alignment": frame_alignment},
         "knob": {**common, **microwave, "max_knob_angle_error_rad": .05,

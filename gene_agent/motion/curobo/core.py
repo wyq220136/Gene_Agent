@@ -483,6 +483,9 @@ class SynchronousPlanner:
     scene_model 已在 URDF base 表达；scene_scope 是人类可读的覆盖范围声明。
     本类始终启用 self collision，保留配置中的 ignore 表；每个操作只调用一次。
     """
+    def _configure_extra_frames(self, config, tool_frame, link_from_tcp):
+        return config
+
     def __init__(self, *, robot_config, joint_names, planner_joint_names,
                  world_from_base, link_from_tcp, tool_frame,
                  scene_model: dict, scene_scope: str, scene_snapshot_sha256: str | None = None,
@@ -528,6 +531,8 @@ class SynchronousPlanner:
         self.robot_config = add_tcp_tool_frame(
             robot_config, tool_frame, np.asarray(link_from_tcp, float), tcp_frame=self.tcp_frame
         )
+        self.robot_config = self._configure_extra_frames(
+            self.robot_config, tool_frame, np.asarray(link_from_tcp, float))
         if attachment_spheres_tool is not None:
             self.robot_config = add_attached_collision_spheres(
                 self.robot_config, tool_frame, attachment_spheres_tool,
@@ -596,6 +601,7 @@ class SynchronousPlanner:
             raise ValueError("动态更新改变机器人或持物结构，必须重建")
         config = add_tcp_tool_frame(robot_config, self.tool_frame, self.link_from_tcp,
                                     tcp_frame=self.tcp_frame)
+        config = self._configure_extra_frames(config, self.tool_frame, self.link_from_tcp)
         if self.attachment_spheres_tool is not None:
             config = add_attached_collision_spheres(config, self.tool_frame, self.attachment_spheres_tool)
         if held_object is not None:

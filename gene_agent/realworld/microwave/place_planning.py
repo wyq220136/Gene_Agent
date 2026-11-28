@@ -48,12 +48,7 @@ def build_observed_table_place_targets(
     collision_scene: Mapping, *, table_height_alignment: Mapping,
     current_hold_check: CheckResult,
 ) -> dict:
-    """保持旧桌面目标的世界 XY/朝向，只随实测桌面顶高调整 Z。
-
-    真机持碗的证据由调用方针对当前观测重新取得；MuJoCo 只用于
-    私有数据上的 FK 和碰撞资产几何查询，不执行 mj_step 或接触模拟。
-    本函数只生成目标，不宣称已经放置成功。
-    """
+    """按当前夹持关系和桌面几何反算直立碗目标，工作区为显式任务参数。"""
     snapshot = collision_scene["snapshot"]
     source = collision_scene["provenance"]
     if (source.get("physics_stepped") is not False
@@ -119,6 +114,11 @@ def build_observed_table_place_targets(
     )
     world_tcp = _observed_tcp_pose(collision_scene)
     tcp_bowl = validate_pose(np.linalg.inv(world_tcp) @ bowl, field_name="T_tcp_bowl")
+    from .strategy_planning import frozen_geometry, strategy_settings
+    from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import object_relative_table_target
+    target, tcp_bowl, object_goal = object_relative_table_target(
+        frozen_geometry(collision_scene), strategy_settings()["table_object_goal"], bowl, world_tcp)
+    table_tcp = PoseTarget("world_tcp", target)
     targets = PlacementTargets.from_attachment(table_tcp, tcp_bowl)
     return {
         "source_collision_snapshot_sha256": snapshot["snapshot_sha256"],
@@ -141,6 +141,8 @@ def build_observed_table_place_targets(
             "retreat": targets.retreat.matrix.tolist(),
         },
         "target_object_pose_world": targets.target_object_pose.tolist(),
+        "object_goal": object_goal,
+        "target_policy": "upright_object_goal_from_actual_grasp_in_front_table_region",
         "stage_order": ("preplace", "place", "release", "detach", "retreat"),
         "claim": "只生成旧桌面 Place 目标；尚未规划、松爪、执行或验证放置",
     }
@@ -175,60 +177,17 @@ def plan_observed_table_place_prefix(
     )
     if attachment.get("planning_attachment_enabled", True) and len(attachment["spheres_tool_m"]) != 32:
         raise ValueError("旧桌面 Place 的携物碰撞代理必须为 32 球")
-    body_snapshot = robot_body_only_snapshot(
-        attachment["snapshot"], output / "attached_robot_body",
-        attached_object_id="bowl",
-    )
-    body_scene = {
-        **attachment,
-        "snapshot": {**attachment["snapshot"], **body_snapshot},
-        "provenance": {
-            **attachment["provenance"],
-            "collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": attachment[
-                "snapshot"]["snapshot_sha256"],
-        },
-    }
-    context = prepare_plan_only_context(
-        body_scene, group="right", planner_pool=planner_pool,
-        scene_revision=scene_revision, seed=seed,
-        attachment_spheres_tool=attachment["spheres_tool_m"],
-    )
-    poses = targets_report["keyposes_world_tcp"]
-    place_tcp = PoseTarget("world_tcp", poses["place"])
-    tcp_bowl = np.linalg.inv(place_tcp.matrix) @ np.asarray(
-        targets_report["target_object_pose_world"], dtype=float,
-    )
-    targets = PlacementTargets.from_attachment(place_tcp, tcp_bowl)
-    plan = PlaceObjectSkill().plan_attached(
-        LegacyPlaceLinearPlanner(context["planner"]),
-        SkillContext("right", context["start"], context["scene"], "bowl", seed),
-        context["scene"], targets,
-    )
-    success = all(plan.stage(name).status == "planned"
-                  for name in ("preplace", "place"))
-    report = {
-        "schema_version": 1,
-        "kind": "observed_table_place_prefix_plan_only",
-        "success": success,
-        "source_collision_snapshot_sha256": collision_scene["snapshot"]["snapshot_sha256"],
+
+    from .strategy_planning import plan_stage, write_report
+    row = plan_stage(attachment, "preplace", targets_report["keyposes_world_tcp"]["preplace"],
+        planner_pool=planner_pool, output=output/"preplace", seed=seed,
+        spheres=attachment["spheres_tool_m"], tcp_bowl=targets_report["T_tcp_bowl_from_actual_hold"],
+        max_tilt_deg=None, max_attempts=5)
+    report = {**row, "stage": row["stage"].to_dict(), "targets": targets_report,
         "attached_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        "stage_collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": body_snapshot.get("ignored_world_obstacles", []),
-        "targets": targets_report,
-        "measured_start": context["start"].to_dict(),
-        "attachment_ref": str(output / "attachment/attachment.json"),
-        "planner_cache_hit": context["planner_cache_hit"],
-        "planner_setup_duration_s": context["planner_setup_duration_s"],
-        "planning_wall_s": time.perf_counter() - started,
-        "plan": plan.to_dict(),
-        "claim": "只规划旧桌面 Place 的携物前缀；未下降执行、松爪或验证支撑",
-    }
-    (output / "table_plan.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "preplace_stage": plan.stage("preplace")}
+        "plan": row["stage"].to_dict()}
+    write_report(output/"table_plan.json", report)
+    return {**report, "preplace_stage": row["stage"]}
 
 
 def plan_observed_table_descent(
@@ -239,7 +198,7 @@ def plan_observed_table_descent(
     max_hold_translation_m: float, max_hold_rotation_rad: float,
     seed: int = 123, scene_revision: int = 37,
 ) -> dict:
-    """保持旧线性权重顺序及其普通 pose fallback，实际执行仍由上层决定。"""
+    """按仿真同一全场景TCP直线合同下降，不将普通pose规划替代直线。"""
     if collision_scene["snapshot"].get("active_group") != "right":
         raise NotImplementedError("原 task_1 Bowl 桌面 Place 目前只验收右臂")
     limits = (max_table_height_delta_m, max_hold_translation_m,
@@ -287,79 +246,13 @@ def plan_observed_table_descent(
     spheres = attachment["spheres_tool_m"]
     if attachment.get("planning_attachment_enabled", True) and len(spheres) != 32:
         raise ValueError("旧桌面下降的附着碰撞代理必须为 32 球")
-    body_snapshot = robot_body_only_snapshot(
-        attachment["snapshot"], output / "attached_robot_body",
-        attached_object_id="bowl",
-    )
-    body_scene = {
-        **attachment,
-        "snapshot": {**attachment["snapshot"], **body_snapshot},
-        "provenance": {
-            **attachment["provenance"],
-            "collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": attachment[
-                "snapshot"]["snapshot_sha256"],
-        },
-    }
-    context = prepare_plan_only_context(
-        body_scene, group="right", planner_pool=planner_pool,
-        scene_revision=scene_revision, seed=seed,
-        attachment_spheres_tool=spheres,
-    )
-    target = PoseTarget("world_tcp", current["keyposes_world_tcp"]["place"])
-    request = MotionRequest(
-        "place:place_linear", MotionOperation.LINEAR_TCP,
-        "right", context["start"], target,
-        context["scene"], CollisionPolicy(), seed=seed,
-    )
-    backend = LegacyPlaceLinearPlanner(context["planner"])
-    result = backend.plan(request)
-    attempts = [{"request": request.to_dict(), "result": result.to_dict()}]
-    fallback_from = None
-    if not result.success:
-        fallback_from = "linear_tcp"
-        request = MotionRequest(
-            "place:place_pose_fallback", MotionOperation.PLAN,
-            "right", context["start"], target,
-            context["scene"], CollisionPolicy(), seed=seed,
-        )
-        result = backend.plan(request)
-        attempts.append({"request": request.to_dict(), "result": result.to_dict()})
-    if result.request_id != request.request_id or result.operation is not request.operation:
-        raise RuntimeError("桌面下降 planner 返回的请求 ID 或路径类型不一致")
-    if result.success and (result.trajectory is None or result.goal_state is None):
-        raise RuntimeError("成功的桌面下降缺少连续轨迹或终点关节")
-    stage = SkillStage(
-        "place", "planned" if result.success else "failed",
-        target, request, result,
-        {"fallback_from": fallback_from, "table_top_delta_m": top_delta,
-         "hold_relation_error_m_rad": hold_error,
-         "ignored_world_obstacles": body_snapshot.get("ignored_world_obstacles", [])},
-    )
-    report = {
-        "schema_version": 1,
-        "kind": "observed_table_descent_plan_only",
-        "success": stage.status == "planned",
-        "source_frame_number": source["source_frame_number"],
-        "base_collision_snapshot_sha256": snapshot["snapshot_sha256"],
-        "attached_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        "stage_collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": body_snapshot.get("ignored_world_obstacles", []),
-        "table_top_delta_m": top_delta,
-        "hold_relation_error_m_rad": hold_error,
-        "legacy_linear_attempts": backend.linear_attempts,
-        "attempts": attempts,
-        "stage": stage.to_dict(),
-        "planner_cache_hit": context["planner_cache_hit"],
-        "planner_setup_duration_s": context["planner_setup_duration_s"],
-        "planning_wall_s": time.perf_counter() - started,
-        "claim": "只从实际预放置终态规划桌面下降；未执行、松爪或验证支撑",
-    }
-    (output / "stage.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "stage": stage}
+
+    from .strategy_planning import plan_stage, strategy_settings
+    return plan_stage(attachment, "place", initial_targets["keyposes_world_tcp"]["place"],
+        planner_pool=planner_pool, output=output, seed=seed,
+        spheres=spheres, tcp_bowl=current["T_tcp_bowl_from_actual_hold"], linear=True,
+        max_tilt_deg=None, max_attempts=5, optimizer_clearance=strategy_settings()[
+            "table_object_goal"]["place_optimizer_clearance_m"])
 
 
 def plan_observed_table_detached_retreat(

@@ -104,3 +104,43 @@ def knob_rotate_keyposes(T_world_microwave, *, rotation_rad=np.pi/4, step_rad=np
     world=_pose(T_world_microwave);cp=_concept('microwave','knob_0') if concept is None else concept;C=_pose(cp['pose_matrix']);K=world@C
     grasp=knob_grasp_candidates(world,azimuths_rad=[azimuth_rad],pose_source=pose_source,concept=cp)[0]
     return {'mode':'geometric_kinematic','pose_source':pose_source,'grasp':grasp,'axis_point_world':K[:3,3].tolist(),'axis_direction_world':K[:3,2].tolist(),'rotation_rad':float(rotation_rad),'step_rad':float(step_rad),'waypoints':rotation_about_axis(grasp['T_world_tcp'],K[:3,3],K[:3,2],rotation_rad,step_rad),'source':'AffordToolAct/tamp/skills/rotate_knob.py: generate_pose_rotation_about_axis_waypoints','reachable':None}
+
+
+def bowl_azimuth_for_world_approach(T_world_bowl, approach_world, *, tip_y_rad):
+    """由真实圆环姿态求最朝向给定世界方向的方位，不改变物体 pose。
+
+    只适用于当前 Bowl 的完整圆环 Concept。倾斜后的 TCP +Z 为
+    sin(tilt)*radial + cos(tilt)*primitive_Z；方位只改变 radial。
+    因此可在环平面内解析求最大内积，避免物体绕自身轴转动时被离散
+    方位网格带偏。这个几何结论不包含 IK、碰撞或接触验收。
+    """
+    bowl = _pose(T_world_bowl)
+    direction = np.asarray(approach_world, dtype=float)
+    tilt = float(tip_y_rad)
+    if (direction.shape != (3,) or not np.isfinite(direction).all()
+            or np.linalg.norm(direction) < 1e-9):
+        raise ValueError("接近方向必须是有限非零三维向量")
+    if not np.isfinite(tilt) or not 1e-9 < abs(tilt) < np.pi / 2:
+        raise ValueError("方位锚定需要非零且绝对值小于90度的倾角")
+    direction = direction / np.linalg.norm(direction)
+    concept = _concept("bowl")
+    existence = np.asarray(concept.get("exist_angle", []), dtype=float)
+    if existence.shape != (1,) or not np.allclose(existence, [360.]):
+        raise ValueError("连续方位锚定仅适用于完整圆环 Concept")
+    world_primitive = bowl[:3, :3] @ _pose(concept["pose_matrix"])[:3, :3]
+    local = world_primitive.T @ direction
+    projected_norm = float(np.linalg.norm(local[:2]))
+    if projected_norm < 1e-9:
+        raise ValueError("接近方向与环法向平行，没有唯一的环侧方位")
+    radial = np.sign(np.sin(tilt)) * local[:2] / projected_norm
+    azimuth = float(np.arctan2(radial[1], radial[0]) % (2 * np.pi))
+    return azimuth, {
+        "policy": "circular_ring_azimuth_from_world_approach",
+        "world_approach_direction": direction.tolist(),
+        "approach_in_primitive": local.tolist(),
+        "projected_norm": projected_norm,
+        "tip_y_rad": tilt,
+        "azimuth_rad": azimuth,
+        "object_pose_modified": False,
+        "collision_checked": False,
+    }

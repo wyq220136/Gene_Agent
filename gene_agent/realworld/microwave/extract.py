@@ -345,6 +345,15 @@ def run_observed_bowl_extract(
                     return stopped
                 return {'success': True}
             if name == 'extract_check':
+                from .strategy_planning import frozen_geometry
+                from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import bowl_exterior_clearance
+                exterior = bowl_exterior_clearance(frozen_geometry(scene))
+                exterior["source"] = "perceived_bowl_and_microwave_pose_with_asset_geometry"
+                exterior["required_clearance_m"] = .005
+                report["exterior_clearance_check"] = exterior
+                if exterior["clearance_m"] < .005:
+                    return stop(name, "bowl_not_fully_outside",
+                        "按当前感知位姿，碗的完整包络尚未越过炉口5mm")
                 extracted = _bind_check_to_scene(
                     scene, _check(
                         check_extracted, scene, ask_manual=ask_manual,

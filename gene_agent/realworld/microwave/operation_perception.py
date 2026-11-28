@@ -110,7 +110,7 @@ class OperationPerception:
                 self.pending.add(BOWL)
         elif operation in {"insert_bowl", "insert", "place_bowl_on_table", "table", "load_bowl"}:
             if kind in {"grasp", "release", "release_settled"} or (
-                    kind == "motion" and name in {"preplace", "insert", "place"}):
+                    kind == "motion" and name in {"held_turn", "preplace", "insert", "place"}):
                 self.pending.add(BOWL)
         elif operation in {"open_door", "close_door", "door"}:
             # 只有拉门前闭爪接触可建立闭门平移约束，普通观测/推拉中不重置参考。

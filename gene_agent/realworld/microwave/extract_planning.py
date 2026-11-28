@@ -50,12 +50,7 @@ def build_observed_bowl_extract_targets(
     grasp_offset_world_m=(0., 0., 0.),
     min_open_angle_rad: float = math.radians(80.),
 ) -> dict:
-    """使用旧 Bowl_0 profile 原值，现场数据只决定父 frame 与初态。
-
-    旧物理探针的诊断偏移仅作用于最后一个 grasp TCP，范围各轴
-    ±20 mm；其余四点不随偏移更改。桌面目标仍返回原 profile 世界
-    pose，后续放桌面阶段再按当前桌面顶高做单独对齐。
-    """
+    """按当前感知碗缘、进炉方向和指垫支点生成目标；旧profile仅作参考。"""
     snapshot = collision_scene["snapshot"]
     source = collision_scene["provenance"]
     if (source.get("physics_stepped") is not False
@@ -104,8 +99,15 @@ def build_observed_bowl_extract_targets(
             raise ValueError(f"{body_name} 现场 pose 与取碗碰撞资产不一致")
     profile = load_object_operation_profile(_ROOT / "data/task_1", "Bowl_0")
     world_profile = microwave_pose @ alignment
-    targets, table_tcp = extract_profile_targets(world_profile, profile)
-    keyposes = {name: getattr(targets, name).matrix.copy() for name in _NAMES}
+    _, table_tcp = extract_profile_targets(world_profile, profile)
+    from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import (
+        actual_bowl_extract_targets, actual_hold_retreat_targets)
+    tcp = _observed_tcp_pose(collision_scene)
+    pads = collision_scene["robot_metadata"]["grippers"]["right"]["pad_geom_names"]
+    centers = np.asarray([data.geom(name).xpos for name in pads])
+    keyposes, target_details = actual_bowl_extract_targets(
+        bowl_pose, tcp, centers.mean(axis=0), microwave_pose[:3, 1])
+    keyposes.update(actual_hold_retreat_targets(tcp, microwave_pose[:3, 1]))
     keyposes["grasp"][:3, 3] += offset
     return {
         "source_collision_snapshot_sha256": snapshot["snapshot_sha256"],
@@ -114,13 +116,15 @@ def build_observed_bowl_extract_targets(
         "frame_alignment_source": microwave_frame_alignment["source"],
         "T_world_profile_microwave": world_profile.tolist(),
         "bowl_pose_world": bowl_pose.tolist(),
+        "target_derivation": target_details,
+        "target_policy": "actual_bowl_rim_contact_pivot",
         "door_angle_rad": door_angle,
         "minimum_open_angle_rad": minimum,
         "grasp_offset_world_m": offset.tolist(),
         "keyposes_world_tcp": {name: pose.tolist() for name, pose in keyposes.items()},
         "raw_table_tcp_world": table_tcp.matrix.tolist(),
         "stage_order": ("open", *_NAMES[:3], "close", "attach", *_NAMES[3:]),
-        "claim": "只生成旧取碗固定五点；未求 IK、规划、夹持或撤离",
+        "claim": "按实际碗缘与夹持姿态生成目标；未规划或执行",
     }
 
 
@@ -152,72 +156,30 @@ def plan_observed_bowl_extract_prefix(
     )
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    body_snapshot = robot_body_only_snapshot(
-        collision_scene["snapshot"], output / "robot_body_only",
-    )
-    body_scene = {
-        **collision_scene,
-        "snapshot": {**collision_scene["snapshot"], **body_snapshot},
-        "provenance": {
-            **collision_scene["provenance"],
-            "collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": collision_scene[
-                "snapshot"]["snapshot_sha256"],
-        },
-    }
-    world = prepare_plan_only_context(
-        collision_scene, group="right", planner_pool=planner_pool,
-        scene_revision=30, seed=seed,
-    )
-    body = prepare_plan_only_context(
-        body_scene, group="right", planner_pool=planner_pool,
-        scene_revision=31, seed=seed,
-    )
-    if world["start"] != body["start"]:
-        raise ValueError("完整场景与本体碰撞层的取碗实测起点不一致")
-    keyposes = targets_report["keyposes_world_tcp"]
-    targets = ExtractionTargets(*(
-        PoseTarget("world_tcp", keyposes[name]) for name in (
-            "pre_extract_1", "pre_extract_2", "grasp",
-            "post_extract_1", "post_extract_2",
-        )
-    ))
-    plan = ExtractObjectSkill().plan_grasp(
-        world["planner"], body["planner"],
-        SkillContext("right", world["start"], world["scene"], "bowl", seed),
-        body["scene"], targets,
-        pregrasp_width_m=open_width, grasp_width_m=close_width,
-    )
-    success = all(plan.stage(name).status == "planned"
-                  for name in ("pre_extract_1", "pre_extract_2", "grasp"))
-    report = {
-        "schema_version": 1,
-        "kind": "observed_bowl_extract_prefix_plan_only",
-        "success": success,
+
+    from .strategy_planning import plan_stage, without_bowl, extract_contact_postcheck, write_report
+    rows, stages, start = [], {}, None
+    for name in ("pre_extract_1", "pre_extract_2", "grasp"):
+        current_scene = without_bowl(collision_scene, output/"grasp_world") if name=="grasp" else collision_scene
+        planned = plan_stage(current_scene, name, targets_report["keyposes_world_tcp"][name],
+            planner_pool=planner_pool, output=output/name, seed=seed, start=start,
+            linear=name!="pre_extract_1",
+            geometry_check=(lambda raw: extract_contact_postcheck(collision_scene, raw))
+                if name=="grasp" else (lambda raw: {"success": True,
+                    "source": "curobo_full_world_validation"}))
+        stages[name] = planned["stage"]
+        rows.append({**planned, "stage": planned["stage"].to_dict()})
+        if not planned["success"]:
+            break
+        start = planned["stage"].result.goal_state
+    report = {"success": len(stages)==3 and all(s.status=="planned" for s in stages.values()),
+        "targets": targets_report, "plan": {"stages": rows},
         "source_collision_snapshot_sha256": collision_scene["snapshot"]["snapshot_sha256"],
-        "robot_body_collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": body_snapshot.get("ignored_world_obstacles", []),
-        "targets": targets_report,
-        "measured_start": world["start"].to_dict(),
-        "measured_open_width_m": measured,
-        "profile_open_width_m": open_width,
-        "profile_close_width_m": close_width,
-        "planner_cache_hit": {
-            "world": world["planner_cache_hit"],
-            "robot_body": body["planner_cache_hit"],
-        },
-        "planner_setup_duration_s": (
-            world["planner_setup_duration_s"] + body["planner_setup_duration_s"]
-        ),
-        "planning_wall_s": time.perf_counter() - started,
-        "plan": plan.to_dict(),
-        "claim": "仅从实测开爪状态规划旧取碗前三个运动阶段；未执行夹取或附着",
-    }
-    (output / "extract_plan.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "pre_extract_1_stage": plan.stage("pre_extract_1")}
+        "planning_wall_s": time.perf_counter()-started}
+    targets_report["screened_prefix_trajectories"] = {
+        n: s.result.trajectory.to_dict() for n,s in stages.items() if s.status=="planned"}
+    write_report(output/"extract_plan.json", report)
+    return {**report, "pre_extract_1_stage": stages.get("pre_extract_1")}
 
 
 _OPERATIONS = {
@@ -279,66 +241,15 @@ def plan_observed_bowl_extract_motion_stage(
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    base = collision_scene["snapshot"]
-    if stage_name == "pre_extract_1":
-        planning_scene = collision_scene
-        ignored = []
-    else:
-        body_snapshot = robot_body_only_snapshot(base, output / "robot_body_only")
-        planning_scene = {
-            **collision_scene,
-            "snapshot": {**base, **body_snapshot},
-            "provenance": {
-                **source,
-                "collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-                "derived_from_collision_snapshot_sha256": base["snapshot_sha256"],
-            },
-        }
-        ignored = body_snapshot.get("ignored_world_obstacles", [])
-    context = prepare_plan_only_context(
-        planning_scene, group="right", planner_pool=planner_pool,
-        scene_revision=scene_revision, seed=seed,
-    )
-    target = PoseTarget("world_tcp", current["keyposes_world_tcp"][stage_name])
-    request = MotionRequest(
-        f"extract:{stage_name}:observed_{source['source_frame_number']}",
-        _OPERATIONS[stage_name], "right", context["start"], target,
-        context["scene"], CollisionPolicy(), seed=seed,
-    )
-    result = context["planner"].plan(request)
-    if result.request_id != request.request_id or result.operation is not request.operation:
-        raise RuntimeError("取碗阶段 planner 返回的请求 ID 或路径类型不一致")
-    if result.success and (result.trajectory is None or result.goal_state is None):
-        raise RuntimeError("成功的取碗运动阶段缺少连续轨迹或终点关节")
-    stage = SkillStage(
-        stage_name, "planned" if result.success else "failed",
-        target, request, result,
-        {"microwave_anchor_error_m_rad": microwave_error,
-         "bowl_anchor_error_m_rad": bowl_error,
-         "ignored_world_obstacles": ignored},
-    )
-    report = {
-        "schema_version": 1,
-        "kind": "observed_bowl_extract_motion_stage_plan_only",
-        "success": bool(result.success),
-        "stage_name": stage_name,
-        "source_frame_number": source["source_frame_number"],
-        "base_collision_snapshot_sha256": base["snapshot_sha256"],
-        "stage_collision_snapshot_sha256": planning_scene["snapshot"]["snapshot_sha256"],
-        "ignored_world_obstacles": ignored,
-        "microwave_anchor_error_m_rad": microwave_error,
-        "bowl_anchor_error_m_rad": bowl_error,
-        "stage": stage.to_dict(),
-        "planner_cache_hit": context["planner_cache_hit"],
-        "planner_setup_duration_s": context["planner_setup_duration_s"],
-        "planning_wall_s": time.perf_counter() - started,
-        "claim": "仅从实测状态规划当前取碗阶段；未执行或验证 Bowl 夹持",
-    }
-    (output / "stage.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "stage": stage}
+
+    from .strategy_planning import plan_stage, without_bowl, extract_contact_postcheck
+    planned_scene = without_bowl(collision_scene, output/"grasp_world") if stage_name=="grasp" else collision_scene
+    return plan_stage(planned_scene, stage_name, initial_targets["keyposes_world_tcp"][stage_name],
+        planner_pool=planner_pool, output=output, seed=seed, linear=stage_name!="pre_extract_1",
+        preferred=(initial_targets.get("screened_prefix_trajectories") or {}).get(stage_name),
+        geometry_check=(lambda raw: extract_contact_postcheck(collision_scene, raw))
+            if stage_name=="grasp" else (lambda raw: {"success": True,
+                "source": "curobo_full_world_validation"}))
 
 
 _RETREAT_NAMES = ("post_extract_1", "post_extract_2")
@@ -357,11 +268,7 @@ def plan_observed_bowl_extract_retreat_stage(
     max_hold_translation_m: float, max_hold_rotation_rad: float,
     seed: int = 123, scene_revision: int = 34,
 ) -> dict:
-    """用旧 32 球附着代理与 robot_body 场景，从实测关节规划一段。
-
-    只有现场夹持检查通过才构造规划 attachment。该代理不会让真实 Bowl
-    物理粘连；执行后仍须重新确认夹持和 TCP→Bowl 关系。
-    """
+    """从实际夹持姿态抬升并完全撤出，保留完整场景和持物碰撞。"""
     if stage_name not in _RETREAT_NAMES:
         raise ValueError(f"不支持的取碗携物撤离阶段：{stage_name}")
     if collision_scene["snapshot"].get("active_group") != "right":
@@ -427,75 +334,27 @@ def plan_observed_bowl_extract_retreat_stage(
     spheres = attachment["spheres_tool_m"]
     if attachment.get("planning_attachment_enabled", True) and len(spheres) != 32:
         raise ValueError("旧取碗撤离的附着碰撞代理必须为 32 球")
-    body_snapshot = robot_body_only_snapshot(
-        attachment["snapshot"], output / "attached_robot_body",
-        attached_object_id="bowl",
-    )
-    body_scene = {
-        **attachment,
-        "snapshot": {**attachment["snapshot"], **body_snapshot},
-        "provenance": {
-            **attachment["provenance"],
-            "collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": attachment[
-                "snapshot"]["snapshot_sha256"],
-        },
-    }
-    context = prepare_plan_only_context(
-        body_scene, group="right", planner_pool=planner_pool,
-        scene_revision=scene_revision, seed=seed,
-        attachment_spheres_tool=spheres,
-    )
-    target = PoseTarget("world_tcp", current["keyposes_world_tcp"][stage_name])
-    request = MotionRequest(
-        f"extract:{stage_name}:observed_{source['source_frame_number']}",
-        MotionOperation.LINEAR_TCP, "right", context["start"], target,
-        context["scene"], CollisionPolicy(), seed=seed,
-    )
-    result = context["planner"].plan(request)
-    if result.request_id != request.request_id or result.operation is not request.operation:
-        raise RuntimeError("取碗撤离 planner 返回的请求 ID 或路径类型不一致")
-    if result.success and (result.trajectory is None or result.goal_state is None):
-        raise RuntimeError("成功的取碗撤离缺少连续轨迹或终点关节")
-    attempts = [{"stage": stage_name, "request": request.to_dict(),
-                 "result": result.to_dict()}]
-    nominal = SkillStage(stage_name, "planned" if result.success else "failed",
-                         target, request, result)
-    stage = nominal if result.success else _plan_with_legacy_local_fallback(
-        context["planner"], nominal, attempts, limit_deg=10., step_deg=2.5,
-    )
-    stage = SkillStage(
-        stage.name, stage.status, stage.target, stage.request, stage.result,
-        {**stage.details, "microwave_anchor_error_m_rad": microwave_error,
-         "hold_relation_error_m_rad": hold_error,
-         "ignored_world_obstacles": body_snapshot.get("ignored_world_obstacles", [])},
-    )
-    report = {
-        "schema_version": 1,
-        "kind": "observed_bowl_extract_retreat_stage_plan_only",
-        "success": stage.status == "planned",
-        "stage_name": stage_name,
-        "source_frame_number": source["source_frame_number"],
-        "base_collision_snapshot_sha256": snapshot["snapshot_sha256"],
-        "attached_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        "stage_collision_snapshot_sha256": body_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": body_snapshot.get("ignored_world_obstacles", []),
-        "microwave_anchor_error_m_rad": microwave_error,
-        "hold_relation_error_m_rad": hold_error,
-        "T_tcp_bowl_from_actual_hold": actual_tcp_bowl.tolist(),
-        "attachment_ref": str(output / "attachment/attachment.json"),
-        "stage": stage.to_dict(),
-        "attempts": attempts,
-        "planner_cache_hit": context["planner_cache_hit"],
-        "planner_setup_duration_s": context["planner_setup_duration_s"],
-        "planning_wall_s": time.perf_counter() - started,
-        "claim": "只规划当前携物直线撤离；未执行或验证 Bowl 已取出",
-    }
-    (output / "stage.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "stage": stage}
+
+    from .strategy_planning import plan_stage, frozen_geometry
+    from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import actual_hold_retreat_targets
+    from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import actual_exterior_retreat_target
+    current_tcp = _observed_tcp_pose(collision_scene)
+    inward = np.asarray(source["aligned_object_poses_world"][_MICROWAVE])[:3,1]
+    if stage_name=="post_extract_1":
+        initial_targets["actual_hold_retreat_targets"] = {
+            n: p.tolist() for n,p in actual_hold_retreat_targets(current_tcp, inward).items()}
+    targets = initial_targets.get("actual_hold_retreat_targets")
+    if targets is None:
+        raise ValueError("取碗撤离必须从闭爪后的实测持碗状态生成")
+    target = np.asarray(targets[stage_name])
+    if stage_name=="post_extract_2":
+        target, derivation = actual_exterior_retreat_target(frozen_geometry(collision_scene),
+            {"robots":{"right":{"T_world_tcp": current_tcp}}, "state_id": snapshot["snapshot_sha256"]},
+            target, targets["post_extract_1"], group="right", required_clearance_m=.005)
+        initial_targets["exterior_target_derivation"] = derivation
+    return plan_stage(attachment, stage_name, target,
+        planner_pool=planner_pool, output=output, seed=seed, linear=True,
+        spheres=spheres, tcp_bowl=actual_tcp_bowl, max_tilt_deg=15.)
 
 
 __all__ = ['build_observed_bowl_extract_targets', 'plan_observed_bowl_extract_prefix', 'plan_observed_bowl_extract_motion_stage', 'plan_observed_bowl_extract_retreat_stage']

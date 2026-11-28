@@ -61,6 +61,14 @@ def observed_tcp_pose(scene: Mapping) -> np.ndarray:
     """用现场 qpos 在私有 MuJoCo 数据中求 FK；不推进物理。"""
     snapshot = scene["snapshot"]
     group = snapshot["active_group"]
+    source = scene.get("provenance", {})
+    # 真机采用与AffordToolAct相同的SDK关节→厂家FK→flange_tcp；预测链必须重新FK。
+    if source.get("state_source") != "microwave_plan_only":
+        poses = source.get("tcp_poses_world") or {}
+        if group in poses:
+            return validate_pose(poses[group], field_name="T_world_tcp_sdk")
+        if "live_state" in source:
+            raise ValueError("真机现场缺少本帧SDK TCP，不能用模型FK冒充实测状态")
     model = mujoco.MjModel.from_xml_path(str(scene["scene_xml_path"]))
     qpos = np.asarray(snapshot["qpos_snapshot"], dtype=float)
     if qpos.shape != (model.nq,) or not np.isfinite(qpos).all():

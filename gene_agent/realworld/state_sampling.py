@@ -28,9 +28,10 @@ class RobotStateSampler:
             started = time.monotonic()
             started_ms = time.time() * 1000.
             state = self.robots[group].read_joint_state()
+            tcp = self.robots[group].tcp_pose_from_sdk_fk(state.positions_rad)
             width = (float(overrides[group]) if group in overrides
                      else float(self.grippers[group].read_width_m()))
-            return {"joint_state": state, "width_m": width,
+            return {"joint_state": state, "tcp_pose_sdk": tcp.tolist(), "width_m": width,
                     "width_source": (retained_width_source(self.grippers[group], width)
                                      if group in overrides else "sdk_live_read"),
                     "started_monotonic_s": started, "ended_monotonic_s": time.monotonic(),

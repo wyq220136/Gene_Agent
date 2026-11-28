@@ -16,7 +16,7 @@ def make_session_recovery(setup):
         if (not isinstance(spec, dict) or not spec.get("seg_server")
                 or not spec.get("prompt") or not spec.get("category")):
             raise RuntimeError(
-                f"{object_id} 的 tracking session 已失效，旧准备记录缺少重新分割参数；"
+                f"{object_id} 需要当前帧重新分割与位姿注册，但准备记录缺少感知参数；"
                 "请保持 Pose server 在线，重新运行 prepare_microwave_realworld.py，"
                 "并将 --perception 指向新目录。不要手工修改 session 编号。"
             )

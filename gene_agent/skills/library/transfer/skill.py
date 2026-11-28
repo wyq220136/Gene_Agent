@@ -5,7 +5,8 @@ from gene_agent.skills.runtime.runner import run_operation
 
 
 def run_transfer_flow(backend, *, operation='insert', verify_hold=True,
-                      approve_path=True, verify_release=True, verify_final=True, stop_after=None):
+                      approve_path=True, verify_release=True, verify_final=True, stop_after=None,
+                      initial_motion_stages=(), retreat_stages=None):
     """先移动携物目标，再松爪、detach、落稳、检查和撤离。
 
     真机的路径人工审批与 MuJoCo 规划器的碰撞检查来源不同，后端显式
@@ -20,7 +21,7 @@ def run_transfer_flow(backend, *, operation='insert', verify_hold=True,
         raise ValueError('未知搬运停止范围')
     if stop_after == 'release' and not verify_release:
         raise ValueError('释放调试必须启用释放检查')
-    names = ['preplace']
+    names = list(initial_motion_stages) + ['preplace']
     if verify_hold:
         names.append('hold_check')
     if approve_path:
@@ -28,7 +29,8 @@ def run_transfer_flow(backend, *, operation='insert', verify_hold=True,
     names.extend([operation, 'release', 'detach', 'settle'])
     if verify_release:
         names.append('release_check')
-    names.extend(['retreat_1', 'retreat_2'] if operation == 'insert' else ['retreat'])
+    names.extend(list(retreat_stages) if retreat_stages is not None else
+                 ['retreat_1', 'retreat_2'] if operation == 'insert' else ['retreat'])
     if verify_final:
         names.append('final_check')
     if stop_after not in (None, 'complete'):
@@ -41,9 +43,10 @@ def run_transfer_flow(backend, *, operation='insert', verify_hold=True,
     return replace(result, skill=operation, requested_scope=(stop_after or ('complete' if verify_final else 'motion_prefix')))
 
 
-def insert(backend, *, stop_after=None):
+def insert(backend, *, stop_after=None, initial_motion_stages=(), retreat_stages=None):
     """持物放入、释放与撤离；完整模式要求全部后置检查。"""
-    return run_transfer_flow(backend, operation='insert', stop_after=stop_after)
+    return run_transfer_flow(backend, operation='insert', stop_after=stop_after,
+        initial_motion_stages=initial_motion_stages, retreat_stages=retreat_stages)
 
 
 def place(backend, *, stop_after=None):

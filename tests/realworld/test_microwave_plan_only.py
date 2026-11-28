@@ -252,7 +252,8 @@ def test_prediction_reaches_existing_planner_with_unchanged_capture_frame(
         pass
     def context(*a,**k):
         raise AtPlanner()
-    for module in (ins,ext,plc,pk):
+    from gene_agent.realworld.microwave import strategy_planning
+    for module in (ins,ext,plc,pk,strategy_planning):
         monkeypatch.setattr(module,"prepare_plan_only_context",context)
     root=Path(__file__).resolve().parents[2]
     w=PlanOnlyWorld(observed_scene,tmp_path/"plan",max_start_error_rad=.03)
@@ -284,7 +285,7 @@ def test_prediction_reaches_existing_planner_with_unchanged_capture_frame(
                 microwave_frame_alignment=alignment,hold_check=check.to_dict())
         elif operation=="insert_retreat":
             ins.plan_observed_bowl_detached_retreat_stage(scene,initial,release,
-                **common,**object_limits,stage_name="retreat_1",
+                **common,**object_limits,stage_name="retreat_lift",
                 microwave_frame_alignment=alignment,
                 max_microwave_translation_m=.005,max_microwave_rotation_rad=.15)
         elif operation=="extract_motion":

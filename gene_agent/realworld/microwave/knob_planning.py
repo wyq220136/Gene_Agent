@@ -89,6 +89,13 @@ def build_observed_knob_targets(
     profile_path = (_ROOT / task["grasp_profile_path"]).resolve()
     concept = load_concept(concept_path, part_name="knob_0")
     profile = load_grasp_profiles(profile_path)[task["grasp_profile_name"]]
+    if config_path == _DEFAULT_TASK.resolve():
+        from dataclasses import replace
+        from .strategy_planning import strategy_settings
+        strategy = strategy_settings()
+        profile = replace(profile, parameters={**profile.parameters,
+            "azimuth_rad": [math.radians(strategy["knob_azimuth_deg"])],
+            "tip_x_rad": [math.radians(strategy["knob_tip_x_deg"])]})
     proposals = generate_grasps(concept.concept, microwave_pose, profile).proposals
     if not proposals:
         raise ValueError("当前旋钮 profile 未生成 grasp 候选")

@@ -2,3 +2,5 @@
 from .candidates import bowl_grasp_candidates, knob_grasp_candidates, knob_rotate_keyposes, rotation_about_axis
 
 __all__ = ['bowl_grasp_candidates','knob_grasp_candidates','knob_rotate_keyposes','rotation_about_axis']
+
+from .candidates import bowl_azimuth_for_world_approach

@@ -721,3 +721,32 @@ P0/P1/P2 已接入真机入口，原运行命令不变。批次容量、精确�
 事件只在发令校验通过且准备实际调用 SDK 时排队，在 SDK 返回后的观测中消费一次；部分执行失败也保留待刷新。仅规划/预检失败不排队。切换子任务不清空未消费事件。日志 `provenance.perception_refresh` 中 `refresh_mode=interaction_events`、`refreshed_object_ids` 和 `retained_object_ids` 标明本帧处理方式；`object_observations` 保留各对象真实观测时间。RGB-D 帧和机械臂关节仍按现场观测更新，复用 pose 不伪造新测量。此策略假定物体不会被程序外的人或其他控制器移动；发生外部改动应重启现场运行以重新取得初态。
 
 此复用策略以程序之外没有人工/其他进程操作夹爪为前提；现场外部改动后应重新建立任务连接。开口仍按0～1000满量程换算，实际位置命令上限990；反馈接受范围仍为 -10～1500。SDK 字段说明：https://develop.realman-robotics.com/robot/apipython/struct/gripperState/
+
+
+## 操作策略与状态来源
+
+除用户定制的 pick_bowl 外，放入、炉内取碗、取出撤离、桌面放置和第二次开门前过渡，
+按 Gene_Agent_new 当前物理仿真的策略迁移。目标和净空几何在
+gene_agent/tasks/policies/microwave_task/operations/transfer_scene.py 中按同源规则迁移；
+真机适配负责实际状态来源、设备执行和现场后置证据。
+
+- 放入：必要预倾斜、炉顶净空和持碗转向候选；采纳首个同时通过持碗进入、松爪包络、
+  开爪撤离的完整序列。松爪落稳后用实际感知重新筛撤离，增加 retreat_lift。
+- 取碗：按当前碗缘和实际夹持关系生成目标；撤出用完整碗碰撞包络与炉口5mm净空。
+- 桌面放置：直立碗的目标由显式工作区和真实桌面顶高决定，按当前夹持关系反算TCP；
+  下降保持TCP直线，不自动改成绕行。
+- 第二次开门前：保持姿态上抬20mm，再回配置的home关节分支。
+- 物体更新：初始化及交互事件后，仅为需要更新的对象采集当前RGB-D、分割并重新注册位姿，
+  对应AffordToolAct的 estimate_multi_pose，不持续重估整个场景。
+- 当前TCP：同AffordToolAct，从实时关节读数经厂家SDK FK和已标定的flange→TCP得到；
+  不用感知识别夹爪，也不用MuJoCo当前site冒充真机TCP。
+- MuJoCo仅承载已观测状态的静态几何和预测副本，不执行物理step。预测接触、规划attachment
+  均不能替代真实夹持或释放证据；现有现场检查继续保留。
+
+继续使用现有真机命令。新生成配置默认使用
+data/task_1/realworld/door_strategy.json 与 operation_strategy.json；
+后者的桌面XY工作区继承仿真的world参数，须与现场任务坐标下的桌面区域对应。
+自定义旧配置中的显式参数仍需检查，历史run不会被修改。
+代码级几何/mock检查不等于真机成功；最终需在右臂现场逐段验证。
+
+本次只更新真机调用链及必要共享接线，Gene_Agent_new 和本仓库仿真执行器不作修改。

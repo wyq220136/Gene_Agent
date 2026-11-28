@@ -49,7 +49,7 @@ def build_observed_bowl_insert_targets(
     scene: Mapping, pick_report: Mapping, *,
     microwave_frame_alignment: Mapping,
     current_hold_check: Mapping | None = None,
-    insert_depth_offset_m: float = 0.,
+    insert_depth_offset_m: float = .02,
     retreat_rotation_local_deg=(0., 0., 0.),
 ) -> dict:
     """保留原 keypose 数值规则，只把输入换成现场状态和已验收 frame。
@@ -120,9 +120,16 @@ def build_observed_bowl_insert_targets(
         "retreat_1": old.post_place_1_tcp, "retreat_2": old.post_place_2_tcp,
     }
     angles = np.asarray(retreat_rotation_local_deg, dtype=float)
-    targets, object_goal = adjust_insert_targets(
-        old, T_world_microwave, depth_offset_m=insert_depth_offset_m,
+    from .strategy_planning import frozen_geometry, strategy_settings
+    from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import insert_candidate_families
+    settings = strategy_settings()
+    families = insert_candidate_families(frozen_geometry(scene), T_world_bowl, T_tcp_bowl,
+        insert_depth_offset_m=insert_depth_offset_m,
+        insert_tcp_table_angle_max_deg=settings["insert_tcp_table_angle_max_deg"],
+        insert_max_bowl_tilt_deg=settings["insert_max_bowl_tilt_deg"],
+        retreat_clearance_margin_m=settings["retreat_clearance_margin_m"],
         retreat_rotation_local_deg=angles)
+    targets, object_goal = families[0]["targets"], families[0]["object_goal"]
     return {
         "source_collision_snapshot_sha256": snapshot["snapshot_sha256"],
         "source_frame_number": source["source_frame_number"],
@@ -132,6 +139,10 @@ def build_observed_bowl_insert_targets(
                         "manual_prepared_held_bowl" if manual else "executed_pick"),
         "T_world_profile_microwave": (T_world_microwave @ T_scene_profile).tolist(),
         "T_tcp_bowl_from_actual_hold": T_tcp_bowl.tolist(),
+        "target_policy": "full_insert_release_envelope_and_released_retreat_screen",
+        "candidate_families": [{k: ({n: p.tolist() for n, p in v.items()} if k == "targets"
+            else v.tolist() if isinstance(v, np.ndarray) else v)
+            for k, v in family.items()} for family in families],
         "keyposes_world_tcp": {name: pose.tolist() for name, pose in targets.items()},
         "original_keyposes_world_tcp": {name: pose.tolist() for name, pose in original.items()},
         "desired_placed_object_world": object_goal.tolist(),
@@ -146,16 +157,10 @@ def plan_observed_bowl_insert_prefix(
     microwave_frame_alignment: dict, planner_pool,
     output_dir: str | Path, seed: int = 123,
     current_hold_check: dict | None = None,
-    insert_depth_offset_m: float = 0.,
+    insert_depth_offset_m: float = .02,
     retreat_rotation_local_deg=(0., 0., 0.),
 ) -> dict:
-    """从 Pick 已验收的实测终态筛 preplace，再规划直线 insert。
-
-    这是旧 Skill 的预测规划前缀。执行 preplace 后必须从新实测关节和
-    新碰撞快照重规划 insert；不能直接把本结果预测终点串成真机动作。
-    原 Skill 的 insert 段使用“仅自碰撞”规划层，该层明确列出被停用
-    的 world 障碍，调用方不得把它说成完整场景避障。
-    """
+    """筛持物进入、完整松爪包络、开爪撤离全序列；预测不作为执行事实。"""
     output = Path(output_dir).resolve()
     started = time.perf_counter()
     targets_report = build_observed_bowl_insert_targets(
@@ -173,73 +178,37 @@ def plan_observed_bowl_insert_prefix(
         collision_scene, grasp, output_dir=output / "attachment",
         hold_evidence=current_hold_check,
     )
-    world = prepare_plan_only_context(
-        attachment, group="right", planner_pool=planner_pool,
-        scene_revision=10, seed=seed,
-        attachment_spheres_tool=attachment["spheres_tool_m"],
-    )
-    self_snapshot = export_self_collision_only_snapshot(
-        attachment["snapshot"], output / "attached_self_only",
-        attached_object_id="bowl",
-    )
-    # 原导出器只写规划 world 的差异字段。以下来源、关节与夹爪字段
-    # 仍属于同一实测帧；实际被停用的 world 障碍在 self_snapshot 中列出。
-    self_scene = {
-        **attachment,
-        "snapshot": {**attachment["snapshot"], **self_snapshot},
-        "provenance": {
-            **attachment["provenance"],
-            "collision_snapshot_sha256": self_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        },
-    }
-    self_only = prepare_plan_only_context(
-        self_scene, group="right", planner_pool=planner_pool,
-        scene_revision=11, seed=seed,
-        attachment_spheres_tool=attachment["spheres_tool_m"],
-    )
-    if self_only["start"] != world["start"]:
-        raise ValueError("完整场景与仅自碰撞规划层的实测起点不一致")
-    keyposes = targets_report["keyposes_world_tcp"]
-    targets = InsertionTargets(*(
-        PoseTarget("world_tcp", keyposes[name]) for name in (
-            "preplace", "insert", "retreat_1", "retreat_2",
-        )
-    ))
-    plan = InsertObjectSkill().plan_attached(
-        world["planner"], self_only["planner"],
-        SkillContext("right", world["start"], world["scene"], "bowl", seed),
-        self_only["scene"], targets,
-    )
-    report = {
-        "schema_version": 1,
-        "kind": "observed_bowl_insert_prefix_plan_only",
-        "success": all(plan.stage(name).status == "planned"
-                       for name in ("preplace", "insert")),
+
+    from .strategy_planning import screen_insert, write_report
+    families = [{**family, "targets": {n: np.asarray(p) for n, p in family["targets"].items()},
+        "object_goal": np.asarray(family["object_goal"])} for family in targets_report["candidate_families"]]
+    screen = screen_insert(collision_scene, attachment, families,
+        planner_pool=planner_pool, output=output/"sequence_screen", seed=seed)
+    report = {"schema_version": 2, "kind": "observed_bowl_insert_full_sequence_screen",
+        "success": screen["success"], "failure_domain": screen.get("failure_domain"),
         "source_collision_snapshot_sha256": collision_scene["snapshot"]["snapshot_sha256"],
         "attached_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        "self_only_collision_snapshot_sha256": self_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": self_snapshot.get("ignored_world_obstacles", []),
-        "attachment_ref": str(output / "attachment/attachment.json"),
-        "targets": targets_report,
-        "measured_start": world["start"].to_dict(),
-        "planner_cache_hit": {
-            "world": world["planner_cache_hit"],
-            "self_only": self_only["planner_cache_hit"],
-        },
-        "planner_setup_duration_s": (
-            world["planner_setup_duration_s"] + self_only["planner_setup_duration_s"]
-        ),
-        "planning_wall_s": time.perf_counter() - started,
-        "claim": "仅规划旧放入 Skill 前缀；未执行 preplace/insert，也未验证 Bowl 放置",
-        "plan": plan.to_dict(),
-    }
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "insert_plan.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "preplace_stage": plan.stage("preplace")}
+        "targets": targets_report, "plan": {"candidate_screen": screen["candidate_screen"]},
+        "planning_wall_s": time.perf_counter()-started}
+    stages = {}
+    if screen["success"]:
+        from gene_agent.motion.recording import current_motion_recording
+        recording = current_motion_recording()
+        logs = getattr(recording, "curobo_logs", None)
+        if logs is not None:
+            logs.resolve_successful_selection({"success": True,
+                "screen_contract": "full_insert_release_retreat"})
+        family = screen["family"]; stages = screen["held_stages"]
+        targets_report.update(selected_candidate_index=screen["index"],
+            keyposes_world_tcp={n: np.asarray(p).tolist() for n, p in family["targets"].items()},
+            desired_placed_object_world=np.asarray(family["object_goal"]).tolist(),
+            held_turn_world_tcp=(np.asarray(family["held_turn"]).tolist()
+                                if "held_turn" in family else None),
+            screened_held_trajectories={n: s.result.trajectory.to_dict() for n, s in stages.items()},
+            release_retreat_preflight=screen["retreat_evidence"])
+    write_report(output/"insert_plan.json", report)
+    return {**report, "preplace_stage": stages.get("preplace"),
+            "held_turn_stage": stages.get("held_turn")}
 
 
 def plan_observed_bowl_insert_linear(
@@ -294,80 +263,15 @@ def plan_observed_bowl_insert_linear(
         collision_scene, grasp,
         output_dir=output / "attachment", hold_evidence=hold_check,
     )
-    self_snapshot = export_self_collision_only_snapshot(
-        attachment["snapshot"], output / "attached_self_only",
-        attached_object_id="bowl",
-    )
-    self_scene = {
-        **attachment,
-        "snapshot": {**attachment["snapshot"], **self_snapshot},
-        "provenance": {
-            **attachment["provenance"],
-            "collision_snapshot_sha256": self_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        },
-    }
-    context = prepare_plan_only_context(
-        self_scene, group="right", planner_pool=planner_pool,
-        scene_revision=scene_revision, seed=seed,
-        attachment_spheres_tool=attachment["spheres_tool_m"],
-    )
-    target = PoseTarget("world_tcp", current["keyposes_world_tcp"]["insert"])
-    screen = MotionRequest(
-        f"insert:place_screen:observed_{source['source_frame_number']}",
-        MotionOperation.PLAN, "right", context["start"], target,
-        context["scene"], CollisionPolicy(), seed=seed,
-    )
-    screened = context["planner"].plan(screen)
-    if screened.request_id != screen.request_id or screened.operation is not MotionOperation.PLAN:
-        raise RuntimeError("insert 普通路径筛选结果与请求不一致")
-    linear = None
-    result = None
-    if screened.success and screened.trajectory is not None:
-        linear = MotionRequest(
-            f"insert:place_linear:observed_{source['source_frame_number']}",
-            MotionOperation.LINEAR_TCP, "right", context["start"], target,
-            context["scene"], CollisionPolicy(), seed=seed,
-        )
-        result = context["planner"].plan(linear)
-        if result.request_id != linear.request_id or result.operation is not MotionOperation.LINEAR_TCP:
-            raise RuntimeError("insert 直线规划结果与请求不一致")
-        if result.success and (result.trajectory is None or result.goal_state is None):
-            raise RuntimeError("成功的 insert 直线缺少轨迹或终点关节")
-    success = bool(result is not None and result.success)
-    stage = SkillStage(
-        "insert", "planned" if success else "failed", target,
-        linear, result,
-        {"operation": "linear_tcp", "screen_success": screened.success,
-         "microwave_anchor_error_m_rad": microwave_delta,
-         "hold_relation_error_m_rad": hold_delta,
-         "ignored_world_obstacles": self_snapshot.get("ignored_world_obstacles", [])},
-    )
-    report = {
-        "schema_version": 1, "kind": "observed_bowl_insert_linear_plan_only",
-        "success": success,
-        "source_frame_number": source["source_frame_number"],
-        "base_collision_snapshot_sha256": collision_scene["snapshot"]["snapshot_sha256"],
-        "attached_collision_snapshot_sha256": attachment["snapshot"]["snapshot_sha256"],
-        "stage_collision_snapshot_sha256": self_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": self_snapshot.get("ignored_world_obstacles", []),
-        "microwave_anchor_error_m_rad": microwave_delta,
-        "hold_relation_error_m_rad": hold_delta,
-        "screen_request": screen.to_dict(), "screen_result": screened.to_dict(),
-        "linear_request": None if linear is None else linear.to_dict(),
-        "linear_result": None if result is None else result.to_dict(),
-        "stage": stage.to_dict(),
-        "planner_cache_hit": context["planner_cache_hit"],
-        "planner_setup_duration_s": context["planner_setup_duration_s"],
-        "planning_wall_s": time.perf_counter() - started,
-        "claim": "只从 preplace 实测终态筛选并规划直线 insert；未执行或验证 Bowl 放置",
-    }
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "stage.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "stage": stage}
+
+    from .strategy_planning import plan_stage
+    planned = plan_stage(attachment, "insert", initial_targets["keyposes_world_tcp"]["insert"],
+        planner_pool=planner_pool, output=output, seed=seed,
+        spheres=attachment["spheres_tool_m"],
+        tcp_bowl=current["T_tcp_bowl_from_actual_hold"], linear=True,
+        preferred=(initial_targets.get("screened_held_trajectories") or {}).get("insert"))
+    return {**planned, "microwave_anchor_error_m_rad": microwave_delta,
+            "hold_relation_error_m_rad": hold_delta}
 
 
 def plan_observed_bowl_detached_retreat_stage(
@@ -378,13 +282,8 @@ def plan_observed_bowl_detached_retreat_stage(
     max_bowl_translation_m: float, max_bowl_rotation_rad: float,
     seed: int = 123, scene_revision: int = 13,
 ) -> dict:
-    """按旧 Skill 的 LINEAR_TCP + 仅自碰撞策略规划一个撤离段。
-
-    release_report 必须说明夹爪命令已执行、Bowl 已确认离爪，并提供
-    松爪后 Bowl pose。另一段撤离仍重新读取实际现场，不从此段目标
-    关节状态预测下一段的起点。
-    """
-    if stage_name not in {"retreat_1", "retreat_2"}:
+    """松爪落稳后按实际感知几何筛三段撤离；全场景，净空抬升保持TCP直线。"""
+    if stage_name not in {"retreat_lift", "retreat_1", "retreat_2"}:
         raise ValueError(f"未知的 Bowl 放碗撤离阶段：{stage_name}")
     limits = (max_microwave_translation_m, max_microwave_rotation_rad,
               max_bowl_translation_m, max_bowl_rotation_rad)
@@ -436,61 +335,43 @@ def plan_observed_bowl_detached_retreat_stage(
         raise ValueError("Bowl 在松爪后发生明显位移，停止撤离")
     output = Path(output_dir).resolve()
     started = time.perf_counter()
-    self_snapshot = export_self_collision_only_snapshot(
-        snapshot, output / "detached_self_only", attached_object_id=None,
-    )
-    self_scene = {
-        **collision_scene,
-        "snapshot": {**snapshot, **self_snapshot},
-        "provenance": {
-            **source,
-            "collision_snapshot_sha256": self_snapshot["snapshot_sha256"],
-            "derived_from_collision_snapshot_sha256": snapshot["snapshot_sha256"],
-        },
-    }
-    context = prepare_plan_only_context(
-        self_scene, group="right", planner_pool=planner_pool,
-        scene_revision=scene_revision, seed=seed,
-    )
-    target = PoseTarget("world_tcp", targets_report["keyposes_world_tcp"][stage_name])
-    request = MotionRequest(
-        f"insert:{stage_name}:observed_{source['source_frame_number']}",
-        MotionOperation.LINEAR_TCP, "right", context["start"], target,
-        context["scene"], CollisionPolicy(), seed=seed,
-    )
-    result = context["planner"].plan(request)
-    if result.request_id != request.request_id or result.operation is not MotionOperation.LINEAR_TCP:
-        raise RuntimeError("Bowl 撤离直线结果与请求不一致")
-    if result.success and (result.trajectory is None or result.goal_state is None):
-        raise RuntimeError("成功的 Bowl 撤离直线缺少轨迹或终点关节")
-    stage = SkillStage(
-        stage_name, "planned" if result.success else "failed",
-        target, request, result,
-        {"microwave_anchor_error_m_rad": microwave_delta,
-         "bowl_after_release_error_m_rad": bowl_delta,
-         "ignored_world_obstacles": self_snapshot.get("ignored_world_obstacles", [])},
-    )
-    report = {
-        "schema_version": 1, "kind": "observed_bowl_detached_retreat_plan_only",
-        "success": result.success, "stage_name": stage_name,
-        "source_frame_number": source["source_frame_number"],
-        "base_collision_snapshot_sha256": snapshot["snapshot_sha256"],
-        "stage_collision_snapshot_sha256": self_snapshot["snapshot_sha256"],
-        "ignored_world_obstacles": self_snapshot.get("ignored_world_obstacles", []),
-        "microwave_anchor_error_m_rad": microwave_delta,
-        "bowl_after_release_error_m_rad": bowl_delta,
-        "planning_wall_s": time.perf_counter() - started,
-        "planner_cache_hit": context["planner_cache_hit"],
-        "planner_setup_duration_s": context["planner_setup_duration_s"],
-        "stage": stage.to_dict(),
-        "claim": "只规划一个实测起点的 TCP 直线撤离段；未执行或验证 Bowl 稳定放置",
-    }
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "stage.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    return {**report, "stage": stage}
+
+    from .strategy_planning import (plan_stage, plan_sequence, frozen_geometry,
+        strategy_settings, RETREAT_FRACTIONS, write_report)
+    from gene_agent.tasks.policies.microwave_task.operations.transfer_scene import raise_retreat_for_released_pad_clearance
+    settings = strategy_settings()
+    if stage_name == "retreat_lift":
+        frozen = frozen_geometry(collision_scene); candidates = []
+        nominal = {n: np.asarray(p) for n, p in targets_report["keyposes_world_tcp"].items()
+                   if n in {"preplace", "insert", "retreat_1", "retreat_2"}}
+        for fraction in RETREAT_FRACTIONS:
+            poses, evidence = raise_retreat_for_released_pad_clearance(
+                frozen.model, frozen.data, frozen.robot_metadata, nominal,
+                T_world_microwave[:3, 1],
+                clearance_margin_m=settings["retreat_clearance_margin_m"],
+                minimum_lift_m=settings["retreat_minimum_lift_m"], outward_fraction=fraction)
+            screen = plan_sequence(collision_scene, [(n, poses[n]) for n in
+                ("retreat_lift", "retreat_1", "retreat_2")], planner_pool=planner_pool,
+                output=output/f"candidate_{fraction}", seed=seed)
+            candidates.append({"adjustment": evidence, "stages": screen["rows"]})
+            if screen["success"]:
+                targets_report["actual_released_retreat"] = {
+                    "keyposes_world_tcp": {n: p.tolist() for n, p in poses.items()},
+                    "trajectories": {n: s.result.trajectory.to_dict() for n, s in screen["stages"].items()}}
+                break
+        write_report(output/"actual_released_retreat_sequence_screen.json",
+            {"success": bool(candidates and screen["success"]), "candidates": candidates,
+             "source": "observed_state_after_release_detach_settle"})
+        if not candidates or not screen["success"]:
+            return {"success": False, "stage": next(s for s in reversed(
+                list(screen["stages"].values())) if s.status != "planned"),
+                "stage_collision_snapshot_sha256": snapshot["snapshot_sha256"]}
+    actual = targets_report.get("actual_released_retreat")
+    if actual is None:
+        raise ValueError("必须先按实际松爪落稳状态筛选三段撤离，不能使用预视轨迹")
+    return plan_stage(collision_scene, stage_name, actual["keyposes_world_tcp"][stage_name],
+        planner_pool=planner_pool, output=output, seed=seed, linear=stage_name=="retreat_lift",
+        preferred=actual["trajectories"][stage_name])
 
 
 __all__ = ['build_observed_bowl_insert_targets', 'plan_observed_bowl_insert_prefix', 'plan_observed_bowl_insert_linear', 'plan_observed_bowl_detached_retreat_stage']

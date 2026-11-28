@@ -122,6 +122,8 @@ data/task_1/visualization/*
 data/task_1/realworld/*
 !data/task_1/realworld/index.md
 !data/task_1/realworld/pick_bowl.json
+!data/task_1/realworld/door_strategy.json
+!data/task_1/realworld/operation_strategy.json
 !data/task_1/realworld/knob_0_task_realworld_tuned.json
 !data/task_1/realworld/grasp_profiles.knob_0_realworld_tuned.json
 !data/task_1/realworld/realworld_site.example.json

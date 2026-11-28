@@ -110,7 +110,8 @@ class FailureOnlyCuroboLogs:
     def resolve_successful_selection(self, plan):
         """抓取前缀已经通过时，淘汰的 IK/路径不带入后续执行或抬升故障。"""
         stages = {row["name"]: row["status"] for row in plan.get("stages", ())}
-        if all(stages.get(name) == "planned" for name in ("open", "pregrasp", "approach", "close")):
+        if ((plan.get("success") is True and plan.get("screen_contract")=="full_insert_release_retreat")
+                or all(stages.get(name) == "planned" for name in ("open", "pregrasp", "approach", "close"))):
             self.pending.clear()
             self.raw.clear()
             self.contexts.clear()

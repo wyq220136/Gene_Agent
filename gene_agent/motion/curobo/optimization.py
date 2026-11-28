@@ -190,6 +190,9 @@ class PlannerHandle:
 
 
 def create_planner(*, _baseline_factory=None, **settings):
+    if settings.get("path_orientation_constraint") is not None:
+        from .orientation_constraint import OrientationConstrainedPlanner
+        return OrientationConstrainedPlanner(**settings)
     owner = current_optimization()
     if owner is None:
         from .core import SynchronousPlanner

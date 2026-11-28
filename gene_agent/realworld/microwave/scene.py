@@ -497,6 +497,17 @@ def build_live_microwave_collision_scene(
         turntable_height_offset_m=0., microwave_floor_height_offset_m=0.,
         microwave_root_anchor=anchor,
     )
+    group = result["snapshot"]["active_group"]
+    sample = None if robot_samples is None else robot_samples[group]
+    sdk_tcp = (robots[group].tcp_pose_from_sdk_fk(joints[group]) if sample is None
+               else np.asarray(sample["tcp_pose_sdk"], dtype=float))
+    world_tcp = validate_pose(np.asarray(result["provenance"]["T_world_sdk"]) @ sdk_tcp,
+        field_name="T_world_tcp_from_sdk")
+    result["provenance"]["tcp_poses_world"] = {group: world_tcp.tolist()}
+    result["provenance"]["tcp_pose_source"] = {
+        "method": "live_sdk_joints_then_vendor_fk_then_calibrated_flange_tcp",
+        "reference": "AffordToolAct/robots/realman/realman_arm.py:get_tcp_pose",
+        "physical_contact_evidence": False}
     completed_at_ms = time.time() * 1000.
     if any(time.monotonic() - row["started_monotonic_s"] > age_limit for row in sample_times.values()):
         raise ValueError("碰撞场景导出完成时机器人状态已过期")
@@ -590,6 +601,7 @@ def make_live_microwave_observer(
                     side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
                     expected_serial=expected_serial, max_age_s=max_age_s,
                     output_dir=folder / "tracked",
+                    fresh_estimation=True,
                     **({"recover_session": recover_session} if recover_session is not None else {}),
                 )
             else:

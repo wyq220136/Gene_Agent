@@ -17,6 +17,8 @@ def prepare_plan_only_context(
     planner_pool: CuroboPlannerPool, scene_revision: int = 0,
     seed: int = 123, planner_mode: PlannerMode | str = PlannerMode.CUDA_GRAPH_BENCHMARK,
     attachment_spheres_tool: Sequence[Sequence[float]] | None = None,
+    path_orientation_constraint: dict | None = None,
+    optimizer_collision_activation_distance: float | None = None,
 ) -> dict:
     """复用当前 cuRobo 配置与 pool，返回 Skill 所需的 planner/起点/场景。
 
@@ -70,6 +72,11 @@ def prepare_plan_only_context(
         # 原 cuRobo 构造函数已有 attachment_spheres_tool；只在物体已
         # 通过现场夹持检查时显式传入，普通规划仍保持原 settings 和缓存键。
         settings = {**settings, "attachment_spheres_tool": spheres.tolist()}
+    if path_orientation_constraint is not None:
+        from gene_agent.motion.curobo.orientation_constraint import normalize_orientation_constraint
+        settings["path_orientation_constraint"] = normalize_orientation_constraint(path_orientation_constraint)
+    if optimizer_collision_activation_distance is not None:
+        settings["optimizer_collision_activation_distance"] = float(optimizer_collision_activation_distance)
     lease = planner_pool.acquire(
         settings, snapshot, planner_mode=resolved_mode,
         random_seed=int(seed),
