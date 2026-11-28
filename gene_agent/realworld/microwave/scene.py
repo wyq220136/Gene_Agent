@@ -510,16 +510,23 @@ def build_live_microwave_collision_scene(
         "reference": "AffordToolAct/robots/realman/realman_arm.py:get_tcp_pose",
         "physical_contact_evidence": False}
     completed_at_ms = time.time() * 1000.
-    if any(time.monotonic() - row["started_monotonic_s"] > age_limit for row in sample_times.values()):
-        raise ValueError("碰撞场景导出完成时机器人状态已过期")
-    if completed_at_ms - observed.timestamp_ms > age_limit * 1000.:
-        raise ValueError("碰撞场景导出完成时物体观测已过期，必须重新采集")
-    for key, title in required_angles:
-        if key not in retained_angles and completed_at_ms - checked_angles[key]["observed_at_unix_ms"] > age_limit * 1000.:
-            raise ValueError(f"碰撞场景导出完成时{title}已过期，必须重新测量")
-    if anchor is not None and not retained_anchor and completed_at_ms - float(anchor["verified_at_unix_ms"]) > age_limit * 1000.:
-        raise ValueError("碰撞场景导出完成时微波炉本体锚点已过期")
+    # 按操作复用时，输入已经验证帧龄/SDK采样；此处只有同步FK与文件导出，
+    # 没有下发交互命令。不能把导出的计算耗时再次当成现场状态变化而要求重测。
+    # 下一条硬件命令仍经过既有的现场守卫和SDK起点检查；不改写测量时间。
+    if not refresh:
+        if any(time.monotonic() - row["started_monotonic_s"] > age_limit for row in sample_times.values()):
+            raise ValueError("碰撞场景导出完成时机器人状态已过期")
+        if completed_at_ms - observed.timestamp_ms > age_limit * 1000.:
+            raise ValueError("碰撞场景导出完成时物体观测已过期，必须重新采集")
+        for key, title in required_angles:
+            if key not in retained_angles and completed_at_ms - checked_angles[key]["observed_at_unix_ms"] > age_limit * 1000.:
+                raise ValueError(f"碰撞场景导出完成时{title}已过期，必须重新测量")
+        if anchor is not None and not retained_anchor and completed_at_ms - float(anchor["verified_at_unix_ms"]) > age_limit * 1000.:
+            raise ValueError("碰撞场景导出完成时微波炉本体锚点已过期")
     result["provenance"]["live_state"] = {
+        "freshness_check": "input_then_event_scoped_reuse" if refresh else "input_and_export",
+        "object_age_at_input_s": (now_ms - observed.timestamp_ms) / 1000.,
+        "object_age_at_export_s": (completed_at_ms - observed.timestamp_ms) / 1000.,
         "robot_sampled_at_unix_ms": sampled_at_ms,
         "robot_sample_times": sample_times,
         "state_sampling_mode": "parallel_with_vision" if robot_samples is not None else "serial",
@@ -605,13 +612,17 @@ def make_live_microwave_observer(
             selected_sessions = (sessions if operation_perception is None else
                                  operation_perception.selected_sessions(sessions))
             if selected_sessions:
+                reasons = getattr(operation_perception, "pending_reasons", {})
+                # 首次使用仍沿用准备阶段的跟踪会话；只在交互后的关键判定点
+                # 独立注册。会话遗失的恢复继续交给现有冷启动处理。
+                fresh_estimation = (operation_perception is not None and not _bootstrap_retry
+                                    and any(reasons.get(key, "").startswith("post_action:")
+                                            for key in selected_sessions))
                 (folder / "perception_request.json").write_text(json.dumps({
                     "object_ids": sorted(selected_sessions),
-                    "reasons": {key: getattr(operation_perception, "pending_reasons", {}).get(key)
-                                for key in sorted(selected_sessions)},
+                    "reasons": {key: reasons.get(key) for key in sorted(selected_sessions)},
                     "method": ("current_frame_segmentation_then_registration"
-                               if operation_perception is not None and not _bootstrap_retry
-                               else "session_tracking"),
+                               if fresh_estimation else "session_tracking"),
                     "fresh_frame_after_registration": bool(_bootstrap_retry),
                 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 from gene_agent.realworld.pose_tracking import PoseInitializationNeedsFreshFrame
@@ -621,9 +632,8 @@ def make_live_microwave_observer(
                         side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
                         expected_serial=expected_serial, max_age_s=max_age_s,
                         output_dir=folder / "tracked",
-                        # 稀疏关键帧跨越了完整交互，不能沿用旧 session 的局部热跟踪。
-                        # 冷注册若超过帧龄，单次补采仅跟踪刚建立的状态，避免重复注册。
-                        fresh_estimation=(operation_perception is not None and not _bootstrap_retry),
+                        # 交互后的关键帧独立注册；冷启动补采不重复注册。
+                        fresh_estimation=fresh_estimation,
                         **({"recover_session": recover_session} if recover_session is not None else {}),
                     )
                 except PoseInitializationNeedsFreshFrame:

@@ -710,6 +710,7 @@ def test_scoped_observer_exports_real_scene_with_retained_microwave(prepared_no_
                         "captured_at_unix_ms":time.time()*1000.})
         return folder
     def track(**kw):
+        assert kw["fresh_estimation"] is False  # 首次使用不额外分割/注册。
         assert set(kw["sessions"]) == ({setup.BOWL} if operation == "pick_bowl" else {setup.MICROWAVE})
         from dataclasses import replace
         value = _partial_observation(record,set(kw["sessions"]),frame=ticks[-1])

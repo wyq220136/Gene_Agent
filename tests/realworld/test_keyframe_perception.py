@@ -306,8 +306,8 @@ def test_observer_cold_bootstrap_retries_with_new_frame_and_new_sdk_sample(tmp_p
     assert len(captures)==len(calls)==len(samples)==2
     assert result['observed'].frame_number==2
     assert result['robot_samples'] is samples[1]
-    assert [call['fresh_estimation'] for call in calls]==[True,False]
-    assert json.loads((captures[0].parent/'perception_request.json').read_text())['method']=='current_frame_segmentation_then_registration'
+    assert [call['fresh_estimation'] for call in calls]==[False,False]
+    assert json.loads((captures[0].parent/'perception_request.json').read_text())['method']=='session_tracking'
     assert json.loads((captures[1].parent/'perception_request.json').read_text())['fresh_frame_after_registration'] is True
 
 

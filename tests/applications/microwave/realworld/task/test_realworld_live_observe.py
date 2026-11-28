@@ -51,7 +51,9 @@ def _inputs(tmp_path):
     for group in ("left", "right"):
         joints = json.loads((ROOT / f"config/robots/realman_{group}_default_pose.json").read_text())["joints_rad"]
         state = JointState(tuple(f"{group}_joint_{i}" for i in range(1, 8)), tuple(joints))
-        robots[group] = SimpleNamespace(read_joint_state=lambda state=state: state)
+        robots[group] = SimpleNamespace(
+            read_joint_state=lambda state=state: state,
+            tcp_pose_from_sdk_fk=lambda joints: np.eye(4))
         width = .04 if group == "right" else .08
         grippers[group] = SimpleNamespace(read_width_m=lambda width=width: width)
     angles = {
@@ -439,3 +441,44 @@ def test_parallel_robot_sample_rejects_stale_or_misattributed_data(tmp_path, mon
         build_live_microwave_collision_scene(observed=observed, robots=robots, grippers=grippers,
             angles=angles, scene_parameters=static, max_age_s=2.,
             microwave_pose_mesh_path="microwave/meshes/obj_mesh.obj", robot_samples=samples)
+
+
+@pytest.mark.parametrize("scoped",[True,False])
+@pytest.mark.parametrize("input_age_s",[4.88097412109375,5.1,-2.])
+def test_task16_export_processing_does_not_expire_accepted_operation_snapshot(
+        tmp_path,monkeypatch,scoped,input_age_s):
+    """原失败边界：注册结束4.881秒时有效，导出0.3秒后被重复误拒绝。"""
+    from gene_agent.realworld.microwave import scene as module
+    observed,robots,grippers,angles,static=_inputs(tmp_path)
+    timestamp=1000000.-input_age_s*1000.
+    refresh={"policy":"affordtoolact_operation_scoped","retained_angle_keys":[],
+             "retained_cabinet_anchor":False} if scoped else None
+    observed=replace(observed,timestamp_ms=timestamp,perception_refresh=refresh)
+    angles={key:{**value,"observed_at_unix_ms":timestamp} for key,value in angles.items()}
+    angles["door"]["angle_rad"]=0.  # 原案例在闭门初态，尚未拉门。
+    clock=[1000.];mono=[10.];exports=[]
+    monkeypatch.setattr(module.time,"time",lambda:clock[0])
+    monkeypatch.setattr(module.time,"monotonic",lambda:mono[0])
+    def export(observed,**kw):
+        exports.append(observed)
+        clock[0]+=.3;mono[0]+=.3
+        Path(kw["output_dir"]).mkdir(parents=True)
+        return {"snapshot":{"active_group":"right"},
+                "provenance":{"T_world_sdk":np.eye(4).tolist()}}
+    monkeypatch.setattr(module,"build_observed_collision_scene",export)
+    def run():
+        return build_live_microwave_collision_scene(
+            observed=observed,robots=robots,grippers=grippers,angles=angles,
+            scene_parameters=static,max_age_s=5.,microwave_pose_mesh_path="handle.obj")
+    if input_age_s>5. or input_age_s< -1.:
+        with pytest.raises(ValueError,match="过期或时间异常"):run()
+        assert exports==[]  # 未通过输入校验的数据依然不能进入导出。
+    elif not scoped:
+        with pytest.raises(ValueError,match="导出完成时物体观测已过期"):run()
+    else:
+        result=run()
+        live=result["provenance"]["live_state"]
+        assert live["freshness_check"]=="input_then_event_scoped_reuse"
+        assert live["object_age_at_input_s"]==pytest.approx(input_age_s)
+        assert live["object_age_at_export_s"]>5.
+        assert exports[0].timestamp_ms==timestamp  # 不重写时间，也不通过重测掩盖。
