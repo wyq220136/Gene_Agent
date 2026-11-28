@@ -723,7 +723,7 @@ Gene_Agent_new仿真没有固定“感知Hz”：候选/规划检查、执行前
 
 | 位置 | 碗/门状态来源 |
 | --- | --- |
-| 首次使用可见物体 | 实际RGB-D感知；门操作进入时重新测门 |
+| 首次使用可见物体 | 当前RGB-D重新分割、注册；同一对象已取得的阶段终态可直接交接，不因切换操作名重复感知 |
 | Pick接近、闭爪、重复持碗检查 | 复用碗位姿；闭爪完成后建立假定夹持关系 |
 | Lift完成并稳定后 | 实测碗；与当前SDK TCP及此前夹持关系交叉检查 |
 | 持碗转向、preplace、insert | 当前SDK TCP × 已保存TCP→碗关系；明确标注运动学估计 |
@@ -732,11 +732,16 @@ Gene_Agent_new仿真没有固定“感知Hz”：候选/规划检查、执行前
 | post_extract_2完全退出炉腔 | 实测碗并校验；随后继续桌面放置 |
 | 桌面释放、落稳 | 先保存释放位置；退开retreat后再实测碗是否留在提交位置 |
 | 门pull/swing/push中间路点 | 已成功执行阶段的角度假设，来源不是observed_door_angle |
-| 门Skill最终撤离 | 等2秒稳定后实际测门；相邻post_contact检查复用这次结果，避免重复注册 |
+| 门Skill最终撤离（两次开门/关门共用） | 等2秒稳定后重新分割、注册并实测门角；拉门→推门的必要交接也做一次；相邻post_contact复用这次结果 |
+| 可选旋钮操作 | 接近、夹紧、各旋转指令、松爪期间采用执行角度估计；最终撤离后重新感知旋钮和微波炉，检查角度和锚点 |
+
+以完整交互阶段完成、需要判断成功的边界重新感知，不以每条机器人指令为刷新单位。关键帧执行当前RGB-D的SAM3分割和FoundationPose独立注册，不从动作前的旧pose做一次局部track来代替重新感知。独立注册若使帧龄超过现有上限，仅补采一次新RGB-D并跟踪刚注册的状态，同时重读SDK；不重复注册，也不发布过期帧。
 
 相机帧和机械臂SDK状态仍按阶段读取，夹爪终点反馈保留既有完成确认。只有成功执行且确认完成的SDK命令才提交夹持/释放事件；仅预检、规划失败或执行失败不能创建成功的夹持估计。关键帧真实测不到或发现碗没有跟随移动时，继续保留失败/未知，不把丢失物体自动判成成功。
 
 同一完整all运行可跨子任务沿用炉内释放位置。独立extract若没有此前的释放状态、也看不到碗，仍需要显式提供/建立可靠初态，不能从空场景编造碗的位置。独立insert/table的人工持碗准备通过当前帧确认后，才恢复夹持估计。
+
+每次实际视觉请求保存 observations/<序号>/perception_request.json，记录对象、刷新原因和实际调用方法；独立注册证据保存在对应capture下的session_recovery/registration.json及tracked/capture_provenance.json。refresh_reasons标出initial或post_action边界，阶段内缓存不会重复产生视觉请求。
 
 日志在每个scene provenance.perception_refresh中分别记录refreshed_object_ids、retained_object_ids、estimated_object_ids、object_observations、state_estimates、keyframe_counts及effective_sensor_tolerances。缓存保留测量时间；估计记录SDK TCP和原始测量来源。open_loop_object_state只表示用户选择的开环策略允许继续，physical_verification=false；它不通过严格的真实成功证据检查。Task的task_success/operation_success表示执行流程完成，verified_task_success/physical_verification另行说明是否存在未验证假设。
 

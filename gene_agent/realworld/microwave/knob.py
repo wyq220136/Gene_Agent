@@ -137,6 +137,12 @@ def run_observed_knob_skill(
         grasp_settled_s = 0.0
         observed = _operation_state(scene)
 
+        def observe_completed_phase(phase, *, final):
+            callback = getattr(observe_collision_scene, "after_knob_phase", None)
+            if callback is not None:
+                callback(phase, final=final)
+            return observe_collision_scene()
+
         def perform(name):
             nonlocal scene, selection, observed, grasp_settled_s
             if name == 'open':
@@ -199,6 +205,11 @@ def run_observed_knob_skill(
 
                 return {'success': True, 'check': check}
             if name == 'rotation_check':
+                refresh = scene["provenance"].get("perception_refresh")
+                if refresh is not None and not {
+                        "Microwave/Knob_0", "Microwave/Microwave_0"}.issubset(
+                            refresh.get("refreshed_object_ids", ())):
+                    return stop("knob_final_observation_missing", "完整旋钮动作结束后缺少旋钮/柜体的新视觉关键帧")
                 # 每段开始前会复核微波炉本体锚点，但最后一次撤离后没有下一段。
                 # 终点仍须使用刚采到的现场 pose 检查，不能只凭旋钮角达标。
                 final_microwave_delta = _pose_delta(
@@ -254,7 +265,7 @@ def run_observed_knob_skill(
                                 (grasp_settled_s if name == "grasp_settle" else 0.))
                 if remaining:
                     time.sleep(remaining)
-                next_scene = observe_collision_scene()
+                next_scene = observe_completed_phase(stage_target, final=index == len(selection["targets"]) - 1)
                 observed = _operation_state(next_scene)
                 row["execution"] = {
                     "source_format": "realworld_wait_stage", "status": "executed",
@@ -297,7 +308,7 @@ def run_observed_knob_skill(
                     failure = execution.get("failure") or {}
                     return stop(failure.get("code", "gripper_execution_failed"),
                                 failure.get("message", f"{name} 夹爪命令失败"))
-                next_scene = observe_collision_scene()
+                next_scene = observe_completed_phase(stage_target, final=index == len(selection["targets"]) - 1)
                 observed = _operation_state(next_scene)
                 handoff = _handoff_error(
                     scene, next_scene, execution,
@@ -337,7 +348,7 @@ def run_observed_knob_skill(
                     failure = execution.get("failure") or {}
                     return stop(failure.get("code", "last_joint_execution_failed"),
                                 failure.get("message", "末关节旋钮动作失败"))
-                next_scene = observe_collision_scene()
+                next_scene = observe_completed_phase(stage_target, final=index == len(selection["targets"]) - 1)
                 observed = _operation_state(next_scene)
                 handoff = _handoff_error(
                     scene, next_scene, execution,
@@ -369,7 +380,7 @@ def run_observed_knob_skill(
                     failure = execution.get("failure") or {}
                     return stop(failure.get("code", "motion_execution_failed"),
                                 failure.get("message", f"{name} 真机轨迹失败"))
-                next_scene = observe_collision_scene()
+                next_scene = observe_completed_phase(stage_target, final=index == len(selection["targets"]) - 1)
                 observed = _operation_state(next_scene)
                 handoff = _handoff_error(
                     scene, next_scene, execution,
@@ -383,6 +394,10 @@ def run_observed_knob_skill(
             actual_angle = float(next_scene["provenance"]["knob_angle_rad"])
             error = abs(actual_angle - stage_target.end_angle_rad)
             row["knob_angle_error_rad"] = error
+            row["knob_angle_evidence_mode"] = (
+                "executed_phase_assumption" if "Microwave/Knob_0" in
+                (next_scene["provenance"].get("perception_refresh") or {}).get("estimated_object_ids", ())
+                else "observed_or_retained_measurement")
             if error > max_knob_angle_error_rad:
                 row["status"] = "failed"
                 return stop("knob_angle_not_reached",

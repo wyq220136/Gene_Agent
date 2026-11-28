@@ -283,7 +283,7 @@ def bind_live_scene_guard(
         return runtime
 
     # 包装后仍传递操作感知事件，避免发令前复核退回全对象感知。
-    for name in ("begin_operation", "after_door_phase", "before_interaction", "after_interaction", "set_door_final_phase", "accept_current_hold"):
+    for name in ("begin_operation", "after_door_phase", "before_interaction", "after_interaction", "set_door_final_phase", "after_knob_phase", "accept_current_hold"):
         callback = getattr(observe_collision_scene, name, None)
         if callback is not None:
             setattr(observe, name, callback)

@@ -85,12 +85,13 @@ def test_plan_only_stops_before_using_unexecuted_gripper_state(tmp_path, monkeyp
     assert (tmp_path / "run/skill_result.json").is_file()
 
 
-@pytest.mark.parametrize("last_microwave_shift_m, expected_success", [
-    (0.0, True),
-    (0.02, False),
+@pytest.mark.parametrize("last_microwave_shift_m, terminal_measurement, expected_success", [
+    (0.0, True, True),
+    (0.02, True, False),
+    (0.0, False, False),
 ])
 def test_executed_skill_rebases_each_stage_on_measured_scene(
-    tmp_path, monkeypatch, last_microwave_shift_m, expected_success,
+    tmp_path, monkeypatch, last_microwave_shift_m, terminal_measurement, expected_success,
 ):
     observations = [
         _scene("initial"),
@@ -102,6 +103,9 @@ def test_executed_skill_rebases_each_stage_on_measured_scene(
     observations[-1]["provenance"]["aligned_object_poses_world"][
         "Microwave/Microwave_0"
     ][0][3] = last_microwave_shift_m
+    observations[-1]["provenance"]["perception_refresh"] = {
+        "refreshed_object_ids": ["Microwave/Microwave_0"] if terminal_measurement else [],
+        "estimated_object_ids": [] if terminal_measurement else ["Microwave/Microwave_0"]}
     seen = []
     monkeypatch.setattr(door_skill, "build_observed_door_skill_targets",
                         lambda *_args, **_kwargs: _targets())
@@ -137,11 +141,13 @@ def test_executed_skill_rebases_each_stage_on_measured_scene(
         **_options(tmp_path, lambda: observations.pop(0), Runtime, execute=True)
     )
     assert report["success"] is expected_success
-    assert report["status"] == ("executed" if expected_success else "failed")
+    assert report["status"] == ("executed" if expected_success else
+                                "unknown" if not terminal_measurement else "failed")
     if expected_success:
         assert report["postcondition"]["status"] == "pass"
     else:
-        assert report["first_failure"]["code"] == "target_anchor_changed"
+        assert report["first_failure"]["code"] == (
+            "target_anchor_changed" if last_microwave_shift_m else "door_final_observation_missing")
     assert seen == [("runtime", "initial"),
                     ("after-gripper", "after-gripper", "handle_pull/01_pull_01"),
                     ("runtime", "stage-after-gripper")]

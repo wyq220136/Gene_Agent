@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 
 from test_automatic_microwave_setup import prepared, prepared_no_knob, _partial_observation
 from gene_agent.realworld.microwave.operation_perception import OperationPerception
-from gene_agent.realworld.microwave.perception_setup import BOWL, MICROWAVE
+from gene_agent.realworld.microwave.perception_setup import BOWL, MICROWAVE, KNOB
 from gene_agent.realworld.checks import has_accepted_realworld_completion, has_realworld_success_evidence
 
 
@@ -287,6 +287,7 @@ def test_observer_cold_bootstrap_retries_with_new_frame_and_new_sdk_sample(tmp_p
         def after_interaction(self,*a):pass
         def set_door_final_phase(self,*a):pass
         def accept_current_hold(self,*a):pass
+        def after_knob_phase(self,*a,**kw):pass
     class Sampler:
         @contextmanager
         def sample(self,*a):
@@ -305,5 +306,102 @@ def test_observer_cold_bootstrap_retries_with_new_frame_and_new_sdk_sample(tmp_p
     assert len(captures)==len(calls)==len(samples)==2
     assert result['observed'].frame_number==2
     assert result['robot_samples'] is samples[1]
-    assert all(call['fresh_estimation'] is False for call in calls)
+    assert [call['fresh_estimation'] for call in calls]==[True,False]
+    assert json.loads((captures[0].parent/'perception_request.json').read_text())['method']=='current_frame_segmentation_then_registration'
+    assert json.loads((captures[1].parent/'perception_request.json').read_text())['fresh_frame_after_registration'] is True
 
+
+
+def test_completed_door_resegments_instead_of_tracking_old_closed_pose(prepared_no_knob,tmp_path,monkeypatch):
+    """重现 task15：长间隔后旧 session 仍是闭门；完成关键帧必须独立注册。"""
+    import time
+    from contextlib import contextmanager
+    from gene_agent.realworld.microwave import scene as module
+    _,record=prepared_no_knob
+    scope=OperationPerception(record,sleep=lambda _:None)
+    scope.begin_operation('open_door')
+    consume(scope,record,1)
+    scope.set_door_final_phase('retreat')
+    scope.after_door_phase(SimpleNamespace(name='pull_25',phase_id='pull',door_angle_rad=math.radians(25.)))
+    consume(scope,record,2)
+    scope.after_door_phase(SimpleNamespace(name='retreat',phase_id='retreat',door_angle_rad=math.radians(25.)))
+    actual=_partial_observation(record,{MICROWAVE},frame=10,door=math.radians(22.4)).object_poses_sdk[MICROWAVE]
+    monkeypatch.setattr(scope.door_plane,'correct',lambda pose,*a:(pose,{'applied':False}))
+    calls=[];captures=[]
+    class Client:
+        def stop(self,session):calls.append(('stop',session))
+        def track_frame(self,*a,**kw):
+            raise AssertionError('不应从旧闭门 pose 做局部跟踪')
+    def recover(obj,session,**kw):
+        calls.append(('register',obj))
+        return {'ok':True,'session_id':session,'camera_id':'0','T_camera_object':actual.tolist()}
+    def capture(*,output_dir,**kw):
+        output_dir.mkdir(parents=True)
+        captures.append(output_dir)
+        (output_dir/'rgb.png').write_bytes(b'frozen-rgb')
+        (output_dir/'depth.png').write_bytes(b'frozen-depth')
+        (output_dir/'camera.json').write_text(json.dumps({
+            'serial':'camera-1','frame_number':9+len(captures),
+            'timestamp_ms':time.time()*1000.,'captured_at_unix_ms':time.time()*1000.,
+            'intrinsic_matrix':np.eye(3).tolist()}))
+        return output_dir
+    class Sampler:
+        @contextmanager
+        def sample(self,*a):
+            yield SimpleNamespace(result=lambda:{'right':{'tcp_pose_sdk':np.eye(4)}})
+    monkeypatch.setattr(module,'capture_frozen_scene_frame',capture)
+    monkeypatch.setattr(module,'build_live_microwave_collision_scene',lambda **kw:kw)
+    observer=module.make_live_microwave_observer(output_dir=tmp_path/'observations',
+        camera_endpoint='unused',expected_serial='camera-1',pose_client=Client(),sessions=record['sessions'],
+        side='right',camera_id='0',T_sdk_camera=np.eye(4),robots={},grippers={},angle_reader=None,
+        scene_parameters={'active_group':'right'},max_age_s=5.,microwave_pose_mesh_path='handle.obj',
+        operation_perception=scope,state_sampler=Sampler(),recover_session=recover)
+    result=observer()
+    assert result['angles']['door']['angle_rad']==pytest.approx(math.radians(22.4))
+    assert result['angles']['door']['angle_rad']!=pytest.approx(math.radians(25.))
+    provenance=json.loads((captures[0].parent/'tracked/capture_provenance.json').read_text())
+    assert provenance['fresh_segmentation_registration_objects']==[MICROWAVE]
+    refresh=result['observed'].perception_refresh
+    assert refresh['refresh_reasons'][MICROWAVE]=='post_action:open_door/retreat'
+    # 同一终态的后续检查继续复用，不重复进入神经感知。
+    assert observer()['observed'].perception_refresh['refreshed_object_ids']==[]
+    assert calls==[('stop',record['sessions'][MICROWAVE]),('register',MICROWAVE)]
+
+
+def test_major_door_actions_each_request_terminal_measurement_without_entry_duplicates(prepared_no_knob):
+    _,record=prepared_no_knob
+    scope=OperationPerception(record,sleep=lambda _:None)
+    scope.begin_operation('open_door');consume(scope,record,1)
+    frame=2
+    for operation in ['open_door','close_door','open_door','close_door']:
+        scope.begin_operation(operation)
+        assert scope.selected_sessions(record['sessions'])=={}
+        scope.set_door_final_phase(operation+str(frame))
+        for n in range(20):
+            scope.after_door_phase(SimpleNamespace(name='push_'+str(n),phase_id='mid',door_angle_rad=.1))
+            assert scope.selected_sessions(record['sessions'])=={}
+        scope.after_door_phase(SimpleNamespace(name='retreat',phase_id=operation+str(frame),door_angle_rad=.1))
+        assert set(scope.selected_sessions(record['sessions']))=={MICROWAVE}
+        scope.prepare_capture();consume(scope,record,frame);frame+=1
+    assert scope.keyframe_counts[MICROWAVE]==5
+
+
+@pytest.mark.parametrize('operation,final_name',[
+    ('pick_bowl','lift'),('extract_bowl','post_extract_2'),('place_bowl_on_table','retreat')])
+def test_visible_bowl_operation_completion_schedules_keyframe(prepared_no_knob,operation,final_name):
+    _,record=prepared_no_knob
+    scope=OperationPerception(record);scope.begin_operation(operation);consume(scope,record,1)
+    for name in ['pregrasp','approach','preplace','post_extract_1']:
+        scope.after_interaction(name,'motion')
+        assert scope.selected_sessions(record['sessions'])=={}
+    scope.after_interaction(final_name,'motion')
+    assert set(scope.selected_sessions(record['sessions']))=={BOWL}
+    assert scope.pending_reasons[BOWL]==f'post_action:{operation}/{final_name}'
+
+
+def test_table_final_check_does_not_accept_cached_pose_as_success(prepared_no_knob):
+    _,record=prepared_no_knob
+    scope=OperationPerception(record);scope.released=True
+    scene={'provenance':{'live_state':{'measured':True},
+                        'perception_refresh':{'refreshed_object_ids':[]}}}
+    assert scope.check_state('table',scene).status=='unknown'

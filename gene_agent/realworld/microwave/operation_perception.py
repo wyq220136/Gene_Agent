@@ -28,7 +28,7 @@ def after_door_observation_phase(observer, phase):
 
 
 def forward_observation_hooks(source, target):
-    for name in ("begin_operation", "after_door_phase", "before_interaction", "after_interaction", "set_door_final_phase", "accept_current_hold"):
+    for name in ("begin_operation", "after_door_phase", "before_interaction", "after_interaction", "set_door_final_phase", "after_knob_phase", "accept_current_hold"):
         callback = getattr(source, name, None)
         if callback is not None:
             setattr(target, name, callback)
@@ -83,6 +83,7 @@ class OperationPerception:
         self.pending_settle_s = 0.
         self.last_settle_s = 0.
         self.pending = set()
+        self.pending_reasons = {}
         self.initialized = set()
         self.last_frame = -1
         self.last_stamp = -1.
@@ -95,6 +96,8 @@ class OperationPerception:
         self.last_measurement_check = None
         self.estimated_door_angle = None
         self.door_phase = None
+        self.estimated_knob_angle = None
+        self.knob_phase = None
         self.door_final_observed = False
         self.plane_diagnostics = {}
         self.keyframe_counts = {}
@@ -116,9 +119,9 @@ class OperationPerception:
         else:
             raise ValueError(f"未定义感知时机的操作: {operation}")
         # 操作切换不清空尚未消费的交互事件；同次运行每个对象只初始化一次。
-        self.pending.update(needed - self.initialized)
+        self._request_keyframe(needed - self.initialized, f"initial:{operation}")
         if operation in {"open_door", "close_door", "door"} and operation != self.operation:
-            self.pending.add(MICROWAVE)
+            # 上次完整动作的终态实测可直接交接；切换名称不代表物体又移动。
             self.estimated_door_angle = None
             self.door_final_observed = False
         self.operation = operation
@@ -150,10 +153,22 @@ class OperationPerception:
                     (op in {"pick_bowl", "pick"} and name == "lift")
                     or (op in {"extract_bowl", "extract", "unload_bowl"} and name == "post_extract_2")
                     or (op in {"place_bowl_on_table", "table"} and name == "retreat")):
-                self.pending.add(BOWL)
-        elif op in {"rotate_knob", "knob"} and self.include_knob:
-            if kind in {"grasp", "release", "last_joint"} or name == "grasp" or name.startswith("rotate_"):
-                self.pending.add(KNOB)
+                self._request_keyframe({BOWL}, f"post_action:{op}/{name}")
+        # 旋钮不按夹爪/旋转指令重新感知，由完整 Skill 的终态钩子提交关键帧。
+
+    def _request_keyframe(self, object_ids, reason):
+        self.pending.update(object_ids)
+        self.pending_reasons.update({key: reason for key in object_ids})
+
+    def after_knob_phase(self, phase, *, final=False):
+        """仅在成功执行后调用；中间角是执行假设，最终撤离后独立实测。"""
+        if not self.include_knob:
+            raise ValueError("未启用旋钮感知")
+        self.estimated_knob_angle = float(phase.end_angle_rad)
+        self.knob_phase = phase.name
+        if final:
+            # 终态判据同时读取旋钮和柜体锚点，故两者都需要当前视觉证据。
+            self._request_keyframe({KNOB, MICROWAVE}, f"post_action:rotate_knob/{phase.name}")
 
     def after_door_phase(self, phase):
         # Intermediate motion points use the executed phase's assumption, never a
@@ -161,14 +176,14 @@ class OperationPerception:
         # immediately adjacent post-contact reuses that same settled keyframe.
         if isinstance(phase, str):
             if "post_contact" in phase and not self.door_final_observed:
-                self.pending.add(MICROWAVE)
+                self._request_keyframe({MICROWAVE}, f"post_action:{self.operation}/post_contact")
                 self.pending_settle_s = 2.0
             return
         self.door_phase = phase.name
         if phase.name.startswith(("pull_", "swing_", "push_")):
             self.estimated_door_angle = float(phase.door_angle_rad)
         if getattr(self, "final_door_phase_id", None) == phase.phase_id:
-            self.pending.add(MICROWAVE)
+            self._request_keyframe({MICROWAVE}, f"post_action:{self.operation}/{phase.phase_id}")
             self.pending_settle_s = 2.0
 
     def set_door_final_phase(self, phase_id):
@@ -297,6 +312,19 @@ class OperationPerception:
         else:
             self.reader.closed_contact_pending = False
 
+        if self.estimated_knob_angle is not None and KNOB not in measured:
+            from .live_perception import _axis_rotation
+            point, axis, _ = self.reader._joint("knob")
+            self.poses[KNOB] = (_axis_rotation(axis, self.estimated_knob_angle, point)
+                                @ self.reader.reference[KNOB])
+            self.angles["knob"] = {"angle_rad": self.estimated_knob_angle,
+                "observed_at_unix_ms": self.angles["knob"]["observed_at_unix_ms"],
+                "source": "executed_knob_phase_assumption", "observed": False,
+                "phase": self.knob_phase, "physical_verification": False}
+            predicted_ids.add(KNOB)
+        if KNOB in measured:
+            self.estimated_knob_angle = None
+
         poses = {**self.poses, **observed.object_poses_sdk}
         refreshed_angles = set()
         if measured & {MICROWAVE, KNOB}:
@@ -316,12 +344,15 @@ class OperationPerception:
         retained = set(poses) - measured - predicted_ids
         for key in measured:
             self.keyframe_counts[key] = self.keyframe_counts.get(key, 0) + 1
-        estimates = {key: {"method": (self.bowl_mode if key == BOWL else "executed_door_phase_assumption"),
+        estimates = {key: {"method": (self.bowl_mode if key == BOWL else
+                                      "executed_knob_phase_assumption" if key == KNOB else
+                                      "executed_door_phase_assumption"),
             "physical_verification": False, "measurement_origin": records[key],
             "sdk_frame_number": observed.frame_number,
             "sdk_tcp_pose": None if tcp is None else tcp.tolist()} for key in predicted_ids}
         refresh = {
             "policy": POLICY, "operation": self.operation, "refresh_mode": "interaction_events",
+            "refresh_reasons": {key: self.pending_reasons.get(key, "explicit_keyframe") for key in sorted(measured)},
             "pose_frame_disambiguation": pose_correction,
             "settle_wait_s": self.last_settle_s,
             "refreshed_object_ids": sorted(measured),
@@ -332,7 +363,7 @@ class OperationPerception:
             "effective_sensor_tolerances": {"bowl_translation_m": .02, "bowl_axis_deg": 20.,
                 "door_orbit_m": self.reader.max_translation, "door_bounds_padding_deg": 5.},
             "door_plane": deepcopy(self.plane_diagnostics),
-            "schedule": "initial_and_visible_post_interaction_keyframes",
+            "schedule": "initial_and_visible_major_action_completion",
             "bowl_state_mode": self.bowl_mode,
             "bowl_measurement_check": deepcopy(self.last_measurement_check),
             "retained_angle_keys": sorted(set(self.angles) - refreshed_angles),
@@ -347,6 +378,8 @@ class OperationPerception:
         self.records = records
         self.initialized.update(measured)
         self.pending.difference_update(measured)
+        for key in measured:
+            self.pending_reasons.pop(key, None)
         self.last_frame, self.last_stamp = observed.frame_number, observed.timestamp_ms
         return result, deepcopy(self.angles), deepcopy(self.anchor)
 
@@ -391,7 +424,7 @@ class OperationPerception:
                                "没有本轮成功 SDK 交互事件，不能自动建立物体状态")
         # Lift/extracted require an actual visible keyframe. Failed/missing keyframes
         # propagate an error; they are not converted to an assumed successful lift.
-        if condition in {"pick", "extracted"} and not measured:
+        if condition in {"pick", "extracted", "table"} and not measured:
             return CheckResult("unknown", "not_configured", evidence, "缺少可见关键帧")
         if measured and condition in {"pick", "extracted"}:
             evidence.update(physical_verification=True, authorized_open_loop=False)
@@ -405,7 +438,7 @@ class OperationPerception:
                 geometry = check_bowl_pose_table(bowl, table, source["accepted_table_thickness_m"], table_band_m=.02)
             except ValueError as error:
                 return CheckResult("fail", "vision", evidence, str(error))
-            evidence.update(physical_verification=True, geometry=geometry)
+            evidence.update(physical_verification=True, authorized_open_loop=False, geometry=geometry)
             result = CheckResult("pass", "vision", evidence, "释放后可见桌面关键帧通过")
         else:
             result = CheckResult("pass", "open_loop_object_state", evidence,

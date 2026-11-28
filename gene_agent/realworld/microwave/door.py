@@ -318,6 +318,13 @@ def run_observed_door_skill(
             })
             return save()
         report["target_rebase_final"] = final_targets["target_rebase"]
+        refresh = scene["provenance"].get("perception_refresh")
+        if refresh is not None and "Microwave/Microwave_0" not in refresh.get("refreshed_object_ids", ()):
+            report.update(status="unknown", first_failure={
+                "code": "door_final_observation_missing",
+                "message": "完整门动作结束后缺少新的视觉关键帧，不能用执行角度假设判成功",
+            })
+            return save()
         final_angle = float(scene["provenance"]["door_angle_rad"])
         target_angle = targets["phases"][-1].door_angle_rad
         check = door_angle_check(

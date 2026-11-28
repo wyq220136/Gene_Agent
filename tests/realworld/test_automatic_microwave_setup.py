@@ -559,8 +559,11 @@ def test_live_observer_saves_rejected_orbit_before_robot_read_or_scene_export(
         microwave_pose_mesh_path=record["meshes"][setup.MICROWAVE])
 
     if write_failure:
-        def fail_write(*args, **kwargs):
-            raise OSError("disk full")
+        original_write = Path.write_text
+        def fail_write(path, *args, **kwargs):
+            if path.name == "door_handle_diagnostics.json":
+                raise OSError("disk full")
+            return original_write(path, *args, **kwargs)
         monkeypatch.setattr(Path, "write_text", fail_write)
     with pytest.raises(HandleOrbitError) as failure:
         observer()
@@ -786,6 +789,7 @@ def test_guard_forwards_operation_and_door_phase_hooks():
     observe.begin_operation=lambda name:events.append(("operation",name))
     observe.after_door_phase=lambda name:events.append(("phase",name))
     observe.before_interaction=lambda name,kind:events.append(("interaction",name,kind))
+    observe.after_knob_phase=lambda phase,**kw:events.append(("knob",phase,kw["final"]))
     wrapped,_=bind_live_scene_guard(observe,lambda _:None,limits=SceneDriftLimits(.005,.15,.02,.005,.05))
     wrapped.begin_operation("pick_bowl")
     wrapped.after_door_phase("post_contact")
@@ -793,6 +797,8 @@ def test_guard_forwards_operation_and_door_phase_hooks():
     assert events[-1] == ("interaction", "lift", "motion")
     events.pop()
     assert events == [("operation","pick_bowl"),("phase","post_contact")]
+    wrapped.after_knob_phase("retreat",final=True)
+    assert events[-1] == ("knob","retreat",True)
 
 
 @pytest.mark.parametrize("name", ["pick_bowl", "open_door", "close_door", "rotate_knob", "extract_bowl"])
@@ -963,22 +969,31 @@ def test_scope_keeps_unconsumed_interaction_across_operation_switch(prepared_no_
     assert set(scope.selected_sessions(record["sessions"])) == {setup.BOWL}
 
 
-def test_knob_events_retain_other_objects_and_refresh_only_on_contact(prepared):
+def test_knob_commands_estimate_angle_then_refresh_terminal_keyframe(prepared):
+    from types import SimpleNamespace
     from gene_agent.realworld.microwave.operation_perception import OperationPerception
     _, record = prepared
     scope = OperationPerception(record, include_knob=True)
     scope.begin_operation("rotate_knob")
-    scope.consume(_partial_observation(record, {setup.KNOB}))
-    for name, kind in [("pregrasp", "motion"), ("open", "position")]:
+    scope.consume(_partial_observation(record, {setup.KNOB}, frame=1))
+    origin = scope.records[setup.KNOB].copy()
+    for frame, (name, kind, angle) in enumerate([
+            ("grasp", "motion", 0.), ("close", "grasp", 0.),
+            ("rotate_0", "last_joint", .1), ("release", "release", .1)], 2):
         scope.before_interaction(name, kind)
-        assert scope.selected_sessions(record["sessions"]) == {}
-    for frame, (name, kind) in enumerate([("grasp", "motion"), ("close", "grasp"),
-                                         ("rotate_0", "last_joint"), ("release", "release")], 2):
-        scope.before_interaction(name, kind)
-        assert scope.selected_sessions(record["sessions"]) == {}
         scope.after_interaction(name, kind)
-        assert set(scope.selected_sessions(record["sessions"])) == {setup.KNOB}
-        scope.consume(_partial_observation(record, {setup.KNOB}, frame=frame))
+        scope.after_knob_phase(SimpleNamespace(name=name, end_angle_rad=angle))
+        assert scope.selected_sessions(record["sessions"]) == {}
+        result, angles, _ = scope.consume(_partial_observation(record, set(), frame=frame))
+        assert angles["knob"]["angle_rad"] == angle
+        assert angles["knob"]["observed"] is False
+        assert result.perception_refresh["state_estimates"][setup.KNOB]["method"] == "executed_knob_phase_assumption"
+        assert scope.records[setup.KNOB] == origin
+    scope.after_knob_phase(SimpleNamespace(name="retreat",end_angle_rad=.1),final=True)
+    assert set(scope.selected_sessions(record["sessions"])) == {setup.KNOB, setup.MICROWAVE}
+    _, angles, _ = scope.consume(_partial_observation(record,{setup.KNOB,setup.MICROWAVE},frame=6,knob=.05))
+    assert angles["knob"]["angle_rad"] == pytest.approx(.05)
+    assert "assumption" not in angles["knob"]["source"]
 
 
 def test_closed_contact_small_translation_reanchors_root_and_keeps_raw_pose(prepared_no_knob):

@@ -340,3 +340,26 @@ def test_knob_command_exception_preserves_traceback_and_reobserves_end(tmp_path,
     assert result['shared_flow']['end_state']['values']['joint_positions_by_group_rad']['right'] == [.3, .4]
     assert 'partial knob command' in result['first_failure']['traceback']
     assert result['first_failure']['stage'] == 'open'
+
+
+@pytest.mark.parametrize("terminal_measurement",[True,False])
+def test_knob_terminal_hook_precedes_check_and_requires_new_measurement(tmp_path,monkeypatch,terminal_measurement):
+    calls=[]
+    stages=_setup(monkeypatch,calls)
+    scenes=[
+        _scene(1,width=.02),_scene(2),
+        _scene(3,q=(.1,.1)),_scene(4,q=(.2,.2)),
+        _scene(5,q=(.2,.2),width=0.),_scene(6,q=(.2,.2),width=0.),
+        _scene(7,q=(.3,.3),width=0.,angle=.1),
+        _scene(8,q=(.3,.3),angle=.1),_scene(9,q=(.3,.3),angle=.1),
+        _scene(10,q=(.4,.4),angle=.1)]
+    scenes[-1]['provenance']['perception_refresh']={
+        'refreshed_object_ids':(['Microwave/Knob_0','Microwave/Microwave_0'] if terminal_measurement else [])}
+    settings=_settings(tmp_path,scenes,execute=True,calls=calls)
+    phases=[]
+    settings['observe_collision_scene'].after_knob_phase=lambda phase,**kw:phases.append((phase.name,kw['final']))
+    result=module.run_observed_knob_skill(**settings)
+    assert phases==[(stage.name,stage is stages[-1]) for stage in stages[1:]]
+    assert result['rotation_success'] is terminal_measurement
+    if not terminal_measurement:
+        assert result['first_failure']['code']=='knob_final_observation_missing'

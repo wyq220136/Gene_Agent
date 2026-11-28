@@ -605,6 +605,15 @@ def make_live_microwave_observer(
             selected_sessions = (sessions if operation_perception is None else
                                  operation_perception.selected_sessions(sessions))
             if selected_sessions:
+                (folder / "perception_request.json").write_text(json.dumps({
+                    "object_ids": sorted(selected_sessions),
+                    "reasons": {key: getattr(operation_perception, "pending_reasons", {}).get(key)
+                                for key in sorted(selected_sessions)},
+                    "method": ("current_frame_segmentation_then_registration"
+                               if operation_perception is not None and not _bootstrap_retry
+                               else "session_tracking"),
+                    "fresh_frame_after_registration": bool(_bootstrap_retry),
+                }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 from gene_agent.realworld.pose_tracking import PoseInitializationNeedsFreshFrame
                 try:
                     observed = track_observed_scene_from_capture(
@@ -612,7 +621,9 @@ def make_live_microwave_observer(
                         side=side, camera_id=camera_id, T_sdk_camera=T_sdk_camera,
                         expected_serial=expected_serial, max_age_s=max_age_s,
                         output_dir=folder / "tracked",
-                        fresh_estimation=False,
+                        # 稀疏关键帧跨越了完整交互，不能沿用旧 session 的局部热跟踪。
+                        # 冷注册若超过帧龄，单次补采仅跟踪刚建立的状态，避免重复注册。
+                        fresh_estimation=(operation_perception is not None and not _bootstrap_retry),
                         **({"recover_session": recover_session} if recover_session is not None else {}),
                     )
                 except PoseInitializationNeedsFreshFrame:
@@ -686,6 +697,7 @@ def make_live_microwave_observer(
         observe.before_interaction = operation_perception.before_interaction
         observe.after_interaction = operation_perception.after_interaction
         observe.set_door_final_phase = operation_perception.set_door_final_phase
+        observe.after_knob_phase = operation_perception.after_knob_phase
         observe.accept_current_hold = operation_perception.accept_current_hold
     return observe
 
